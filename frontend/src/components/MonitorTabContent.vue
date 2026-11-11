@@ -121,29 +121,30 @@
         </div>
       </div>
       <el-input v-model="processSearch" :placeholder="t('monitor.searchProcess')" clearable class="process-search" />
+      <TableColumnPicker :table-key="'MonitorTabContent:visibleProcesses'" :columns="[{key: 'pid', label: 'PID', required: true}, {key: 'name', label: t('monitor.processName'), required: false}, {key: 'user', label: t('monitor.user'), required: false}, {key: 'state', label: t('monitor.state'), required: false}, {key: 'cpu', label: t('monitor.cpu'), required: false}, {key: 'mem', label: t('monitor.mem'), required: false}, {key: 'actions-6', label: '', required: false}]" @change="refreshColumnLayout(processTableRef)" />
       <el-table
         ref="processTableRef"
         :data="visibleProcesses"
         size="small"
         border
-        height="calc(100% - 2.5rem)"
+        height="calc(100% - 2.5rem - 2.25rem)"
         class="process-table"
         @sort-change="onProcessSortChange"
         @row-click="onProcessRowClick"
       >
         <el-table-column prop="pid" label="PID" sortable="custom" :width="uiPx(80)" />
-        <el-table-column prop="name" :label="t('monitor.processName')" sortable="custom" />
-        <el-table-column prop="user" :label="t('monitor.user')" sortable="custom" :width="uiPx(100)" />
-        <el-table-column prop="state" :label="t('monitor.state')" sortable="custom" :width="uiPx(80)">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:visibleProcesses', 'name')" prop="name" :label="t('monitor.processName')" sortable="custom" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:visibleProcesses', 'user')" prop="user" :label="t('monitor.user')" sortable="custom" :width="uiPx(100)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:visibleProcesses', 'state')" prop="state" :label="t('monitor.state')" sortable="custom" :width="uiPx(80)">
           <template #default="{ row }">{{ row.state ? String(row.state)[0] : '-' }}</template>
         </el-table-column>
-        <el-table-column prop="cpu" :label="t('monitor.cpu')" sortable="custom" :width="uiPx(90)">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:visibleProcesses', 'cpu')" prop="cpu" :label="t('monitor.cpu')" sortable="custom" :width="uiPx(90)">
           <template #default="{ row }">{{ row.cpu }}%</template>
         </el-table-column>
-        <el-table-column prop="mem" :label="t('monitor.mem')" sortable="custom" :width="uiPx(90)">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:visibleProcesses', 'mem')" prop="mem" :label="t('monitor.mem')" sortable="custom" :width="uiPx(90)">
           <template #default="{ row }">{{ row.mem }}%</template>
         </el-table-column>
-        <el-table-column :label="''" :width="uiPx(86)" align="center" class-name="proc-act-cell">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:visibleProcesses', 'actions-6')" :label="''" :width="uiPx(86)" align="center" class-name="proc-act-cell">
           <template #default="{ row }">
             <el-button size="small" @click.stop="onTableSignal(row, $event)">
               {{ t('monitor.sendSignal') }}
@@ -161,10 +162,11 @@
           {{ t('monitor.refresh') }}
         </el-button>
       </div>
-      <el-table :data="filteredPorts" size="small" border v-loading="loadingPorts" height="calc(100% - 2.25rem)" class="od-table">
+      <TableColumnPicker :table-key="'MonitorTabContent:filteredPorts'" :columns="[{key: 'protocol', label: t('monitor.port.protocol'), required: true}, {key: 'localAddr', label: t('monitor.port.localAddr'), required: false}, {key: 'process', label: t('monitor.port.process'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+      <el-table :ref="bindColumnTable('table1')" :data="filteredPorts" size="small" border v-loading="loadingPorts" height="calc(100% - 2.25rem - 2.25rem)" class="od-table">
         <el-table-column prop="protocol" :label="t('monitor.port.protocol')" sortable :width="uiPx(90)" />
-        <el-table-column prop="localAddr" :label="t('monitor.port.localAddr')" sortable :width="uiPx(160)" />
-        <el-table-column prop="process" :label="t('monitor.port.process')" sortable />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredPorts', 'localAddr')" prop="localAddr" :label="t('monitor.port.localAddr')" sortable :width="uiPx(160)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredPorts', 'process')" prop="process" :label="t('monitor.port.process')" sortable />
       </el-table>
     </div>
 
@@ -176,24 +178,25 @@
           {{ t('monitor.refresh') }}
         </el-button>
       </div>
-      <el-table :data="filteredDisks" size="small" border v-loading="loadingDisks" height="calc(100% - 2.25rem)" class="od-table">
+      <TableColumnPicker :table-key="'MonitorTabContent:filteredDisks'" :columns="[{key: 'name', label: t('monitor.disk.name'), required: true}, {key: 'type', label: t('monitor.disk.type'), required: false}, {key: 'mountPoint', label: t('monitor.disk.mountPoint'), required: false}, {key: 'size', label: t('monitor.disk.size'), required: false}, {key: 'used', label: t('monitor.disk.used'), required: false}, {key: 'usage', label: t('monitor.disk.usage'), required: false}, {key: 'media', label: t('monitor.disk.media'), required: false}, {key: 'fsType', label: t('monitor.disk.fstype'), required: false}, {key: 'uuid', label: t('monitor.disk.uuid'), required: false}, {key: 'vendor', label: t('monitor.disk.vendor'), required: false}, {key: 'model', label: t('monitor.disk.model'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table2'])" />
+      <el-table :ref="bindColumnTable('table2')" :data="filteredDisks" size="small" border v-loading="loadingDisks" height="calc(100% - 2.25rem - 2.25rem)" class="od-table">
         <el-table-column prop="name" :label="t('monitor.disk.name')" sortable>
           <template #default="{ row }">
             <span :style="{ paddingLeft: (row.name.match(/^ +/)?.[0].length || 0) * 6 + 'px' }">{{ row.name.trim() }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="type" :label="t('monitor.disk.type')" sortable :width="uiPx(90)" />
-        <el-table-column prop="mountPoint" :label="t('monitor.disk.mountPoint')" sortable />
-        <el-table-column prop="size" :label="t('monitor.disk.size')" sortable :width="uiPx(100)" />
-        <el-table-column prop="used" :label="t('monitor.disk.used')" sortable :width="uiPx(90)" />
-        <el-table-column prop="usage" :label="t('monitor.disk.usage')" sortable :width="uiPx(100)">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'type')" prop="type" :label="t('monitor.disk.type')" sortable :width="uiPx(90)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'mountPoint')" prop="mountPoint" :label="t('monitor.disk.mountPoint')" sortable />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'size')" prop="size" :label="t('monitor.disk.size')" sortable :width="uiPx(100)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'used')" prop="used" :label="t('monitor.disk.used')" sortable :width="uiPx(90)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'usage')" prop="usage" :label="t('monitor.disk.usage')" sortable :width="uiPx(100)">
           <template #default="{ row }">{{ row.usage ? row.usage + '%' : '-' }}</template>
         </el-table-column>
-        <el-table-column prop="media" :label="t('monitor.disk.media')" sortable :width="uiPx(80)" />
-        <el-table-column prop="fsType" :label="t('monitor.disk.fstype')" sortable :width="uiPx(100)" />
-        <el-table-column prop="uuid" :label="t('monitor.disk.uuid')" sortable :width="uiPx(180)" />
-        <el-table-column prop="vendor" :label="t('monitor.disk.vendor')" sortable :width="uiPx(120)" />
-        <el-table-column prop="model" :label="t('monitor.disk.model')" sortable />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'media')" prop="media" :label="t('monitor.disk.media')" sortable :width="uiPx(80)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'fsType')" prop="fsType" :label="t('monitor.disk.fstype')" sortable :width="uiPx(100)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'uuid')" prop="uuid" :label="t('monitor.disk.uuid')" sortable :width="uiPx(180)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'vendor')" prop="vendor" :label="t('monitor.disk.vendor')" sortable :width="uiPx(120)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredDisks', 'model')" prop="model" :label="t('monitor.disk.model')" sortable />
       </el-table>
     </div>
 
@@ -205,14 +208,15 @@
           {{ t('monitor.refresh') }}
         </el-button>
       </div>
-      <el-table :data="filteredNetCards" size="small" border v-loading="loadingNetCards" height="calc(100% - 2.25rem)" class="od-table">
+      <TableColumnPicker :table-key="'MonitorTabContent:filteredNetCards'" :columns="[{key: 'name', label: t('monitor.net.name'), required: true}, {key: 'state', label: t('monitor.net.state'), required: false}, {key: 'mac', label: t('monitor.net.mac'), required: false}, {key: 'speed', label: t('monitor.net.speed'), required: false}, {key: 'type', label: t('monitor.net.type'), required: false}, {key: 'bondMaster', label: t('monitor.net.bond'), required: false}, {key: 'ipAddrs', label: t('monitor.net.ipAddrs'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table3'])" />
+      <el-table :ref="bindColumnTable('table3')" :data="filteredNetCards" size="small" border v-loading="loadingNetCards" height="calc(100% - 2.25rem - 2.25rem)" class="od-table">
         <el-table-column prop="name" :label="t('monitor.net.name')" sortable :width="uiPx(120)" />
-        <el-table-column prop="state" :label="t('monitor.net.state')" sortable :width="uiPx(90)" />
-        <el-table-column prop="mac" :label="t('monitor.net.mac')" sortable :width="uiPx(160)" />
-        <el-table-column prop="speed" :label="t('monitor.net.speed')" sortable :width="uiPx(120)" />
-        <el-table-column prop="type" :label="t('monitor.net.type')" sortable :width="uiPx(100)" />
-        <el-table-column prop="bondMaster" :label="t('monitor.net.bond')" sortable :width="uiPx(120)" />
-        <el-table-column prop="ipAddrs" :label="t('monitor.net.ipAddrs')" sortable>
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredNetCards', 'state')" prop="state" :label="t('monitor.net.state')" sortable :width="uiPx(90)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredNetCards', 'mac')" prop="mac" :label="t('monitor.net.mac')" sortable :width="uiPx(160)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredNetCards', 'speed')" prop="speed" :label="t('monitor.net.speed')" sortable :width="uiPx(120)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredNetCards', 'type')" prop="type" :label="t('monitor.net.type')" sortable :width="uiPx(100)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredNetCards', 'bondMaster')" prop="bondMaster" :label="t('monitor.net.bond')" sortable :width="uiPx(120)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredNetCards', 'ipAddrs')" prop="ipAddrs" :label="t('monitor.net.ipAddrs')" sortable>
           <template #default="{ row }">{{ row.ipAddrs?.join(', ') || '-' }}</template>
         </el-table-column>
       </el-table>
@@ -242,18 +246,19 @@
           {{ t('monitor.refresh') }}
         </el-button>
       </div>
-      <el-table :data="filteredServices" size="small" border v-loading="loadingServices" height="calc(100% - 2.25rem)" class="od-table" @row-click="onServiceRowClick">
+      <TableColumnPicker :table-key="'MonitorTabContent:filteredServices'" :columns="[{key: 'name', label: t('monitor.service.name'), required: true}, {key: 'active', label: t('monitor.service.active'), required: false}, {key: 'enabled', label: t('monitor.service.enabled'), required: false}, {key: 'description', label: t('monitor.service.description'), required: false}, {key: 'monitor.service.actions', label: t('monitor.service.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table4'])" />
+      <el-table :ref="bindColumnTable('table4')" :data="filteredServices" size="small" border v-loading="loadingServices" height="calc(100% - 2.25rem - 2.25rem)" class="od-table" @row-click="onServiceRowClick">
         <el-table-column prop="name" :label="t('monitor.service.name')" sortable :min-width="uiPx(220)" />
-        <el-table-column prop="active" :label="t('monitor.service.active')" sortable :width="uiPx(100)">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredServices', 'active')" prop="active" :label="t('monitor.service.active')" sortable :width="uiPx(100)">
           <template #default="{ row }">
             <span class="svc-state" :class="serviceStateClass(row)">{{ row.active }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="enabled" :label="t('monitor.service.enabled')" sortable :width="uiPx(110)">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredServices', 'enabled')" prop="enabled" :label="t('monitor.service.enabled')" sortable :width="uiPx(110)">
           <template #default="{ row }">{{ row.enabled || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="description" :label="t('monitor.service.description')" :min-width="uiPx(220)" show-overflow-tooltip />
-        <el-table-column :label="t('monitor.service.actions')" :width="uiPx(120)" align="center">
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredServices', 'description')" prop="description" :label="t('monitor.service.description')" :min-width="uiPx(220)" show-overflow-tooltip />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredServices', 'monitor.service.actions')" :label="t('monitor.service.actions')" :width="uiPx(120)" align="center">
           <template #default="{ row }">
             <el-button size="small" @click.stop="onServiceActionMenu(row, $event)">
               {{ t('monitor.service.actions') }}
@@ -271,20 +276,21 @@
           {{ t('monitor.refresh') }}
         </el-button>
       </div>
-      <el-table :data="deviceTreeData" row-key="rowKey" :tree-props="{ children: 'children' }" size="small" border v-loading="loadingDevices" height="calc(100% - 2.25rem)" class="od-table">
+      <TableColumnPicker :table-key="'MonitorTabContent:deviceTreeData'" :columns="[{key: 'id', label: t('monitor.device.slot'), required: true}, {key: 'class', label: t('monitor.device.class'), required: false}, {key: 'vendor', label: t('monitor.device.vendor'), required: false}, {key: 'product', label: t('monitor.device.device'), required: false}, {key: 'driver', label: t('monitor.device.driver'), required: false}, {key: 'serial', label: t('monitor.device.serial'), required: false}, {key: 'capacity', label: t('monitor.device.capacity'), required: false}, {key: 'rev', label: t('monitor.device.rev'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table5'])" />
+      <el-table :ref="bindColumnTable('table5')" :data="deviceTreeData" row-key="rowKey" :tree-props="{ children: 'children' }" size="small" border v-loading="loadingDevices" height="calc(100% - 2.25rem - 2.25rem)" class="od-table">
         <el-table-column prop="id" :label="t('monitor.device.slot')" sortable :width="uiPx(150)" show-overflow-tooltip />
-        <el-table-column prop="class" :label="t('monitor.device.class')" :min-width="uiPx(150)" show-overflow-tooltip>
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'class')" prop="class" :label="t('monitor.device.class')" :min-width="uiPx(150)" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isGroup">{{ t('monitor.device.cat.' + row.category) }} ({{ row.count }})</span>
             <span v-else>{{ row.class }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="vendor" :label="t('monitor.device.vendor')" sortable :min-width="uiPx(150)" show-overflow-tooltip />
-        <el-table-column prop="product" :label="t('monitor.device.device')" :min-width="uiPx(220)" show-overflow-tooltip />
-        <el-table-column prop="driver" :label="t('monitor.device.driver')" sortable :width="uiPx(120)" show-overflow-tooltip />
-        <el-table-column prop="serial" :label="t('monitor.device.serial')" :width="uiPx(140)" show-overflow-tooltip />
-        <el-table-column prop="capacity" :label="t('monitor.device.capacity')" sortable :width="uiPx(100)" />
-        <el-table-column prop="rev" :label="t('monitor.device.rev')" :width="uiPx(90)" show-overflow-tooltip />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'vendor')" prop="vendor" :label="t('monitor.device.vendor')" sortable :min-width="uiPx(150)" show-overflow-tooltip />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'product')" prop="product" :label="t('monitor.device.device')" :min-width="uiPx(220)" show-overflow-tooltip />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'driver')" prop="driver" :label="t('monitor.device.driver')" sortable :width="uiPx(120)" show-overflow-tooltip />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'serial')" prop="serial" :label="t('monitor.device.serial')" :width="uiPx(140)" show-overflow-tooltip />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'capacity')" prop="capacity" :label="t('monitor.device.capacity')" sortable :width="uiPx(100)" />
+        <el-table-column v-if="columnIsVisible('MonitorTabContent:deviceTreeData', 'rev')" prop="rev" :label="t('monitor.device.rev')" :width="uiPx(90)" show-overflow-tooltip />
       </el-table>
     </div>
 
@@ -352,19 +358,22 @@
         <div v-if="hardwareSensors && !hardwareSensors.hasIpmi" class="health-hint health-bottom-hint">
           {{ t('monitor.health.noIpmi') }}
         </div>
-        <el-table v-if="hardwareSensors && hardwareSensors.sensors.length" :data="filteredSensors" size="small" border v-loading="loadingHardwareSensors" height="calc(100% - 2.25rem)" class="od-table health-table">
+        <template v-if="hardwareSensors && hardwareSensors.sensors.length">
+        <TableColumnPicker :table-key="'MonitorTabContent:filteredSensors'" :columns="[{key: 'name', label: t('monitor.health.name'), required: true}, {key: 'value', label: t('monitor.health.value'), required: false}, {key: 'unit', label: t('monitor.health.unit'), required: false}, {key: 'status', label: t('monitor.health.status'), required: false}, {key: 'source', label: t('monitor.health.source'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table6'])" />
+        <el-table :ref="bindColumnTable('table6')"  :data="filteredSensors" size="small" border v-loading="loadingHardwareSensors" height="calc(100% - 2.25rem - 2.25rem)" class="od-table health-table">
           <el-table-column prop="name" :label="t('monitor.health.name')" sortable :min-width="uiPx(160)" />
-          <el-table-column prop="value" :label="t('monitor.health.value')" :min-width="uiPx(140)" />
-          <el-table-column prop="unit" :label="t('monitor.health.unit')" :width="uiPx(110)">
+          <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredSensors', 'value')" prop="value" :label="t('monitor.health.value')" :min-width="uiPx(140)" />
+          <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredSensors', 'unit')" prop="unit" :label="t('monitor.health.unit')" :width="uiPx(110)">
             <template #default="{ row }">{{ row.unit || '-' }}</template>
           </el-table-column>
-          <el-table-column prop="status" :label="t('monitor.health.status')" :width="uiPx(110)">
+          <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredSensors', 'status')" prop="status" :label="t('monitor.health.status')" :width="uiPx(110)">
             <template #default="{ row }">
               <span class="svc-state" :class="sensorStatusClass(row.status)">{{ row.status }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="source" :label="t('monitor.health.source')" :width="uiPx(110)" />
+          <el-table-column v-if="columnIsVisible('MonitorTabContent:filteredSensors', 'source')" prop="source" :label="t('monitor.health.source')" :width="uiPx(110)" />
         </el-table>
+        </template>
       </div>
     </div>
 
@@ -562,6 +571,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { SetMonitorActiveTab, SetMonitorPaused, GetProcessDetail, KillProcess, GetPorts, GetDisks, GetNetworkCards, GetServices, GetServiceDetail, GetServiceLogs, ServiceAction, GetDevices, GetHardwareFru, GetHardwareLan, GetHardwareSensors } from '../../bindings/github.com/ys-ll/uniterm/app'
 import { msg } from '../services/message'

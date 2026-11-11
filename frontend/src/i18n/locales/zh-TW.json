@@ -1,4 +1,7 @@
 {
+  "k8s.ownerBack": "返回",
+  "k8s.ownerLoading": "正在載入 Owner…",
+  "k8s.ownerFailed": "無法開啟 Owner",
   "webUsers.resetPassword": "重設密碼",
   "webUsers.resetPrompt": "為 {name} 設定新密碼（≥6 位）。該操作會清空其全部金鑰資料——登入密碼即資料主密碼。",
   "webUsers.resetTitle": "重設密碼",
@@ -2307,5 +2310,11 @@
   "monitor.secAllDisk": "全部磁碟",
   "monitor.secNetwork": "網路",
   "monitor.secAllNet": "全部網卡",
-  "monitor.secClock": "時區"
+  "monitor.secClock": "時區",
+  "tableColumns.show": "顯示欄位",
+  "tableColumns.reset": "恢復預設",
+  "tableColumns.search": "搜尋欄位",
+  "tableColumns.required": "必選",
+  "tableColumns.noMatch": "沒有符合的欄位",
+  "tableColumns.saved": "立即生效 · 儲存在目前瀏覽器"
 }

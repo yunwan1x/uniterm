@@ -258,9 +258,10 @@
         </div>
         <p class="csv-hint">{{ t('db.csvPreviewCount', { count: csvPreview?.rows?.length || 0 }) }}</p>
         <div class="csv-sample">
-          <table>
-            <thead><tr><th v-for="(header, i) in csvPreview?.headers || []" :key="i">{{ header }}</th></tr></thead>
-            <tbody><tr v-for="(row, i) in csvPreview?.rows || []" :key="i"><td v-for="(cell, j) in row" :key="j">{{ cell }}</td></tr></tbody>
+          <TableColumnPicker :table-key="'csv-preview:' + JSON.stringify(csvPreview?.headers || [])" :columns="(csvPreview?.headers || []).map((header, i) => ({key: String(i), label: header, required: i === 0}))" />
+<table>
+            <thead><tr><th v-for="(header, i) in (csvPreview?.headers || []).filter((_, j) => j === 0 || columnIsVisible('csv-preview:' + JSON.stringify(csvPreview?.headers || []), String(j)))" :key="i">{{ header }}</th></tr></thead>
+            <tbody><tr v-for="(row, i) in csvPreview?.rows || []" :key="i"><td v-for="(cell, j) in row.filter((_, k) => k === 0 || columnIsVisible('csv-preview:' + JSON.stringify(csvPreview?.headers || []), String(k)))" :key="j">{{ cell }}</td></tr></tbody>
           </table>
         </div>
         <template #footer>
@@ -295,6 +296,9 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { columnIsVisible } from '../composables/useTableColumns'
+
 import { ref, shallowRef, computed, watch, nextTick, onMounted } from 'vue'
 import { Sparkles, History, FolderOpen, Download, Upload, Plus, ChevronUp, ChevronDown, ListFilter, X } from '@lucide/vue'
 import { isNarrowScreen } from '../utils/platform'

@@ -30,11 +30,12 @@
 
     <div class="container-table-wrap">
       <div class="table-flex">
-      <el-table
+      <TableColumnPicker :table-key="'ImagesView:filteredImages'" :columns="[{key: 'container.colRepository', label: t('container.colRepository'), required: true}, {key: 'container.colTag', label: t('container.colTag'), required: false}, {key: 'container.colId', label: t('container.colId'), required: false}, {key: 'container.colSize', label: t('container.colSize'), required: false}, {key: 'container.colCreated', label: t('container.colCreated'), required: false}, {key: 'container.colRelated', label: t('container.colRelated'), required: false}, {key: 'container.colActions', label: t('container.colActions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+      <el-table :ref="bindColumnTable('table0')"
         v-loading="!session?.images.length && !!session?.imagesLoading"
         :data="filteredImages"
         size="small"
-        height="100%"
+        height="calc(100% - 2.25rem)"
         class="k8s-list-table"
         border
         @row-click="openDetail"
@@ -42,19 +43,19 @@
         <el-table-column :label="t('container.colRepository')" :min-width="uiPx(200)" sortable :sort-method="(a, b) => a.repository.localeCompare(b.repository)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.repository }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colTag')" :min-width="uiPx(120)" sortable :sort-method="(a, b) => a.tag.localeCompare(b.tag)" show-overflow-tooltip>
+        <el-table-column v-if="columnIsVisible('ImagesView:filteredImages', 'container.colTag')" :label="t('container.colTag')" :min-width="uiPx(120)" sortable :sort-method="(a, b) => a.tag.localeCompare(b.tag)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.tag }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colId')" :width="uiPx(120)">
+        <el-table-column v-if="columnIsVisible('ImagesView:filteredImages', 'container.colId')" :label="t('container.colId')" :width="uiPx(120)">
           <template #default="{ row }">{{ shortId(row.id) }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colSize')" :width="uiPx(100)" sortable :sort-method="(a, b) => a.size.localeCompare(b.size)">
+        <el-table-column v-if="columnIsVisible('ImagesView:filteredImages', 'container.colSize')" :label="t('container.colSize')" :width="uiPx(100)" sortable :sort-method="(a, b) => a.size.localeCompare(b.size)">
           <template #default="{ row }">{{ row.size }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colCreated')" :min-width="uiPx(120)" sortable :sort-method="(a, b) => a.createdAt.localeCompare(b.createdAt)" show-overflow-tooltip>
+        <el-table-column v-if="columnIsVisible('ImagesView:filteredImages', 'container.colCreated')" :label="t('container.colCreated')" :min-width="uiPx(120)" sortable :sort-method="(a, b) => a.createdAt.localeCompare(b.createdAt)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.createdAt }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colRelated')" :width="uiPx(90)" align="center">
+        <el-table-column v-if="columnIsVisible('ImagesView:filteredImages', 'container.colRelated')" :label="t('container.colRelated')" :width="uiPx(90)" align="center">
           <template #default="{ row }">
             <el-link
               v-if="relatedCount(row) > 0"
@@ -65,7 +66,7 @@
             >{{ relatedCount(row) }}</el-link>
           </template>
         </el-table-column>
-        <el-table-column :label="t('container.colActions')" :width="uiPx(120)" fixed="right" class-name="k8s-action-cell">
+        <el-table-column v-if="columnIsVisible('ImagesView:filteredImages', 'container.colActions')" :label="t('container.colActions')" :width="uiPx(120)" fixed="right" class-name="k8s-action-cell">
           <template #default="{ row }">
             <button class="btn btn-ghost btn-icon btn-sm" :title="t('container.create')" @click.stop="onRunImage(row)">
               <Play :size="'0.875rem'" />
@@ -150,6 +151,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { RefreshCw, Play, Tag, ArrowUpFromLine, ArrowDownToLine, Trash2, Square, ScrollText, BrushCleaning } from '@lucide/vue'

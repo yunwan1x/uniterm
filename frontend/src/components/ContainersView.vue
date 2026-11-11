@@ -41,11 +41,12 @@
     </div>
 
     <div class="container-table-wrap">
-      <el-table
+      <TableColumnPicker :table-key="'ContainersView:filteredContainers'" :columns="[{key: 'container.colName', label: t('container.colName'), required: true}, {key: 'container.colImage', label: t('container.colImage'), required: false}, {key: 'container.colId', label: t('container.colId'), required: false}, {key: 'container.colState', label: t('container.colState'), required: false}, {key: 'container.colPorts', label: t('container.colPorts'), required: false}, {key: 'container.colCreated', label: t('container.colCreated'), required: false}, {key: 'container.colActions', label: t('container.colActions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+      <el-table :ref="bindColumnTable('table0')"
         v-loading="!session?.containers.length && !!session?.refreshing"
         :data="filteredContainers"
         size="small"
-        height="calc(100% - 2.5rem)"
+        height="calc(100% - 2.5rem - 2.25rem)"
         class="k8s-list-table"
         border
         @row-click="openDetail"
@@ -55,13 +56,13 @@
             <span>{{ row.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('container.colImage')" :min-width="uiPx(220)" sortable :sort-method="(a, b) => a.image.localeCompare(b.image)" show-overflow-tooltip>
+        <el-table-column v-if="columnIsVisible('ContainersView:filteredContainers', 'container.colImage')" :label="t('container.colImage')" :min-width="uiPx(220)" sortable :sort-method="(a, b) => a.image.localeCompare(b.image)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.image }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colId')" :width="uiPx(120)">
+        <el-table-column v-if="columnIsVisible('ContainersView:filteredContainers', 'container.colId')" :label="t('container.colId')" :width="uiPx(120)">
           <template #default="{ row }">{{ shortId(row.id) }}</template>
         </el-table-column>
-        <el-table-column
+        <el-table-column v-if="columnIsVisible('ContainersView:filteredContainers', 'container.colState')"
           :label="t('container.colState')"
           :width="uiPx(110)"
           sortable
@@ -73,13 +74,13 @@
             <span :data-state="row.state" class="container-state">{{ row.state }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('container.colPorts')" :min-width="uiPx(160)" sortable :sort-method="(a, b) => a.ports.localeCompare(b.ports)" show-overflow-tooltip>
+        <el-table-column v-if="columnIsVisible('ContainersView:filteredContainers', 'container.colPorts')" :label="t('container.colPorts')" :min-width="uiPx(160)" sortable :sort-method="(a, b) => a.ports.localeCompare(b.ports)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.ports }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colCreated')" :min-width="uiPx(130)" sortable :sort-method="(a, b) => a.createdAt.localeCompare(b.createdAt)" show-overflow-tooltip>
+        <el-table-column v-if="columnIsVisible('ContainersView:filteredContainers', 'container.colCreated')" :label="t('container.colCreated')" :min-width="uiPx(130)" sortable :sort-method="(a, b) => a.createdAt.localeCompare(b.createdAt)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.createdAt }}</template>
         </el-table-column>
-        <el-table-column :label="t('container.colActions')" :width="uiPx(150)" fixed="right" class-name="k8s-action-cell">
+        <el-table-column v-if="columnIsVisible('ContainersView:filteredContainers', 'container.colActions')" :label="t('container.colActions')" :width="uiPx(150)" fixed="right" class-name="k8s-action-cell">
           <template #default="{ row }">
             <button class="btn btn-ghost btn-icon btn-sm" :title="t('container.exec')" :disabled="row.state !== 'running'" @click.stop="openExec(row)">
               <SquareTerminal :size="'0.875rem'" />
@@ -132,6 +133,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { RefreshCw, SquareTerminal, FolderOpen, ScrollText, Play, Square, Power, Pencil, Trash2, Ellipsis, Camera } from '@lucide/vue'

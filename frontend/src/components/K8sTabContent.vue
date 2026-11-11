@@ -51,6 +51,7 @@
             :frame="topFrame"
             :namespace-options="namespaceOptions"
             @open-detail="openDetail"
+            @open-owner="openOwnerFromList"
             @open-yaml="openYaml"
             @open-logs="openLogs"
             @view-pods="viewPods"
@@ -82,6 +83,11 @@
       :resource-key="drawerResourceKey"
       :self-path-override="drawerSelfPathOverride"
       :initial-tab="drawerInitialTab"
+      :history="drawerHistory.map(entry => `${entry.target.kind || entry.resourceKey}/${entry.target.metadata?.name || ''}`)"
+      :owner-loading="ownerLoading"
+      :owner-error="ownerError"
+      @open-owner="owner => openOwner(drawerTarget, owner)"
+      @navigate="navigateDrawer"
       @close="closeDrawer"
       @saved="() => {}"
     />
@@ -89,6 +95,7 @@
 </template>
 
 <script setup lang="ts">
+import { fetchOwner, type OwnerReference } from '../services/k8sOwners'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { PanelLeft } from '@lucide/vue'
 import { isNarrowScreen } from '../utils/platform'
@@ -204,22 +211,59 @@ const drawerTarget = ref<any | null>(null)
 const drawerResourceKey = ref<string>('pods')
 const drawerSelfPathOverride = ref<((obj: any) => string) | undefined>(undefined)
 const drawerInitialTab = ref<'detail' | 'yaml'>('detail')
+type DrawerEntry = { target: any; resourceKey: string; selfPath?: (obj: any) => string }
+const drawerHistory = ref<DrawerEntry[]>([])
+const ownerLoading = ref(false)
+const ownerError = ref('')
+let ownerGeneration = 0
+function resetOwnerNavigation() { ownerGeneration++; ownerLoading.value = false; ownerError.value = ''; drawerHistory.value = [] }
+function currentDrawerEntry(): DrawerEntry { return { target: drawerTarget.value, resourceKey: drawerResourceKey.value, selfPath: drawerSelfPathOverride.value } }
+function showDrawerEntry(entry: DrawerEntry) {
+  drawerTarget.value = entry.target; drawerResourceKey.value = entry.resourceKey; drawerSelfPathOverride.value = entry.selfPath
+  drawerInitialTab.value = 'detail'; drawerMode.value = 'detail'
+}
+function navigateDrawer(index: number) {
+  const entry = drawerHistory.value[index]
+  if (!entry) return
+  ownerGeneration++; ownerLoading.value = false; ownerError.value = ''
+  drawerHistory.value = drawerHistory.value.slice(0, index + 1)
+  showDrawerEntry(entry)
+}
+async function openOwner(source: any, owner: OwnerReference) {
+  const generation = ++ownerGeneration
+  ownerLoading.value = true; ownerError.value = ''
+  try {
+    const entry = await fetchOwner(connId.value, source, owner, k8sClient.requestJSON)
+    if (generation !== ownerGeneration) return
+    const existing = drawerHistory.value.findIndex(e => e.target.metadata?.uid && e.target.metadata.uid === entry.target.metadata?.uid)
+    if (existing >= 0) { navigateDrawer(existing); return }
+    drawerHistory.value = [...drawerHistory.value, entry]
+    showDrawerEntry(entry)
+  } catch (e: any) {
+    if (generation === ownerGeneration) ownerError.value = `${t('k8s.ownerFailed')}: ${e?.message || e}`
+  } finally { if (generation === ownerGeneration) ownerLoading.value = false }
+}
+function openOwnerFromList(source: any, owner: OwnerReference) { openDetail(source); void openOwner(source, owner) }
 function openDetail(obj: any) {
+  resetOwnerNavigation()
   drawerTarget.value = obj
   drawerResourceKey.value = resourceKeyOf()
   drawerSelfPathOverride.value = crSelfPathOverride()
   drawerInitialTab.value = 'detail'
   drawerMode.value = 'detail'
+  drawerHistory.value = [currentDrawerEntry()]
 }
 function openYaml(obj: any) {
+  resetOwnerNavigation()
   drawerTarget.value = obj
   drawerResourceKey.value = resourceKeyOf()
   drawerSelfPathOverride.value = crSelfPathOverride()
   drawerInitialTab.value = 'yaml'
   drawerMode.value = 'detail'
+  drawerHistory.value = [currentDrawerEntry()]
 }
-function openLogs(pod: any) { drawerTarget.value = pod; drawerResourceKey.value = 'pods'; drawerSelfPathOverride.value = undefined; drawerMode.value = 'logs' }
-function closeDrawer() { drawerMode.value = null; drawerTarget.value = null }
+function openLogs(pod: any) { resetOwnerNavigation(); drawerTarget.value = pod; drawerResourceKey.value = 'pods'; drawerSelfPathOverride.value = undefined; drawerMode.value = 'logs' }
+function closeDrawer() { resetOwnerNavigation(); drawerMode.value = null; drawerTarget.value = null }
 function resourceKeyOf(): string {
   const f = topFrame.value
   if (f.kind === 'list') return f.resourceKey

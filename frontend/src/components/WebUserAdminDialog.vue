@@ -23,15 +23,16 @@
       <el-button type="primary" :loading="creating" @click="create">{{ t('webUsers.add') }}</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="users" size="small" class="web-users-table">
+    <TableColumnPicker :table-key="'WebUserAdminDialog:users'" :columns="[{key: 'username', label: t('webUsers.username'), required: true}, {key: 'webUsers.role', label: t('webUsers.role'), required: false}, {key: 'webUsers.createdAt', label: t('webUsers.createdAt'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+    <el-table :ref="bindColumnTable('table0')" v-loading="loading" :data="users" size="small" class="web-users-table">
       <el-table-column prop="username" :label="t('webUsers.username')" min-width="140" />
-      <el-table-column :label="t('webUsers.role')" width="110">
+      <el-table-column v-if="columnIsVisible('WebUserAdminDialog:users', 'webUsers.role')" :label="t('webUsers.role')" width="110">
         <template #default="{ row }">{{ roleLabel(row.role) }}</template>
       </el-table-column>
-      <el-table-column :label="t('webUsers.createdAt')" min-width="170">
+      <el-table-column v-if="columnIsVisible('WebUserAdminDialog:users', 'webUsers.createdAt')" :label="t('webUsers.createdAt')" min-width="170">
         <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column :label="t('common.actions')" width="150" align="right">
+      <el-table-column v-if="columnIsVisible('WebUserAdminDialog:users', 'common.actions')" :label="t('common.actions')" width="150" align="right">
         <template #default="{ row }">
           <el-button
             v-if="row.username !== currentUser"
@@ -60,6 +61,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useI18n } from '../i18n'

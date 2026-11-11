@@ -81,7 +81,8 @@
           {{ t('batch.completed', { success: batchStore.countByStatus('success'), failed: batchStore.countByStatus('failed') }) }}
         </span>
       </div>
-      <el-table :data="batchStore.sessions" border stripe size="small" class="result-table">
+      <TableColumnPicker :table-key="'BatchExecuteDialog:batchStore.sessions'" :columns="[{key: 'hostName', label: t('batch.host'), required: true}, {key: 'batch.status', label: t('batch.status'), required: false}, {key: 'batch.duration', label: t('batch.duration'), required: false}, {key: 'batch.output', label: t('batch.output'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+      <el-table :ref="bindColumnTable('table0')" :data="batchStore.sessions" border stripe size="small" class="result-table">
         <el-table-column :label="t('batch.host')" prop="hostName" width="160">
           <template #default="{ row }">
             <div class="host-cell">
@@ -90,18 +91,18 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="t('batch.status')" width="110" align="center">
+        <el-table-column v-if="columnIsVisible('BatchExecuteDialog:batchStore.sessions', 'batch.status')" :label="t('batch.status')" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('batch.duration')" width="100" align="right">
+        <el-table-column v-if="columnIsVisible('BatchExecuteDialog:batchStore.sessions', 'batch.duration')" :label="t('batch.duration')" width="100" align="right">
           <template #default="{ row }">
             <span v-if="row.startTime && row.endTime">{{ formatDuration(row.endTime - row.startTime) }}</span>
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('batch.output')" min-width="200">
+        <el-table-column v-if="columnIsVisible('BatchExecuteDialog:batchStore.sessions', 'batch.output')" :label="t('batch.output')" min-width="200">
           <template #default="{ row }">
             <div class="output-cell">
               <span class="output-preview">{{ row.preview || t('batch.noOutput') }}</span>
@@ -161,6 +162,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { Clipboard } from '@wailsio/runtime'

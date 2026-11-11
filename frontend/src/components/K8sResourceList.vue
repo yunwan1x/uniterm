@@ -22,22 +22,27 @@
     <div v-if="listError" class="k8s-list-err">{{ listErrorText }}</div>
 
     <!-- CRD 实例列表：动态列 -->
-    <el-table
-      v-if="frame.kind === 'custom'"
+    <template v-if="frame.kind === 'custom'">
+    <TableColumnPicker :table-key="columnPreferenceKey" :columns="[{key: 'Name', label: 'Name', required: true}, ...(frame.crd.printerColumns).map(pc => ({key: String(pc.name), label: pc.name, required: false})), {key: 'ownerReferences', label: 'Owner', required: false}, {key: 'Age', label: 'Age', required: false}, {key: 'k8s.actions', label: t('k8s.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+    <el-table :ref="bindColumnTable('table0')"
+
       :data="crdFiltered"
       size="small"
-      height="calc(100% - 2.5rem)"
+      height="calc(100% - 2.5rem - 2.25rem)"
       class="k8s-list-table"
       border
       v-loading="isLoading"
       @row-click="r => emit('open-detail', r)"
     >
       <el-table-column label="Name" show-overflow-tooltip><template #default="{ row }">{{ row.metadata?.name }}</template></el-table-column>
-      <el-table-column v-for="pc in frame.crd.printerColumns" :key="pc.name" :label="pc.name" show-overflow-tooltip>
+      <el-table-column v-for="pc in (frame.crd.printerColumns).filter(pc => columnIsVisible(columnPreferenceKey, String(pc.name)))" :key="pc.name" :label="pc.name" show-overflow-tooltip>
         <template #default="{ row }">{{ evalJsonPath(row, pc.jsonPath) }}</template>
       </el-table-column>
-      <el-table-column label="Age"><template #default="{ row }">{{ age(row.metadata?.creationTimestamp) }}</template></el-table-column>
-      <el-table-column :label="t('k8s.actions')" :width="uiPx(66)" fixed="right" class-name="k8s-action-cell">
+      <el-table-column v-if="columnIsVisible(columnPreferenceKey, 'ownerReferences')" label="Owner" :min-width="uiPx(140)">
+        <template #default="{ row }"><K8sOwnerLinks :target="row" type-only @open="owner => emit('open-owner', row, owner)" /></template>
+      </el-table-column>
+      <el-table-column v-if="columnIsVisible(columnPreferenceKey, 'Age')" label="Age"><template #default="{ row }">{{ age(row.metadata?.creationTimestamp) }}</template></el-table-column>
+      <el-table-column v-if="columnIsVisible(columnPreferenceKey, 'k8s.actions')" :label="t('k8s.actions')" :width="uiPx(66)" fixed="right" class-name="k8s-action-cell">
         <template #default="{ row }">
           <button class="btn btn-ghost btn-icon btn-sm" :title="t('k8s.actionEdit')" @click.stop="emit('open-yaml', row)">
             <Pencil :size="'0.875rem'" />
@@ -48,13 +53,16 @@
         </template>
       </el-table-column>
     </el-table>
+    </template>
 
     <!-- 常规资源列表 -->
-    <el-table
-      v-else
+    <template v-else>
+    <TableColumnPicker :table-key="columnPreferenceKey" :columns="[...(desc?.columns || []).map((col, columnIndex) => ({key: String(col.header), label: col.header, required: columnIndex === 0})), {key: 'ownerReferences', label: 'Owner', required: false}, ...((actionColWidth) ? [{key: 'k8s.actions', label: t('k8s.actions'), required: false}] : [])]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+    <el-table :ref="bindColumnTable('table1')"
+
       :data="filtered"
       size="small"
-      height="calc(100% - 2.5rem)"
+      height="calc(100% - 2.5rem - 2.25rem)"
       class="k8s-list-table"
       border
       v-loading="isLoading"
@@ -62,7 +70,7 @@
       @row-click="onRowClick"
     >
       <el-table-column
-        v-for="col in desc?.columns || []"
+        v-for="col in (desc?.columns || []).filter((col, columnIndex) => columnIndex === 0 || columnIsVisible(columnPreferenceKey, String(col.header)))"
         :key="col.header"
         :label="col.header"
         :width="col.width ? uiPx(col.width) : undefined"
@@ -75,7 +83,10 @@
         <template #default="{ row }">{{ cellText(col.value(row, usageOf(row))) }}</template>
       </el-table-column>
 
-      <el-table-column v-if="actionColWidth" :label="t('k8s.actions')" :width="uiPx(actionColWidth)" fixed="right" class-name="k8s-action-cell">
+      <el-table-column v-if="columnIsVisible(columnPreferenceKey, 'ownerReferences')" label="Owner" :min-width="uiPx(140)">
+        <template #default="{ row }"><K8sOwnerLinks :target="row" type-only @open="owner => emit('open-owner', row, owner)" /></template>
+      </el-table-column>
+      <el-table-column v-if="(actionColWidth) && columnIsVisible(columnPreferenceKey, 'k8s.actions')" :label="t('k8s.actions')" :width="uiPx(actionColWidth)" fixed="right" class-name="k8s-action-cell">
         <template #default="{ row }">
           <button
             v-for="a in rowActions(row)"
@@ -90,6 +101,7 @@
         </template>
       </el-table-column>
     </el-table>
+    </template>
 
     <K8sCreateDialog
       v-model="createVisible"
@@ -103,6 +115,12 @@
 </template>
 
 <script setup lang="ts">
+import K8sOwnerLinks from './K8sOwnerLinks.vue'
+import type { OwnerReference } from '../services/k8sOwners'
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { computed, ref, watch, onBeforeUnmount, h } from 'vue'
 import { uiPx } from '../utils/uiScale'
 import {
@@ -128,6 +146,7 @@ import type { NavFrame } from '../types/k8s'
 const props = defineProps<{ connId: string; frame: Exclude<NavFrame, { kind: 'overview' }>; namespaceOptions: string[] }>()
 const emit = defineEmits<{
   (e: 'open-detail', obj: any): void
+  (e: 'open-owner', obj: any, owner: OwnerReference): void
   (e: 'open-yaml', obj: any): void
   (e: 'open-logs', pod: any): void
   (e: 'view-pods', owner: { kind: string; name: string; uid: string; namespace: string }): void
@@ -147,6 +166,7 @@ const isLoading = computed(() => {
   return store.isLoading(props.connId, f.resourceKey, f.namespace)
 })
 
+const columnPreferenceKey = computed(() => props.frame.kind === 'custom' ? 'k8s:custom:' + props.frame.crd.group + '/' + props.frame.crd.plural : 'k8s:' + props.frame.resourceKey)
 const resourceKey = computed(() => props.frame.kind === 'custom' ? '__crd__' : props.frame.resourceKey)
 const desc = computed(() => props.frame.kind === 'custom' ? undefined : getResource(props.frame.resourceKey))
 const localNs = computed(() => props.frame.namespace || '')

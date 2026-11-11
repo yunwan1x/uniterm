@@ -70,7 +70,8 @@
 
         <div v-if="filteredTableData.length > 0" class="result-grid">
           <div class="result-table-wrap">
-            <el-table
+            <TableColumnPicker :table-key="'MongoDBCollectionView' + ':' + JSON.stringify(columns)" :columns="[...(columns).map((col, columnIndex) => ({key: String(col), label: col, required: columnIndex === 0})), {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+            <el-table :ref="bindColumnTable('table0')"
               :data="filteredTableData"
               border
               size="small"
@@ -80,7 +81,7 @@
               @row-dblclick="onRowDblClick"
             >
               <el-table-column
-                v-for="col in columns"
+                v-for="col in (columns).filter((col, columnIndex) => columnIndex === 0 || columnIsVisible('MongoDBCollectionView' + ':' + JSON.stringify(columns), String(col)))"
                 :key="col"
                 :prop="col"
                 :label="col"
@@ -94,7 +95,7 @@
                   >{{ formatCellValue(row[col]) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :width="uiPx(80)" fixed="right">
+              <el-table-column v-if="columnIsVisible('MongoDBCollectionView' + ':' + JSON.stringify(columns), 'common.actions')" :width="uiPx(80)" fixed="right">
                 <template #default="{ row }">
                   <button class="btn btn-ghost btn-icon btn-sm" @click.stop="onRowDblClick(row)">
                     <Pencil :size="'0.875rem'" />
@@ -143,20 +144,21 @@
           <Plus :size="'0.875rem'" /> {{ t('db.addIndex') }}
         </button>
       </div>
-      <el-table :data="indexes" border size="small" style="width:100%" :empty-text="t('db.noData')">
+      <TableColumnPicker :table-key="'MongoDBCollectionView:indexes'" :columns="[{key: 'name', label: t('db.colName'), required: true}, {key: 'Fields', label: 'Fields', required: false}, {key: 'type', label: t('db.colType'), required: false}, {key: 'unique', label: 'Unique', required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+      <el-table :ref="bindColumnTable('table1')" :data="indexes" border size="small" style="width:100%" :empty-text="t('db.noData')">
         <el-table-column prop="name" :label="t('db.colName')" show-overflow-tooltip />
-        <el-table-column label="Fields">
+        <el-table-column v-if="columnIsVisible('MongoDBCollectionView:indexes', 'Fields')" label="Fields">
           <template #default="{ row }">
             {{ (row as MongoIndexInfo).keys.join(', ') }}
           </template>
         </el-table-column>
-        <el-table-column prop="type" :label="t('db.colType')" />
-        <el-table-column prop="unique" label="Unique" :width="uiPx(80)">
+        <el-table-column v-if="columnIsVisible('MongoDBCollectionView:indexes', 'type')" prop="type" :label="t('db.colType')" />
+        <el-table-column v-if="columnIsVisible('MongoDBCollectionView:indexes', 'unique')" prop="unique" label="Unique" :width="uiPx(80)">
           <template #default="{ row }">
             {{ row.unique ? '✓' : '' }}
           </template>
         </el-table-column>
-        <el-table-column :width="uiPx(60)">
+        <el-table-column v-if="columnIsVisible('MongoDBCollectionView:indexes', 'common.actions')" :width="uiPx(60)">
           <template #default="{ row }">
             <button v-if="row.name !== '_id_'" class="btn btn-ghost btn-icon btn-sm" style="color:var(--error)" @click="dropIndex(row.name)">
               <Trash2 :size="'0.875rem'" />
@@ -208,6 +210,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Pencil, Trash2, Sparkles, Plus, ChevronUp, ChevronDown } from '@lucide/vue'
 import { isNarrowScreen } from '../utils/platform'

@@ -5,13 +5,14 @@
     tabindex="0"
     @keydown="onGridKeydown"
   >
+    <TableColumnPicker :table-key="'db:result:' + JSON.stringify(columns.map(c => c.name))" :columns="[...(columns).map((col, columnIndex) => ({key: String(col.name), label: colTitle(col) || col.name, required: columnIndex === 0})), ...((canEdit) ? [{key: 'actions-1', label: actionsLabel || t('container.colActions'), required: false}] : [])]" @change="onColumnVisibilityChange" />
     <el-table
       :key="tableKey"
       ref="tableRef"
       :data="rows"
       border
       size="small"
-      height="100%"
+      height="calc(100% - 2.25rem)"
       style="width: 100%"
       class="db-result-table"
       :empty-text="emptyText"
@@ -22,7 +23,7 @@
       @cell-contextmenu="onCellContextMenu"
     >
       <el-table-column
-        v-for="col in columns"
+        v-for="col in (columns).filter((col, columnIndex) => columnIndex === 0 || columnIsVisible('db:result:' + JSON.stringify(columns.map(c => c.name)), String(col.name)))"
         :key="col.name"
         :prop="col.name"
         :label="colTitle(col)"
@@ -71,7 +72,7 @@
       </el-table-column>
 
       <el-table-column
-        v-if="canEdit"
+        v-if="(canEdit) && columnIsVisible('db:result:' + JSON.stringify(columns.map(c => c.name)), 'actions-1')"
         :label="actionsLabel"
         :width="uiPx(100)"
         fixed="right"
@@ -125,6 +126,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, refreshColumnLayout } = useTableColumns()
+
 import { computed, nextTick, onBeforeUnmount, reactive, shallowReactive, shallowRef, ref, watch } from 'vue'
 import { Pencil, Copy, Trash2 } from '@lucide/vue'
 import type { QueryResultColumn, ColumnInfo } from '../types/database'
@@ -215,9 +220,17 @@ function openCellMenu(x: number, y: number) {
 
 /** 单元格选中高亮（cellClassName 挂在 el-table 的 td 上）。 */
 function cellClassName({ row, columnIndex }: { row: Record<string, any>; columnIndex: number }) {
-  const col = props.columns[columnIndex]
+  const col = props.columns.filter((c, i) => i === 0 || columnIsVisible('db:result:' + JSON.stringify(props.columns.map(c => c.name)), c.name))[columnIndex]
   if (col && isCellSelected(row, col.name)) return 'db-cell-selected'
   return ''
+}
+
+function onColumnVisibilityChange() {
+  // Do not leave a selection/cell editor pointing at an invisible field.
+  onCellEditCancel()
+  selectedCell.value = null
+  cellMenuVisible.value = false
+  refreshColumnLayout(tableRef.value)
 }
 
 function copySelectedCell() {

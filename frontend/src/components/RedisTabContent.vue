@@ -119,19 +119,20 @@
 
             <!-- Hash Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'hash'">
-              <el-table :data="hashEntries" border size="small">
+              <TableColumnPicker :table-key="'RedisTabContent:hashEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'field', label: t('redis.field'), required: true}, {key: 'value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+              <el-table :ref="bindColumnTable('table0')" :data="hashEntries" border size="small">
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
                 <el-table-column prop="field" :label="t('redis.field')">
                   <template #default="{ $index }">
                     <el-input v-model="hashEntries[$index].field" size="small" type="textarea" :rows="1" autosize />
                   </template>
                 </el-table-column>
-                <el-table-column prop="value" :label="t('redis.value')">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:hashEntries', 'value')" prop="value" :label="t('redis.value')">
                   <template #default="{ $index }">
                     <el-input v-model="hashEntries[$index].value" size="small" type="textarea" :rows="1" autosize />
                   </template>
                 </el-table-column>
-                <el-table-column :width="uiPx(50)">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:hashEntries', 'common.actions')" :width="uiPx(50)">
                   <template #default="{ $index }">
                     <button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="hashEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button>
                   </template>
@@ -142,19 +143,20 @@
 
             <!-- List Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'list'">
-              <el-table :data="listEntries" border size="small">
+              <TableColumnPicker :table-key="'RedisTabContent:listEntries'" :columns="[{key: 'common.actions', label: t('common.actions'), required: true}, {key: '#', label: '#', required: true}, {key: 'redis.value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+              <el-table :ref="bindColumnTable('table1')" :data="listEntries" border size="small">
                 <el-table-column :width="uiPx(26)" class-name="drag-col">
                   <template #default="{ $index }">
                     <span class="drag-handle" draggable="true" @dragstart="onListDragStart($index)" @dragover.prevent="onListDragOver($index)" @drop="onListDrop($index)"><GripVertical :size="'0.875rem'" /></span>
                   </template>
                 </el-table-column>
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
-                <el-table-column :label="t('redis.value')">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:listEntries', 'redis.value')" :label="t('redis.value')">
                   <template #default="{ $index }">
                     <el-input v-model="listEntries[$index]" size="small" type="textarea" :rows="1" autosize />
                   </template>
                 </el-table-column>
-                <el-table-column :width="uiPx(50)">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:listEntries', 'common.actions')" :width="uiPx(50)">
                   <template #default="{ $index }">
                     <button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="listEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button>
                   </template>
@@ -165,14 +167,15 @@
 
             <!-- Set Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'set'">
-              <el-table :data="setEntries" border size="small">
+              <TableColumnPicker :table-key="'RedisTabContent:setEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table2'])" />
+              <el-table :ref="bindColumnTable('table2')" :data="setEntries" border size="small">
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
                 <el-table-column :label="t('redis.member')">
                   <template #default="{ $index }">
                     <el-input v-model="setEntries[$index]" size="small" type="textarea" :rows="1" autosize />
                   </template>
                 </el-table-column>
-                <el-table-column :width="uiPx(50)">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:setEntries', 'common.actions')" :width="uiPx(50)">
                   <template #default="{ $index }">
                     <button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="setEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button>
                   </template>
@@ -183,19 +186,20 @@
 
             <!-- ZSet Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'zset'">
-              <el-table :data="zsetEntries" border size="small">
+              <TableColumnPicker :table-key="'RedisTabContent:zsetEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'redis.score', label: t('redis.score'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table3'])" />
+              <el-table :ref="bindColumnTable('table3')" :data="zsetEntries" border size="small">
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
                 <el-table-column :label="t('redis.member')">
                   <template #default="{ $index }">
                     <el-input v-model="zsetEntries[$index].member" size="small" type="textarea" :rows="1" autosize />
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('redis.score')" :width="uiPx(100)">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:zsetEntries', 'redis.score')" :label="t('redis.score')" :width="uiPx(100)">
                   <template #default="{ $index }">
                     <el-input-number v-model="zsetEntries[$index].score" size="small" controls-position="right" style="width: 100%" />
                   </template>
                 </el-table-column>
-                <el-table-column :width="uiPx(50)">
+                <el-table-column v-if="columnIsVisible('RedisTabContent:zsetEntries', 'common.actions')" :width="uiPx(50)">
                   <template #default="{ $index }">
                     <button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="zsetEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button>
                   </template>
@@ -251,14 +255,15 @@
         <!-- Hash: field/value table -->
         <template v-if="newKeyType === 'hash'">
           <el-form-item :label="t('redis.entryValue')">
-            <el-table :data="newHashEntries" border size="small">
+            <TableColumnPicker :table-key="'RedisTabContent:newHashEntries'" :columns="[{key: 'field', label: t('redis.field'), required: true}, {key: 'value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table4'])" />
+            <el-table :ref="bindColumnTable('table4')" :data="newHashEntries" border size="small">
               <el-table-column prop="field" :label="t('redis.field')">
                 <template #default="{ $index }"><el-input v-model="newHashEntries[$index].field" size="small" type="textarea" :rows="1" autosize /></template>
               </el-table-column>
-              <el-table-column prop="value" :label="t('redis.value')">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newHashEntries', 'value')" prop="value" :label="t('redis.value')">
                 <template #default="{ $index }"><el-input v-model="newHashEntries[$index].value" size="small" type="textarea" :rows="1" autosize /></template>
               </el-table-column>
-              <el-table-column :width="uiPx(50)">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newHashEntries', 'common.actions')" :width="uiPx(50)">
                 <template #default="{ $index }"><button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="newHashEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button></template>
               </el-table-column>
             </el-table>
@@ -268,17 +273,18 @@
         <!-- List: value table -->
         <template v-if="newKeyType === 'list'">
           <el-form-item :label="t('redis.entryValue')">
-            <el-table :data="newListEntries" border size="small">
+            <TableColumnPicker :table-key="'RedisTabContent:newListEntries'" :columns="[{key: 'common.actions', label: t('common.actions'), required: true}, {key: '#', label: '#', required: true}, {key: 'redis.value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table5'])" />
+            <el-table :ref="bindColumnTable('table5')" :data="newListEntries" border size="small">
               <el-table-column :width="uiPx(26)" class-name="drag-col">
                 <template #default="{ $index }">
                   <span class="drag-handle" draggable="true" @dragstart="onNewListDragStart($index)" @dragover.prevent="onNewListDragOver($index)" @drop="onNewListDrop($index)"><GripVertical :size="'0.875rem'" /></span>
                 </template>
               </el-table-column>
               <el-table-column type="index" label="#" :width="uiPx(40)" />
-              <el-table-column :label="t('redis.value')">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newListEntries', 'redis.value')" :label="t('redis.value')">
                 <template #default="{ $index }"><el-input v-model="newListEntries[$index]" size="small" type="textarea" :rows="1" autosize /></template>
               </el-table-column>
-              <el-table-column :width="uiPx(50)">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newListEntries', 'common.actions')" :width="uiPx(50)">
                 <template #default="{ $index }"><button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="newListEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button></template>
               </el-table-column>
             </el-table>
@@ -288,12 +294,13 @@
         <!-- Set: member table -->
         <template v-if="newKeyType === 'set'">
           <el-form-item :label="t('redis.entryValue')">
-            <el-table :data="newSetEntries" border size="small">
+            <TableColumnPicker :table-key="'RedisTabContent:newSetEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table6'])" />
+            <el-table :ref="bindColumnTable('table6')" :data="newSetEntries" border size="small">
               <el-table-column type="index" label="#" :width="uiPx(40)" />
               <el-table-column :label="t('redis.member')">
                 <template #default="{ $index }"><el-input v-model="newSetEntries[$index]" size="small" type="textarea" :rows="1" autosize /></template>
               </el-table-column>
-              <el-table-column :width="uiPx(50)">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newSetEntries', 'common.actions')" :width="uiPx(50)">
                 <template #default="{ $index }"><button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="newSetEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button></template>
               </el-table-column>
             </el-table>
@@ -303,14 +310,15 @@
         <!-- ZSet: member/score table -->
         <template v-if="newKeyType === 'zset'">
           <el-form-item :label="t('redis.entryValue')">
-            <el-table :data="newZSetEntries" border size="small">
+            <TableColumnPicker :table-key="'RedisTabContent:newZSetEntries'" :columns="[{key: 'member', label: t('redis.member'), required: true}, {key: 'score', label: t('redis.score'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table7'])" />
+            <el-table :ref="bindColumnTable('table7')" :data="newZSetEntries" border size="small">
               <el-table-column prop="member" :label="t('redis.member')">
                 <template #default="{ $index }"><el-input v-model="newZSetEntries[$index].member" size="small" type="textarea" :rows="1" autosize /></template>
               </el-table-column>
-              <el-table-column prop="score" :label="t('redis.score')" :width="uiPx(100)">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newZSetEntries', 'score')" prop="score" :label="t('redis.score')" :width="uiPx(100)">
                 <template #default="{ $index }"><el-input-number v-model="newZSetEntries[$index].score" size="small" controls-position="right" style="width: 100%" /></template>
               </el-table-column>
-              <el-table-column :width="uiPx(50)">
+              <el-table-column v-if="columnIsVisible('RedisTabContent:newZSetEntries', 'common.actions')" :width="uiPx(50)">
                 <template #default="{ $index }"><button class="btn btn-ghost btn-icon btn-sm danger" title="Delete" @click="newZSetEntries.splice($index, 1)"><Trash2 :size="'0.875rem'" /></button></template>
               </el-table-column>
             </el-table>
@@ -327,6 +335,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, watch, computed, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { msg } from '../services/message'

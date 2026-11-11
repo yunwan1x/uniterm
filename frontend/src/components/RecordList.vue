@@ -16,7 +16,8 @@
       <span class="record-count">{{ recordings.length }} {{ t('record.list') }}</span>
     </div>
 
-    <el-table
+    <TableColumnPicker :table-key="'RecordList:recordings'" :columns="[{key: 'record.connection', label: t('record.connection'), required: true}, {key: 'record.startTime', label: t('record.startTime'), required: false}, {key: 'record.duration', label: t('record.duration'), required: false}, {key: 'record.size', label: t('record.size'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+    <el-table :ref="bindColumnTable('table0')"
       :data="recordings"
       v-loading="loading"
       empty-text=""
@@ -29,22 +30,22 @@
           {{ row.title || row.sessionId }}
         </template>
       </el-table-column>
-      <el-table-column :label="t('record.startTime')" width="160">
+      <el-table-column v-if="columnIsVisible('RecordList:recordings', 'record.startTime')" :label="t('record.startTime')" width="160">
         <template #default="{ row }">
           {{ formatStartTime(row.startTime) }}
         </template>
       </el-table-column>
-      <el-table-column :label="t('record.duration')" width="90">
+      <el-table-column v-if="columnIsVisible('RecordList:recordings', 'record.duration')" :label="t('record.duration')" width="90">
         <template #default="{ row }">
           {{ formatDuration(row.duration) }}
         </template>
       </el-table-column>
-      <el-table-column :label="t('record.size')" width="90">
+      <el-table-column v-if="columnIsVisible('RecordList:recordings', 'record.size')" :label="t('record.size')" width="90">
         <template #default="{ row }">
           {{ formatSize(row.size) }}
         </template>
       </el-table-column>
-      <el-table-column :label="t('common.actions')" width="140" fixed="right">
+      <el-table-column v-if="columnIsVisible('RecordList:recordings', 'common.actions')" :label="t('common.actions')" width="140" fixed="right">
         <template #default="{ row }">
           <el-button size="small" type="primary" link @click="playRecording(row)">
             {{ t('record.play') }}
@@ -68,6 +69,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useI18n } from '../i18n'

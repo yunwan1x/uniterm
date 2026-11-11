@@ -157,7 +157,8 @@
                   <Plus :size="'0.875rem'" /> {{ t('mongodb.newCollection') }}
                 </button>
               </div>
-              <el-table
+              <TableColumnPicker :table-key="'MongoDBTabContent:filteredObjects(tab.dbName)'" :columns="[{key: 'mongodb.collection', label: t('mongodb.collection'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+              <el-table :ref="bindColumnTable('table0')"
                 :data="filteredObjects(tab.dbName)"
                 border
                 size="small"
@@ -173,7 +174,7 @@
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('common.actions')" :width="uiPx(80)" align="right">
+                <el-table-column v-if="columnIsVisible('MongoDBTabContent:filteredObjects(tab.dbName)', 'common.actions')" :label="t('common.actions')" :width="uiPx(80)" align="right">
                   <template #default="{ row }">
                     <button
                       class="btn btn-ghost btn-icon btn-sm danger"
@@ -286,6 +287,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { Database, Layers, ChevronRight, ChevronDown, RefreshCw, MoreHorizontal, Plus, Trash2, PanelLeft } from '@lucide/vue'
 import { isNarrowScreen } from '../utils/platform'

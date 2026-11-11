@@ -925,13 +925,14 @@
         <h2 class="section-title">{{ t('settings.identities') }}</h2>
         <p class="section-desc">{{ t('settings.identitiesDesc') }}</p>
         <el-button type="primary" @click="openIdentityDialog()">{{ t('settings.addIdentity') }}</el-button>
-        <el-table :data="identityStore.identities" size="small" style="margin-top: 0.75rem">
+        <TableColumnPicker :table-key="'SettingsTab:identityStore.identities'" :columns="[{key: 'name', label: t('conn.name'), required: true}, {key: 'username', label: t('conn.user'), required: false}, {key: 'conn.authType', label: t('conn.authType'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+        <el-table :ref="bindColumnTable('table0')" :data="identityStore.identities" size="small" style="margin-top: 0.75rem">
           <el-table-column prop="name" :label="t('conn.name')" />
-          <el-table-column prop="username" :label="t('conn.user')" />
-          <el-table-column :label="t('conn.authType')">
+          <el-table-column v-if="columnIsVisible('SettingsTab:identityStore.identities', 'username')" prop="username" :label="t('conn.user')" />
+          <el-table-column v-if="columnIsVisible('SettingsTab:identityStore.identities', 'conn.authType')" :label="t('conn.authType')">
             <template #default="{ row }">{{ row.authType === 'password' ? t('conn.password') : row.authType === 'keyText' ? t('conn.keyText') : t('conn.keyPath') }}</template>
           </el-table-column>
-          <el-table-column :label="t('common.actions')" :width="uiPx(160)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:identityStore.identities', 'common.actions')" :label="t('common.actions')" :width="uiPx(160)">
             <template #default="{ row }">
               <el-button size="small" @click="openIdentityDialog(row)">{{ t('common.edit') }}</el-button>
               <el-button size="small" type="danger" @click="removeIdentity(row)">{{ t('common.delete') }}</el-button>
@@ -946,13 +947,14 @@
         <h2 class="section-title">{{ t('settings.proxies') }}</h2>
         <p class="section-desc">{{ t('settings.proxiesDesc') }}</p>
         <el-button type="primary" @click="openProxyDialog()">{{ t('settings.addProxy') }}</el-button>
-        <el-table :data="proxyStore.proxies" size="small" style="margin-top: 0.75rem">
+        <TableColumnPicker :table-key="'SettingsTab:proxyStore.proxies'" :columns="[{key: 'name', label: t('conn.name'), required: true}, {key: 'kind', label: t('conn.proxyType'), required: false}, {key: 'settings.proxyHost', label: t('settings.proxyHost'), required: false}, {key: 'settings.enabled', label: t('settings.enabled'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+        <el-table :ref="bindColumnTable('table1')" :data="proxyStore.proxies" size="small" style="margin-top: 0.75rem">
           <el-table-column prop="name" :label="t('conn.name')" />
-          <el-table-column prop="kind" :label="t('conn.proxyType')" :width="uiPx(100)" />
-          <el-table-column :label="t('settings.proxyHost')">
+          <el-table-column v-if="columnIsVisible('SettingsTab:proxyStore.proxies', 'kind')" prop="kind" :label="t('conn.proxyType')" :width="uiPx(100)" />
+          <el-table-column v-if="columnIsVisible('SettingsTab:proxyStore.proxies', 'settings.proxyHost')" :label="t('settings.proxyHost')">
             <template #default="{ row }">{{ row.host }}:{{ row.port }}</template>
           </el-table-column>
-          <el-table-column :label="t('settings.enabled')" :width="uiPx(80)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:proxyStore.proxies', 'settings.enabled')" :label="t('settings.enabled')" :width="uiPx(80)">
             <template #default="{ row }">
               <el-switch
                 :model-value="row.enabled !== false"
@@ -961,7 +963,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column :label="t('common.actions')" :width="uiPx(160)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:proxyStore.proxies', 'common.actions')" :label="t('common.actions')" :width="uiPx(160)">
             <template #default="{ row }">
               <el-button size="small" @click="openProxyDialog(row)">{{ t('common.edit') }}</el-button>
               <el-button size="small" type="danger" @click="removeProxy(row)">{{ t('common.delete') }}</el-button>
@@ -976,15 +978,16 @@
         <h2 class="section-title">{{ t('settings.tunnels') }}</h2>
         <p class="section-desc">{{ t('settings.tunnelsDesc') }}</p>
         <el-button type="primary" @click="openTunnelDialog()">{{ t('tunnels.addTunnel') }}</el-button>
-        <el-table :data="tunnelStore.tunnels" size="small" style="margin-top: 0.75rem">
+        <TableColumnPicker :table-key="'SettingsTab:tunnelStore.tunnels'" :columns="[{key: 'name', label: t('tunnels.name'), required: true}, {key: 'tunnels.modeCol', label: t('tunnels.modeCol'), required: false}, {key: 'tunnels.listenCol', label: t('tunnels.listenCol'), required: false}, {key: 'tunnels.statusCol', label: t('tunnels.statusCol'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table2'])" />
+        <el-table :ref="bindColumnTable('table2')" :data="tunnelStore.tunnels" size="small" style="margin-top: 0.75rem">
           <el-table-column prop="name" :label="t('tunnels.name')" />
-          <el-table-column :label="t('tunnels.modeCol')" :width="uiPx(150)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:tunnelStore.tunnels', 'tunnels.modeCol')" :label="t('tunnels.modeCol')" :width="uiPx(150)">
             <template #default="{ row }">{{ modeName(row.mode) }}</template>
           </el-table-column>
-          <el-table-column :label="t('tunnels.listenCol')" :width="uiPx(120)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:tunnelStore.tunnels', 'tunnels.listenCol')" :label="t('tunnels.listenCol')" :width="uiPx(120)">
             <template #default="{ row }">:{{ effPort(row) }}</template>
           </el-table-column>
-          <el-table-column :label="t('tunnels.statusCol')" :width="uiPx(160)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:tunnelStore.tunnels', 'tunnels.statusCol')" :label="t('tunnels.statusCol')" :width="uiPx(160)">
             <template #default="{ row }">
               <el-switch
                 :model-value="tunnelStore.isActive(row.id)"
@@ -994,7 +997,7 @@
               <div :title="tunnelStore.statusTitle(row.id)">{{ tunnelStore.statusLabel(row.id) }}</div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('common.actions')" :width="uiPx(160)">
+          <el-table-column v-if="columnIsVisible('SettingsTab:tunnelStore.tunnels', 'common.actions')" :label="t('common.actions')" :width="uiPx(160)">
             <template #default="{ row }">
               <!-- Connecting and reconnecting tunnels must also stop before edits. -->
               <el-button
@@ -1077,20 +1080,21 @@
         <p v-if="isMac" class="kb-hint kb-modifier-note">{{ t('shortcut.modifierNote') }}</p>
         <template v-for="cat in shortcutCategories" :key="cat.key">
           <h2 class="section-title">{{ t(cat.label) }}</h2>
-          <table class="kb-table">
+          <TableColumnPicker :table-key="'SettingsTab:native0'" :columns="[{ key: '0', label: t('shortcut.colFunction'), required: true }, { key: '1', label: t('shortcut.colBinding') }, { key: '2', label: t('shortcut.colActions') }]" />
+<table class="kb-table">
             <thead>
               <tr>
                 <th>{{ t('shortcut.colFunction') }}</th>
-                <th>{{ t('shortcut.colBinding') }}</th>
-                <th>{{ t('shortcut.colActions') }}</th>
+                <th v-if="columnIsVisible('SettingsTab:native0', '1')">{{ t('shortcut.colBinding') }}</th>
+                <th v-if="columnIsVisible('SettingsTab:native0', '2')">{{ t('shortcut.colActions') }}</th>
               </tr>
             </thead>
             <tbody>
               <template v-if="cat.key === 'tabs'">
                 <tr>
                   <td>{{ t('shortcut.switchToTabByIndex') }}</td>
-                  <td><kbd class="kb-key">{{ tabSwitchBindingDisplay() }}</kbd></td>
-                  <td class="kb-actions">
+                  <td v-if="columnIsVisible('SettingsTab:native0', '1')"><kbd class="kb-key">{{ tabSwitchBindingDisplay() }}</kbd></td>
+                  <td v-if="columnIsVisible('SettingsTab:native0', '2')" class="kb-actions">
                     <el-button
                       :type="rebindingTabSwitch ? 'warning' : 'default'"
                       @click="startRebindTabSwitch()"
@@ -1121,8 +1125,8 @@
                 </tr>
                 <tr>
                   <td>{{ t('shortcut.switchToPanelByIndex') }}</td>
-                  <td><kbd class="kb-key">{{ panelSwitchBindingDisplay() }}</kbd></td>
-                  <td class="kb-actions">
+                  <td v-if="columnIsVisible('SettingsTab:native0', '1')"><kbd class="kb-key">{{ panelSwitchBindingDisplay() }}</kbd></td>
+                  <td v-if="columnIsVisible('SettingsTab:native0', '2')" class="kb-actions">
                     <el-button
                       :type="rebindingPanelSwitch ? 'warning' : 'default'"
                       @click="startRebindPanelSwitch()"
@@ -1157,8 +1161,8 @@
                 :key="action"
               >
                 <td>{{ t(SHORTCUT_LABELS[action] || action) }}</td>
-                <td><kbd class="kb-key">{{ bindingDisplay(action) }}</kbd></td>
-                <td class="kb-actions">
+                <td v-if="columnIsVisible('SettingsTab:native0', '1')"><kbd class="kb-key">{{ bindingDisplay(action) }}</kbd></td>
+                <td v-if="columnIsVisible('SettingsTab:native0', '2')" class="kb-actions">
                   <el-button
 
                     :type="rebindingAction === action ? 'warning' : 'default'"
@@ -1197,19 +1201,20 @@
 
         <!-- 系统全局热键（托盘等，系统级生效） -->
         <h2 class="section-title">{{ t('shortcut.globalHotkeys') }}</h2>
-        <table class="kb-table">
+        <TableColumnPicker :table-key="'SettingsTab:native1'" :columns="[{ key: '0', label: t('shortcut.colFunction'), required: true }, { key: '1', label: t('shortcut.colBinding') }, { key: '2', label: t('shortcut.colActions') }]" />
+<table class="kb-table">
           <thead>
             <tr>
               <th>{{ t('shortcut.colFunction') }}</th>
-              <th>{{ t('shortcut.colBinding') }}</th>
-              <th>{{ t('shortcut.colActions') }}</th>
+              <th v-if="columnIsVisible('SettingsTab:native1', '1')">{{ t('shortcut.colBinding') }}</th>
+              <th v-if="columnIsVisible('SettingsTab:native1', '2')">{{ t('shortcut.colActions') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>{{ t('shortcut.trayHotkeyRow') }}</td>
-              <td><kbd class="kb-key">{{ trayHotkeyDisplay() }}</kbd></td>
-              <td class="kb-actions">
+              <td v-if="columnIsVisible('SettingsTab:native1', '1')"><kbd class="kb-key">{{ trayHotkeyDisplay() }}</kbd></td>
+              <td v-if="columnIsVisible('SettingsTab:native1', '2')" class="kb-actions">
                 <el-button
                   :type="rebindingTrayHotkey ? 'warning' : 'default'"
                   @click="startRebindTrayHotkey()"
@@ -1750,6 +1755,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, reactive, watch, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { Settings, Monitor, MessageCircleMore, Info, RefreshCw, Pencil, Copy, Trash2, Globe, Keyboard, Plus, BookOpen, Wrench, SquareSlash, FolderOpen, Key, Network, ArrowRightLeft, ChevronLeft, ChevronRight, ChevronDown, Plug, Server, HardDrive } from '@lucide/vue'
 import { msg } from '../services/message'

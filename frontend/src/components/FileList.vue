@@ -10,7 +10,7 @@
       <el-input
         v-model="filterText"
         :placeholder="t('sftp.filterByName')"
-       
+
         clearable
       />
       <!-- History navigation: toolbar buttons in the flat (dual-pane) layout,
@@ -82,6 +82,7 @@
           <el-button @click="pasteLoading ? emit('cancelPaste') : emit('cancelLoad')">{{ t('sftp.cancel') }}</el-button>
         </div>
       </div>
+      <TableColumnPicker :table-key="'files'" :columns="[{key: 'name', label: t('sftp.name'), required: true}, {key: 'type', label: t('sftp.type'), required: false}, {key: 'modTime', label: t('sftp.modified'), required: false}, {key: 'size', label: t('sftp.size'), required: false}, {key: 'sftp.permission', label: t('sftp.permission'), required: false}, {key: 'sftp.owner', label: t('sftp.owner'), required: false}, {key: 'sftp.group', label: t('sftp.group'), required: false}]" @change="refreshColumnLayout(tableRef)" />
       <el-table
         ref="tableRef"
         :key="locale"
@@ -107,32 +108,32 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column v-if="columnVisible('type')" prop="type" :label="t('sftp.type')" :width="uiPx(70)" sortable="custom" show-overflow-tooltip>
+      <el-table-column v-if="columnIsVisible('files', 'type')" prop="type" :label="t('sftp.type')" :width="uiPx(70)" sortable="custom" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="cell-secondary">{{ fileTypeLabel(row) }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="columnVisible('modTime')" prop="modTime" :label="t('sftp.modified')" :width="uiPx(150)" sortable="custom" show-overflow-tooltip>
+      <el-table-column v-if="columnIsVisible('files', 'modTime')" prop="modTime" :label="t('sftp.modified')" :width="uiPx(150)" sortable="custom" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="cell-secondary">{{ formatDate(row.modTime) }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="columnVisible('size')" prop="size" :label="t('sftp.size')" :width="uiPx(70)" align="right" sortable="custom" show-overflow-tooltip>
+      <el-table-column v-if="columnIsVisible('files', 'size')" prop="size" :label="t('sftp.size')" :width="uiPx(70)" align="right" sortable="custom" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="cell-secondary">{{ row.isDir ? '-' : formatSize(row.size) }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="columnVisible('permission')" :label="t('sftp.permission')" :width="uiPx(95)" show-overflow-tooltip>
+      <el-table-column v-if="columnIsVisible('files', 'sftp.permission')" :label="t('sftp.permission')" :width="uiPx(95)" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="cell-secondary">{{ row.mode || '-' }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="columnVisible('owner')" :label="t('sftp.owner')" :width="uiPx(80)" show-overflow-tooltip>
+      <el-table-column v-if="columnIsVisible('files', 'sftp.owner')" :label="t('sftp.owner')" :width="uiPx(80)" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="cell-secondary">{{ row.owner || '-' }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="columnVisible('group')" :label="t('sftp.group')" :width="uiPx(80)" show-overflow-tooltip>
+      <el-table-column v-if="columnIsVisible('files', 'sftp.group')" :label="t('sftp.group')" :width="uiPx(80)" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="cell-secondary">{{ row.group || '-' }}</span>
         </template>
@@ -268,6 +269,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns, setColumnVisible } from '../composables/useTableColumns'
+const { columnIsVisible, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Folder, File, Link, RefreshCw, Eye, Upload, FilePlus2, FolderPlus, MoreHorizontal, ChevronLeft, ChevronRight, CornerLeftUp } from '@lucide/vue'
 import { useI18n } from '../i18n'
@@ -279,7 +284,6 @@ import MenuItem from './MenuItem.vue'
 import MenuDivider from './MenuDivider.vue'
 import { uiPx } from '../utils/uiScale'
 import { isMobilePlatform } from '../utils/platform'
-import { useLocalStateStore } from '../stores/localStateStore'
 
 export interface FileItem {
   name: string
@@ -356,7 +360,6 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
-const localStateStore = useLocalStateStore()
 
 const filterText = ref('')
 const showHidden = ref(false)
@@ -408,9 +411,7 @@ const itemCountText = computed(() => {
 // --- Column visibility (header right-click) -------------------------------
 // Every non-name column can be hidden via the header's context menu
 // (Explorer-style). The name column is the list's identity and stays. The
-// hidden set lives on the localState store so every FileList instance (both
-// panes of the dual-pane tab, the sidebar) shares one view and updates
-// together.
+// hidden set lives in browser storage and is shared with the toolbar picker.
 type ColumnKey = 'type' | 'modTime' | 'size' | 'permission' | 'owner' | 'group'
 const optionalColumns: ColumnKey[] = ['type', 'modTime', 'size', 'permission', 'owner', 'group']
 const columnLabelKeys: Record<ColumnKey, string> = {
@@ -421,8 +422,6 @@ const columnLabelKeys: Record<ColumnKey, string> = {
   owner: 'sftp.owner',
   group: 'sftp.group',
 }
-const hiddenColumns = computed<Set<ColumnKey>>(() =>
-  new Set((localStateStore.state.sftpHiddenColumns || []) as ColumnKey[]))
 const columnMenuRef = ref<InstanceType<typeof Menu> | null>(null)
 const columnMenuVisible = ref(false)
 
@@ -430,21 +429,14 @@ function columnLabelKey(key: ColumnKey): string {
   return columnLabelKeys[key]
 }
 
-function columnVisible(key: ColumnKey): boolean {
-  return !hiddenColumns.value.has(key)
+function columnStorageKey(key: ColumnKey): string {
+  return ['type', 'modTime', 'size'].includes(key) ? key : 'sftp.' + key
 }
-
+function columnVisible(key: ColumnKey): boolean {
+  return columnIsVisible('files', columnStorageKey(key))
+}
 function toggleColumn(key: ColumnKey) {
-  const next = new Set(hiddenColumns.value)
-  if (next.has(key)) {
-    next.delete(key)
-  } else {
-    next.add(key)
-    // A hidden column can't keep driving the sort — clear it so the list
-    // doesn't silently reorder on a column the user can no longer see.
-    if (sortState.value?.prop === key) sortState.value = null
-  }
-  localStateStore.update({ sftpHiddenColumns: [...next] })
+  setColumnVisible('files', columnStorageKey(key), !columnVisible(key))
 }
 
 function onHeaderContextMenu(_column: any, event: MouseEvent) {
@@ -1371,6 +1363,8 @@ function applyBandSelection() {
 
 /* Make table fill pane and keep scrollbar at bottom */
 .sftp-file-list .table-wrapper .el-table {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  height: 0;
 }
 </style>

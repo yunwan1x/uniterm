@@ -193,7 +193,8 @@
                   <Plus :size="'0.875rem'" /> {{ t('es.newIndex') }}
                 </button>
               </div>
-              <el-table
+              <TableColumnPicker :table-key="'ElasticsearchTabContent:filteredTableIndices'" :columns="[{key: 'name', label: t('es.indexName'), required: true}, {key: 'health', label: t('es.health'), required: false}, {key: 'status', label: t('es.status'), required: false}, {key: 'es.docsCount', label: t('es.docsCount'), required: false}, {key: 'storeSize', label: t('es.storeSize'), required: false}, {key: 'es.shards', label: t('es.shards'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+              <el-table :ref="bindColumnTable('table0')"
                 :data="filteredTableIndices"
                 border
                 size="small"
@@ -209,16 +210,16 @@
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column prop="health" :label="t('es.health')" :width="uiPx(90)" />
-                <el-table-column prop="status" :label="t('es.status')" :width="uiPx(90)" />
-                <el-table-column :label="t('es.docsCount')" :width="uiPx(100)">
+                <el-table-column v-if="columnIsVisible('ElasticsearchTabContent:filteredTableIndices', 'health')" prop="health" :label="t('es.health')" :width="uiPx(90)" />
+                <el-table-column v-if="columnIsVisible('ElasticsearchTabContent:filteredTableIndices', 'status')" prop="status" :label="t('es.status')" :width="uiPx(90)" />
+                <el-table-column v-if="columnIsVisible('ElasticsearchTabContent:filteredTableIndices', 'es.docsCount')" :label="t('es.docsCount')" :width="uiPx(100)">
                   <template #default="{ row }">{{ formatDocs(row.docsCount) }}</template>
                 </el-table-column>
-                <el-table-column prop="storeSize" :label="t('es.storeSize')" :width="uiPx(110)" />
-                <el-table-column :label="t('es.shards')" :width="uiPx(90)">
+                <el-table-column v-if="columnIsVisible('ElasticsearchTabContent:filteredTableIndices', 'storeSize')" prop="storeSize" :label="t('es.storeSize')" :width="uiPx(110)" />
+                <el-table-column v-if="columnIsVisible('ElasticsearchTabContent:filteredTableIndices', 'es.shards')" :label="t('es.shards')" :width="uiPx(90)">
                   <template #default="{ row }">{{ row.pri }} / {{ row.rep }}</template>
                 </el-table-column>
-                <el-table-column :label="t('common.actions')" :width="uiPx(80)" align="right">
+                <el-table-column v-if="columnIsVisible('ElasticsearchTabContent:filteredTableIndices', 'common.actions')" :label="t('common.actions')" :width="uiPx(80)" align="right">
                   <template #default="{ row }">
                     <button
                       class="btn btn-ghost btn-icon btn-sm danger"
@@ -305,6 +306,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { RefreshCw, Layers, MoreHorizontal, ChevronRight, ChevronDown, Database, Plus, Trash2, PanelLeft } from '@lucide/vue'
 import { isNarrowScreen } from '../utils/platform'

@@ -8,6 +8,13 @@
     </div>
 
     <template v-if="mode === 'detail'">
+      <nav v-if="history && history.length > 1" class="owner-history">
+        <el-button size="small" @click="$emit('navigate', history.length - 2)">← {{ t('k8s.ownerBack') }}</el-button>
+        <template v-for="(label, i) in history" :key="i">
+          <span v-if="i">›</span><button :disabled="i === history.length - 1" :title="label" @click="$emit('navigate', i)">{{ label }}</button>
+        </template>
+      </nav>
+      <div v-if="ownerLoading || ownerError" class="owner-feedback" role="status">{{ ownerLoading ? t('k8s.ownerLoading') : ownerError }}</div>
       <div class="db-tabs">
         <button class="db-tab" :class="{ active: tab === 'struct' }" @click="tab = 'struct'">{{ t('k8s.detail') }}</button>
         <button class="db-tab" :class="{ active: tab === 'yaml' }" @click="tab = 'yaml'">YAML</button>
@@ -18,7 +25,7 @@
           <div class="detail-section-title">{{ sec.label }}</div>
           <div v-for="f in sec.fields" :key="f.label" class="detail-row">
             <span class="detail-label">{{ f.label }}</span>
-            <span class="detail-value">{{ fieldText(f) }}</span>
+            <span class="detail-value"><K8sOwnerLinks v-if="f.label === 'Owner'" :target="target" :disabled="ownerLoading" @open="owner => $emit('open-owner', owner)" /><template v-else>{{ fieldText(f) }}</template></span>
           </div>
         </div>
         <!-- Pod events (async) -->
@@ -83,6 +90,8 @@
 </template>
 
 <script setup lang="ts">
+import K8sOwnerLinks from './K8sOwnerLinks.vue'
+import type { OwnerReference } from '../services/k8sOwners'
 import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { ElButton, ElIcon, ElMessage, ElSelect, ElOption, ElCheckbox } from 'element-plus'
 import { Close } from '@element-plus/icons-vue'
@@ -95,8 +104,8 @@ import SyntaxEditor from './SyntaxEditor.vue'
 import { Clipboard } from '@wailsio/runtime'
 import MenuItem from './MenuItem.vue'
 
-const props = defineProps<{ connId: string; mode: 'detail' | 'logs' | null; target: any | null; resourceKey: string; selfPathOverride?: (obj: any) => string; initialTab?: 'detail' | 'yaml' }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void }>()
+const props = defineProps<{ connId: string; mode: 'detail' | 'logs' | null; target: any | null; resourceKey: string; selfPathOverride?: (obj: any) => string; initialTab?: 'detail' | 'yaml'; history?: string[]; ownerLoading?: boolean; ownerError?: string }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void; (e: 'open-owner', owner: OwnerReference): void; (e: 'navigate', index: number): void }>()
 
 const { t } = useI18n()
 
@@ -158,6 +167,7 @@ const saving = ref(false)
 const saveError = ref('')
 
 watch(() => props.target, () => {
+  eventsGen++
   tab.value = props.initialTab === 'yaml' ? 'yaml' : 'struct'
   editing.value = false; saveError.value = ''
   events.value = []; eventsError.value = ''
@@ -474,4 +484,11 @@ onBeforeUnmount(stopLogs)
 .log-ts { color: var(--text-muted); margin-right: 0.5rem; }
 .log-ts:empty { margin-right: 0; }
 .logs-hide-ts .log-ts { display: none; }
+</style>
+
+<style scoped>
+.owner-history { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .5rem 1rem; border-bottom: 1px solid var(--el-border-color); }
+.owner-history button { background: none; border: 0; color: var(--el-color-primary); cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+.owner-history button:disabled { color: var(--el-text-color-regular); cursor: default; }
+.owner-feedback { padding: .5rem 1rem; color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
 </style>

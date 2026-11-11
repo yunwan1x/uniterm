@@ -74,7 +74,8 @@
 
         <div v-if="columns.length > 0" class="result-grid">
           <div class="result-table-wrap">
-            <el-table
+            <TableColumnPicker :table-key="'ElasticsearchIndexView' + ':' + JSON.stringify(columns)" :columns="[...(columns).map((col, columnIndex) => ({key: String(col), label: col, required: columnIndex === 0})), {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+            <el-table :ref="bindColumnTable('table0')"
               :data="filteredTableData"
               border
               size="small"
@@ -85,7 +86,7 @@
               @row-dblclick="onRowDblClick"
             >
               <el-table-column
-                v-for="col in columns"
+                v-for="col in (columns).filter((col, columnIndex) => columnIndex === 0 || columnIsVisible('ElasticsearchIndexView' + ':' + JSON.stringify(columns), String(col)))"
                 :key="col"
                 :prop="col"
                 :label="col"
@@ -99,7 +100,7 @@
                   >{{ formatCellValue(row[col]) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :width="uiPx(80)" fixed="right">
+              <el-table-column v-if="columnIsVisible('ElasticsearchIndexView' + ':' + JSON.stringify(columns), 'common.actions')" :width="uiPx(80)" fixed="right">
                 <template #default="{ row }">
                   <button class="btn btn-ghost btn-icon btn-sm" @click.stop="onRowDblClick(row)">
                     <Pencil :size="'0.875rem'" />
@@ -169,6 +170,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from './TableColumnPicker.vue'
+import { useTableColumns } from '../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, onMounted } from 'vue'
 import { Pencil, Trash2, Plus, ChevronUp, ChevronDown } from '@lucide/vue'
 import { isNarrowScreen } from '../utils/platform'

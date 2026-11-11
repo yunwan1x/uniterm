@@ -96,11 +96,12 @@
             </el-button>
           </div>
           <div class="table-wrap">
-            <el-table
+            <TableColumnPicker :table-key="'NetworkScanTabContent:ipHosts'" :columns="[{key: 'ip', label: t('netscan.ipScan.columns.ip'), required: true}, {key: 'mac', label: t('netscan.ipScan.columns.mac'), required: false}, {key: 'hostname', label: t('netscan.ipScan.columns.hostname'), required: false}, ...(serviceColumns).map(sp => ({key: String(sp.port), label: `${sp.port} (${sp.name})`, required: false})), {key: 'netscan.ipScan.deepScan', label: t('netscan.ipScan.deepScan'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+            <el-table :ref="bindColumnTable('table0')"
               :data="ipHosts"
               size="small"
               border
-              height="100%"
+              height="calc(100% - 2.25rem)"
               class="scan-table"
               @row-contextmenu="onIpCtxMenu"
             >
@@ -110,14 +111,14 @@
                   <span class="host-ip clickable" :title="t('netscan.ipScan.connectHint')" @click.stop="openConnectionForm(row.ip)">{{ row.ip }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="mac" :label="t('netscan.ipScan.columns.mac')" :width="uiPx(120)" align="center">
+              <el-table-column v-if="columnIsVisible('NetworkScanTabContent:ipHosts', 'mac')" prop="mac" :label="t('netscan.ipScan.columns.mac')" :width="uiPx(120)" align="center">
                 <template #default="{ row }">{{ row.mac || '-' }}</template>
               </el-table-column>
-              <el-table-column prop="hostname" :label="t('netscan.ipScan.columns.hostname')" :width="uiPx(120)" align="center" show-overflow-tooltip>
+              <el-table-column v-if="columnIsVisible('NetworkScanTabContent:ipHosts', 'hostname')" prop="hostname" :label="t('netscan.ipScan.columns.hostname')" :width="uiPx(120)" align="center" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.hostname || '-' }}</template>
               </el-table-column>
               <el-table-column
-                v-for="sp in serviceColumns"
+                v-for="sp in (serviceColumns).filter(sp => columnIsVisible('NetworkScanTabContent:ipHosts', String(sp.port)))"
                 :key="sp.port"
                 :label="`${sp.port} (${sp.name})`"
                 align="center"
@@ -137,7 +138,7 @@
                   <span v-else class="svc-closed">--</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('netscan.ipScan.deepScan')" :width="uiPx(96)" align="center" :sortable="false">
+              <el-table-column v-if="columnIsVisible('NetworkScanTabContent:ipHosts', 'netscan.ipScan.deepScan')" :label="t('netscan.ipScan.deepScan')" :width="uiPx(96)" align="center" :sortable="false">
                 <template #default="{ row }">
                   <el-button
                     class="deep-scan-btn"
@@ -229,11 +230,12 @@
             </el-button>
           </div>
           <div class="table-wrap">
-            <el-table
+            <TableColumnPicker :table-key="'NetworkScanTabContent:portResults'" :columns="[{key: 'host', label: t('netscan.portScan.columns.host'), required: true}, {key: 'port', label: t('netscan.portScan.columns.port'), required: false}, {key: 'service', label: t('netscan.portScan.columns.service'), required: false}, {key: 'netscan.portScan.columns.state', label: t('netscan.portScan.columns.state'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+            <el-table :ref="bindColumnTable('table1')"
               :data="portResults"
               size="small"
               border
-              height="100%"
+              height="calc(100% - 2.25rem)"
               class="scan-table port-table"
               @row-click="onPortRowClick"
               @row-contextmenu="onPortCtxMenu"
@@ -243,15 +245,15 @@
                   <span class="host-ip">{{ row.host }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="port" :label="t('netscan.portScan.columns.port')" sortable :width="uiPx(90)" align="center">
+              <el-table-column v-if="columnIsVisible('NetworkScanTabContent:portResults', 'port')" prop="port" :label="t('netscan.portScan.columns.port')" sortable :width="uiPx(90)" align="center">
                 <template #default="{ row }">
                   <span class="port-num-text">#{{ row.port }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="service" :label="t('netscan.portScan.columns.service')" :width="uiPx(160)" align="center">
+              <el-table-column v-if="columnIsVisible('NetworkScanTabContent:portResults', 'service')" prop="service" :label="t('netscan.portScan.columns.service')" :width="uiPx(160)" align="center">
                 <template #default="{ row }">{{ row.service || '-' }}</template>
               </el-table-column>
-              <el-table-column :label="t('netscan.portScan.columns.state')" :width="uiPx(160)" align="center">
+              <el-table-column v-if="columnIsVisible('NetworkScanTabContent:portResults', 'netscan.portScan.columns.state')" :label="t('netscan.portScan.columns.state')" :width="uiPx(160)" align="center">
                 <template #default="{ row }">
                   <el-tag type="success" size="small">{{ row.state }}</el-tag>
                 </template>
@@ -287,6 +289,10 @@
 </template>
 
 <script setup lang="ts">
+import TableColumnPicker from '../TableColumnPicker.vue'
+import { useTableColumns } from '../../composables/useTableColumns'
+const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
+
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Events } from '@wailsio/runtime'
 import { Search, CircleCheck } from '@lucide/vue'
