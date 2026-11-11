@@ -379,8 +379,9 @@
 
     <!-- Process Detail Panel (inside monitor-tab) -->
     <div class="detail-drawer-backdrop" :class="{ open: detailDrawerVisible }" @click="detailDrawerVisible = false"></div>
-    <div class="detail-drawer" :class="{ open: detailDrawerVisible }">
+    <div class="detail-drawer" :class="{ 'panel-wrap': panelWrap, 'panel-nowrap': !panelWrap, open: detailDrawerVisible }">
       <div class="detail-drawer-header">
+      <PanelWrapToggle />
         <span class="detail-drawer-title">{{ t('monitor.processDetail') }}</span>
         <el-button link @click="detailDrawerVisible = false">
           <el-icon><Close /></el-icon>
@@ -493,9 +494,10 @@
     <!-- Service Detail Drawer (slides out like the process detail drawer);
          two tabs: properties detail / k8s-style journal logs -->
     <div class="detail-drawer-backdrop" :class="{ open: serviceDetailVisible }" @click="serviceDetailVisible = false"></div>
-    <div ref="svcDrawerEl" class="detail-drawer" :class="{ open: serviceDetailVisible }" :style="serviceDetailVisible ? { width: svcDrawerWidth + 'px' } : undefined">
+    <div ref="svcDrawerEl" class="detail-drawer" :class="{ 'panel-wrap': panelWrap, 'panel-nowrap': !panelWrap, open: serviceDetailVisible }" :style="serviceDetailVisible ? { width: svcDrawerWidth + 'px' } : undefined">
       <div class="svc-resizer" @mousedown="onServiceResizeStart"></div>
       <div class="detail-drawer-header">
+      <PanelWrapToggle />
         <span class="detail-drawer-title">{{ serviceDetailName }}</span>
         <el-button link @click="serviceDetailVisible = false">
           <el-icon><Close /></el-icon>
@@ -527,7 +529,6 @@
           </el-select>
           <el-checkbox v-model="logAutoScroll" border size="small">{{ t('monitor.service.autoScroll') }}</el-checkbox>
           <el-checkbox v-model="logTimestamps" border size="small">{{ t('k8s.logTimestamps') }}</el-checkbox>
-          <el-checkbox v-model="logWrap" border size="small">{{ t('k8s.logWrap') }}</el-checkbox>
           <div class="flex-spacer" />
           <el-button size="small" :icon="RefreshRight" :loading="loadingServiceLogs" @click="fetchServiceLogs" />
         </div>
@@ -571,6 +572,9 @@
 </template>
 
 <script setup lang="ts">
+import PanelWrapToggle from './PanelWrapToggle.vue'
+import { usePanelWrap } from '../composables/usePanelWrap'
+const panelWrap = usePanelWrap()
 import TableColumnPicker from './TableColumnPicker.vue'
 import { useTableColumns } from '../composables/useTableColumns'
 const { columnIsVisible, columnTableRefs, bindColumnTable, refreshColumnLayout } = useTableColumns()
@@ -703,7 +707,7 @@ const svcDrawerTab = ref<'detail' | 'logs'>('detail')
 const logLines = ref(200)
 const logAutoScroll = ref(true)
 const logTimestamps = ref(true)
-const logWrap = ref(false)
+const logWrap = panelWrap
 const serviceLogs = ref('')
 const loadingServiceLogs = ref(false)
 const logViewerRef = ref<HTMLElement | null>(null)

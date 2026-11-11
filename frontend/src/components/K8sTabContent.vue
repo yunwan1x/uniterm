@@ -90,6 +90,7 @@
       @navigate="navigateDrawer"
       @close="closeDrawer"
       @saved="() => {}"
+      @updated="onDrawerUpdated"
     />
   </div>
 </template>
@@ -263,6 +264,11 @@ function openYaml(obj: any) {
   drawerHistory.value = [currentDrawerEntry()]
 }
 function openLogs(pod: any) { resetOwnerNavigation(); drawerTarget.value = pod; drawerResourceKey.value = 'pods'; drawerSelfPathOverride.value = undefined; drawerMode.value = 'logs' }
+function onDrawerUpdated(target: any) {
+  drawerTarget.value = target
+  if (drawerHistory.value.length) drawerHistory.value[drawerHistory.value.length - 1] = currentDrawerEntry()
+  ElMessage.success(t('secret.saved'))
+}
 function closeDrawer() { resetOwnerNavigation(); drawerMode.value = null; drawerTarget.value = null }
 function resourceKeyOf(): string {
   const f = topFrame.value

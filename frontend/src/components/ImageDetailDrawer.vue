@@ -1,8 +1,9 @@
 <template>
   <div class="detail-drawer-backdrop" :class="{ open: !!mode }" @click.self="$emit('close')"></div>
-  <div ref="drawerEl" class="detail-drawer" :class="{ open: !!mode }" :style="mode ? { width: drawerWidth + 'px' } : undefined" @click.stop>
+  <div ref="drawerEl" class="detail-drawer" :class="{ 'panel-wrap': panelWrap, 'panel-nowrap': !panelWrap, open: !!mode }" :style="mode ? { width: drawerWidth + 'px' } : undefined" @click.stop>
     <div class="drawer-resizer" @mousedown="onResizeStart"></div>
     <div class="detail-drawer-header">
+      <PanelWrapToggle />
       <span class="detail-drawer-title">{{ target ? fullRef(target) : '' }}</span>
       <el-button link @click="$emit('close')"><el-icon><Close :size="'1rem'" /></el-icon></el-button>
     </div>
@@ -65,6 +66,9 @@
 </template>
 
 <script setup lang="ts">
+import PanelWrapToggle from './PanelWrapToggle.vue'
+import { usePanelWrap } from '../composables/usePanelWrap'
+const panelWrap = usePanelWrap()
 import { computed, ref, watch } from 'vue'
 import { ElButton, ElIcon, ElMessage } from 'element-plus'
 import { Close } from '@element-plus/icons-vue'

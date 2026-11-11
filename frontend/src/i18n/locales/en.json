@@ -1,4 +1,13 @@
 {
+  "panel.wrap": "Automatic line wrapping",
+  "secret.decode": "Decode / Edit",
+  "secret.hide": "Hide / Cancel",
+  "secret.immutable": "This Secret is immutable.",
+  "secret.empty": "No data keys.",
+  "secret.binary": "Binary or non-UTF-8 data; preserved unchanged.",
+  "secret.saved": "Secret saved to cluster.",
+  "secret.conflict": "The Secret has changed. Reopen it and apply your edits again.",
+  "secret.failed": "Unable to save Secret.",
   "k8s.ownerBack": "Back",
   "k8s.ownerLoading": "Loading owner…",
   "k8s.ownerFailed": "Unable to open owner",

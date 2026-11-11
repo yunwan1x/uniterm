@@ -1,8 +1,9 @@
 <template>
   <div class="detail-drawer-backdrop" :class="{ open: !!mode }" @click.self="$emit('close')"></div>
-  <div ref="drawerEl" class="detail-drawer" :class="{ open: !!mode }" :style="mode ? { width: drawerWidth + 'px' } : undefined" @click.stop>
+  <div ref="drawerEl" class="detail-drawer" :class="{ 'panel-wrap': panelWrap, 'panel-nowrap': !panelWrap, open: !!mode }" :style="mode ? { width: drawerWidth + 'px' } : undefined" @click.stop>
     <div class="drawer-resizer" @mousedown="onResizeStart"></div>
     <div class="detail-drawer-header">
+      <PanelWrapToggle />
       <span class="detail-drawer-title">{{ target?.name || '' }}</span>
       <el-button link @click="$emit('close')"><el-icon><Close :size="'1rem'" /></el-icon></el-button>
     </div>
@@ -45,7 +46,6 @@
           <el-option :value="2000" label="2000" />
         </el-select>
         <el-checkbox v-model="logTimestamps" border size="small" @change="restartLogs">{{ t('k8s.logTimestamps') }}</el-checkbox>
-        <el-checkbox v-model="logWrap" border size="small">{{ t('k8s.logWrap') }}</el-checkbox>
         <el-button size="small" @click="logLines = []">{{ t('k8s.logClear') }}</el-button>
         <el-button size="small" @click="logPaused = !logPaused">{{ logPaused ? t('k8s.logResume') : t('k8s.logPause') }}</el-button>
       </div>
@@ -61,6 +61,9 @@
 </template>
 
 <script setup lang="ts">
+import PanelWrapToggle from './PanelWrapToggle.vue'
+import { usePanelWrap } from '../composables/usePanelWrap'
+const panelWrap = usePanelWrap()
 import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { ElButton, ElIcon, ElMessage, ElSelect, ElOption, ElCheckbox } from 'element-plus'
 import { Close } from '@element-plus/icons-vue'

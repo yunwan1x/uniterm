@@ -1,4 +1,13 @@
 {
+  "panel.wrap": "自動換行",
+  "secret.decode": "解碼 / 編輯",
+  "secret.hide": "隱藏 / 取消",
+  "secret.immutable": "此 Secret 不可變，無法修改。",
+  "secret.empty": "沒有資料欄位。",
+  "secret.binary": "二進位或非 UTF-8 內容，保留原始資料。",
+  "secret.saved": "Secret 已儲存到叢集。",
+  "secret.conflict": "Secret 已被修改，請重新開啟後再編輯儲存。",
+  "secret.failed": "無法儲存 Secret。",
   "k8s.ownerBack": "返回",
   "k8s.ownerLoading": "正在載入 Owner…",
   "k8s.ownerFailed": "無法開啟 Owner",

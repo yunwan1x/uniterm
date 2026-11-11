@@ -1,8 +1,9 @@
 <template>
   <div class="detail-drawer-backdrop" :class="{ open: !!mode }" @click="$emit('close')"></div>
-  <div ref="drawerEl" class="detail-drawer" :class="{ open: !!mode }" :style="mode ? { width: drawerWidth + 'px' } : undefined">
+  <div ref="drawerEl" class="detail-drawer" :class="{ 'panel-wrap': panelWrap, 'panel-nowrap': !panelWrap, open: !!mode }" :style="mode ? { width: drawerWidth + 'px' } : undefined">
     <div class="drawer-resizer" @mousedown="onResizeStart"></div>
     <div class="detail-drawer-header">
+      <PanelWrapToggle />
       <span class="detail-drawer-title">{{ headerTitle }}</span>
       <el-button link @click="$emit('close')"><el-icon><Close :size="'1rem'" /></el-icon></el-button>
     </div>
@@ -21,6 +22,7 @@
       </div>
 
       <div v-show="tab === 'struct'" class="detail-body" @contextmenu="onCopyContextMenu">
+        <K8sSecretEditor v-if="target?.kind === 'Secret' || resourceKey === 'secrets'" :key="target?.metadata?.uid" :target="target" :conn-id="connId" @saved="updated => $emit('updated', updated)" />
         <div v-for="sec in sections" :key="sec.label" class="detail-section">
           <div class="detail-section-title">{{ sec.label }}</div>
           <div v-for="f in sec.fields" :key="f.label" class="detail-row">
@@ -52,7 +54,7 @@
           </template>
         </div>
         <pre v-if="!editing" class="k8s-yaml-drawer-body" @contextmenu="onCopyContextMenu">{{ yamlText }}</pre>
-        <SyntaxEditor v-else v-model="draft" lang="yaml" compact />
+        <SyntaxEditor v-else v-model="draft" lang="yaml" compact :wrap="panelWrap" />
         <div v-if="saveError" class="yaml-error">{{ saveError }}</div>
       </div>
     </template>
@@ -69,7 +71,6 @@
         </el-select>
         <el-checkbox v-model="logPrevious" border size="small" @change="restartLogs">{{ t('k8s.logPrevious') }}</el-checkbox>
         <el-checkbox v-model="logTimestamps" border size="small">{{ t('k8s.logTimestamps') }}</el-checkbox>
-        <el-checkbox v-model="logWrap" border size="small">{{ t('k8s.logWrap') }}</el-checkbox>
         <el-button size="small" @click="logLines = []">{{ t('k8s.logClear') }}</el-button>
         <el-button size="small" @click="logPaused = !logPaused">{{ logPaused ? t('k8s.logResume') : t('k8s.logPause') }}</el-button>
       </div>
@@ -90,6 +91,10 @@
 </template>
 
 <script setup lang="ts">
+import K8sSecretEditor from './K8sSecretEditor.vue'
+import PanelWrapToggle from './PanelWrapToggle.vue'
+import { usePanelWrap } from '../composables/usePanelWrap'
+const panelWrap = usePanelWrap()
 import K8sOwnerLinks from './K8sOwnerLinks.vue'
 import type { OwnerReference } from '../services/k8sOwners'
 import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue'
@@ -105,7 +110,7 @@ import { Clipboard } from '@wailsio/runtime'
 import MenuItem from './MenuItem.vue'
 
 const props = defineProps<{ connId: string; mode: 'detail' | 'logs' | null; target: any | null; resourceKey: string; selfPathOverride?: (obj: any) => string; initialTab?: 'detail' | 'yaml'; history?: string[]; ownerLoading?: boolean; ownerError?: string }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void; (e: 'open-owner', owner: OwnerReference): void; (e: 'navigate', index: number): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void; (e: 'updated', target: any): void; (e: 'open-owner', owner: OwnerReference): void; (e: 'navigate', index: number): void }>()
 
 const { t } = useI18n()
 
@@ -265,7 +270,7 @@ const logContainer = ref('')
 const logTail = ref(500)
 const logPrevious = ref(false)
 const logTimestamps = ref(false)
-const logWrap = ref(false)
+const logWrap = panelWrap
 const logPaused = ref(false)
 // 日志始终自动滚动到底部（不再提供开关）。
 // Timestamps are always streamed from the API; visibility is a CSS-only toggle

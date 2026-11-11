@@ -1,4 +1,13 @@
 {
+  "panel.wrap": "自动换行",
+  "secret.decode": "解码 / 编辑",
+  "secret.hide": "隐藏 / 取消",
+  "secret.immutable": "此 Secret 不可变，无法修改。",
+  "secret.empty": "没有数据字段。",
+  "secret.binary": "二进制或非 UTF-8 内容，保留原始数据。",
+  "secret.saved": "Secret 已保存到集群。",
+  "secret.conflict": "Secret 已被修改，请重新打开后再编辑保存。",
+  "secret.failed": "无法保存 Secret。",
   "k8s.ownerBack": "返回",
   "k8s.ownerLoading": "正在加载 Owner…",
   "k8s.ownerFailed": "无法打开 Owner",
