@@ -65,3 +65,25 @@ closed. See `audio-results-20261112.json` for the measured Linux/Chromium run.
 The browser did not block autoplay during that run; blocked playback and stale
 queue behavior are covered by unit tests, not a claimed live policy test.
 Windows server codec negotiation and other browsers remain unverified.
+
+## Input-device regression
+
+For `.4`, enable the microphone in Devices and record from the remote
+`module-xrdp-source` using `parec --device=xrdp-source --format=s16le
+--rate=44100 --channels=2`. Launch the test Chromium with a deterministic
+1000 Hz WAV via `--use-file-for-fake-audio-capture`, fake media devices and
+permissions in the isolated browser context. Confirm the remote recording's
+FFT peak at 1000 Hz, rather than merely asserting that getUserMedia succeeds.
+
+Browser-only camera validation uses Chromium's fake camera, calls the actual
+`RdpCapture` adapter and verifies 640x480 JPEG output with a simulated request
+callback. Protocol-level validation lives in `capture.rs` inside the WASM patch;
+it is separate from a live Windows camera test. Neither test claims Windows
+application compatibility. Stop individual devices, disconnect, and fail a
+reconnect after permission grant; assert all required tracks end and output
+stops. See `capture-results-20261112.json`.
+
+Use `xev -event keyboard` on the isolated desktop to verify shortcut down/up
+pairs. Exercise normal and fullscreen menus, including explicit F12. Disable
+the test account's screensaver before screenshots to avoid mistaking its blank
+or locked screen for a render failure.

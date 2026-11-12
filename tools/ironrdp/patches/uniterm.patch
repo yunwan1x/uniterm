@@ -1,8 +1,8 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index bd2558ee..5e96e66f 100644
+index bd2558ee..a7db36b6 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -3794,6 +3794,7 @@ dependencies = [
+@@ -3794,10 +3794,13 @@ dependencies = [
   "ironrdp",
   "ironrdp-cliprdr-format",
   "ironrdp-core 0.3.1",
@@ -10,6 +10,12 @@ index bd2558ee..5e96e66f 100644
   "ironrdp-futures",
   "ironrdp-pdu",
   "ironrdp-propertyset",
+  "ironrdp-rdcleanpath",
++ "ironrdp-rdpeai",
++ "ironrdp-rdpecam",
+  "ironrdp-rdpfile",
+  "ironrdp-svc",
+  "ironrdp-vmconnect",
 diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
 index 672a1494..d2f42e87 100644
 --- a/crates/ironrdp-connector/src/connection_finalization.rs
@@ -51,7 +57,7 @@ index 672a1494..d2f42e87 100644
  
                  (Written::Nothing, next_state)
 diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
-index c964d7ce..6a24ed71 100644
+index c964d7ce..c2cee187 100644
 --- a/crates/ironrdp-web/Cargo.toml
 +++ b/crates/ironrdp-web/Cargo.toml
 @@ -18,6 +18,7 @@ test = false
@@ -62,10 +68,12 @@ index c964d7ce..6a24ed71 100644
  default = ["panic_hook"]
  panic_hook = ["iron-remote-desktop/panic_hook"]
  qoi = ["ironrdp/qoi"]
-@@ -38,6 +39,7 @@ ironrdp = { path = "../ironrdp", features = [
+@@ -38,6 +39,9 @@ ironrdp = { path = "../ironrdp", features = [
      "displaycontrol",
      "pdu",
  ] }
++ironrdp-rdpeai.path = "../ironrdp-rdpeai"
++ironrdp-rdpecam.path = "../ironrdp-rdpecam"
 +ironrdp-egfx.path = "../ironrdp-egfx"
  ironrdp-core.path = "../ironrdp-core"
  ironrdp-cliprdr-format.path = "../ironrdp-cliprdr-format"
@@ -212,6 +220,360 @@ index 00000000..2c1ac328
 +        assert_eq!(b.queued.load(Ordering::Relaxed), 0);
 +    }
 +    use futures_util::FutureExt;
++}
+diff --git a/crates/ironrdp-web/src/capture.rs b/crates/ironrdp-web/src/capture.rs
+new file mode 100644
+index 00000000..e63e5444
+--- /dev/null
++++ b/crates/ironrdp-web/src/capture.rs
+@@ -0,0 +1,348 @@
++//! Browser capture adapters. No device is advertised unless explicitly enabled by JS.
++use crate::session::RdpInputEvent;
++use futures_channel::mpsc;
++use ironrdp::dvc::DrdynvcClient;
++use ironrdp_rdpeai::{
++    AudioFormat, WaveFormat,
++    client::{AudioPacketSink, RdpeaiCaptureHandler, RdpeaiClient},
++};
++use ironrdp_rdpecam::{
++    CameraBackend, CameraRedirectionSession, DeviceDescriptor, ErrorCode, MediaFormat, MediaType, SampleSink,
++    StartStreamInfo, StreamDescription,
++};
++use ironrdp_svc::SvcMessage;
++use std::sync::{
++    Arc, Mutex,
++    atomic::{AtomicUsize, Ordering},
++};
++
++#[derive(Default)]
++pub(crate) struct Microphone {
++    format: Option<AudioFormat>,
++    packet_size: usize,
++    pending: Vec<u8>,
++    sink: Option<AudioPacketSink>,
++    epoch: u32,
++}
++impl Microphone {
++    pub(crate) fn status(&self) -> Vec<u32> {
++        self.format
++            .as_ref()
++            .map(|f| vec![f.n_samples_per_sec, u32::from(f.n_channels), self.epoch])
++            .unwrap_or_default()
++    }
++    pub(crate) fn submit(&mut self, data: &[u8]) {
++        if self.sink.is_none() || self.packet_size == 0 || data.len() > 65536 || data.len() % 2 != 0 {
++            return;
++        }
++        self.pending.extend_from_slice(data);
++        while self.pending.len() >= self.packet_size {
++            let packet: Vec<_> = self.pending.drain(..self.packet_size).collect();
++            if let Some(sink) = &mut self.sink {
++                sink(packet);
++            }
++        }
++    }
++}
++fn supported(f: &AudioFormat) -> bool {
++    f.format == WaveFormat::PCM
++        && f.bits_per_sample == 16
++        && matches!(f.n_channels, 1 | 2)
++        && (8000..=48000).contains(&f.n_samples_per_sec)
++        && f.n_block_align == f.n_channels * 2
++}
++struct BrowserMic(Arc<Mutex<Microphone>>);
++impl RdpeaiCaptureHandler for BrowserMic {
++    fn supported_formats(&self) -> &[AudioFormat] {
++        &[]
++    }
++    fn choose_formats(&self, offered: &[AudioFormat]) -> Vec<AudioFormat> {
++        offered.iter().filter(|f| supported(f)).cloned().collect()
++    }
++    fn open(&mut self, capture: &AudioFormat, encoding: &AudioFormat, size: usize, sink: AudioPacketSink) -> i32 {
++        if !supported(capture)
++            || !supported(encoding)
++            || size == 0
++            || size > 65536
++            || size % usize::from(encoding.n_block_align) != 0
++        {
++            return -2147467259;
++        }
++        let mut m = self.0.lock().unwrap();
++        m.epoch = m.epoch.wrapping_add(1);
++        m.format = Some(encoding.clone());
++        m.packet_size = size;
++        m.pending.clear();
++        m.sink = Some(sink);
++        0
++    }
++    fn set_format(&mut self, f: &AudioFormat, size: usize) -> bool {
++        if !supported(f) || size == 0 || size > 65536 || size % usize::from(f.n_block_align) != 0 {
++            return false;
++        }
++        let mut m = self.0.lock().unwrap();
++        m.epoch = m.epoch.wrapping_add(1);
++        m.format = Some(f.clone());
++        m.packet_size = size;
++        m.pending.clear();
++        true
++    }
++    fn close(&mut self) {
++        let mut m = self.0.lock().unwrap();
++        m.format = None;
++        m.sink = None;
++        m.pending.clear();
++    }
++}
++#[derive(Default)]
++pub(crate) struct Camera {
++    sink: Option<SampleSink>,
++    epoch: u32,
++}
++impl Camera {
++    pub(crate) fn requested(&self) -> u32 {
++        self.sink
++            .as_ref()
++            .filter(|s| s.is_active() && s.pending_requests(0) > 0)
++            .map(|_| self.epoch)
++            .unwrap_or(0)
++    }
++    pub(crate) fn submit(&self, epoch: u32, jpeg: Vec<u8>) {
++        if epoch != self.epoch
++            || jpeg.len() > 512 * 1024
++            || !jpeg.starts_with(&[0xff, 0xd8])
++            || !jpeg.ends_with(&[0xff, 0xd9])
++        {
++            return;
++        }
++        if let Some(sink) = &self.sink {
++            sink.send_sample(0, jpeg);
++        }
++    }
++}
++fn camera_format() -> MediaType {
++    MediaType::new(MediaFormat::Mjpg, 640, 480, 10, 1, 1, 1, MediaType::DECODING_REQUIRED).expect("fixed camera format")
++}
++struct BrowserCamera(Arc<Mutex<Camera>>);
++impl CameraBackend for BrowserCamera {
++    fn activate(&mut self) -> Result<(), ErrorCode> {
++        Ok(())
++    }
++    fn deactivate(&mut self) -> Result<(), ErrorCode> {
++        self.stop_streams()
++    }
++    fn streams(&mut self) -> Result<Vec<StreamDescription>, ErrorCode> {
++        Ok(vec![StreamDescription::color(true, false)])
++    }
++    fn media_types(&mut self, index: u8) -> Result<Vec<MediaType>, ErrorCode> {
++        if index != 0 {
++            return Err(ErrorCode::InvalidStreamNumber);
++        }
++        Ok(vec![camera_format()])
++    }
++    fn current_media_type(&mut self, index: u8) -> Result<MediaType, ErrorCode> {
++        self.media_types(index).map(|x| x[0])
++    }
++    fn start_streams(&mut self, streams: &[StartStreamInfo], sink: SampleSink) -> Result<(), ErrorCode> {
++        if streams.len() != 1 || streams[0].stream_index != 0 || streams[0].media_type != camera_format() {
++            return Err(ErrorCode::InvalidMediaType);
++        }
++        let mut c = self.0.lock().unwrap();
++        c.epoch = c.epoch.wrapping_add(1).max(1);
++        c.sink = Some(sink);
++        Ok(())
++    }
++    fn stop_streams(&mut self) -> Result<(), ErrorCode> {
++        self.0.lock().unwrap().sink = None;
++        Ok(())
++    }
++    fn shutdown(&mut self) {
++        let _ = self.stop_streams();
++    }
++}
++#[derive(Clone, Default)]
++pub(crate) struct Capture {
++    pub(crate) microphone: Arc<Mutex<Microphone>>,
++    pub(crate) camera: Arc<Mutex<Camera>>,
++}
++#[derive(Debug)]
++pub(crate) struct CaptureMessages {
++    pub(crate) messages: Mutex<Vec<SvcMessage>>,
++    queued: Arc<AtomicUsize>,
++}
++impl Drop for CaptureMessages {
++    fn drop(&mut self) {
++        self.queued.fetch_sub(1, Ordering::Relaxed);
++    }
++}
++impl Capture {
++    pub(crate) fn attach(
++        &self,
++        mut dvc: DrdynvcClient,
++        tx: mpsc::UnboundedSender<RdpInputEvent>,
++        mic: bool,
++        camera: bool,
++    ) -> DrdynvcClient {
++        let queued = Arc::new(AtomicUsize::new(0));
++        let send = move |_id: u32, messages: Vec<SvcMessage>| {
++            if queued
++                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < 8).then_some(n + 1))
++                .is_ok()
++            {
++                let _ = tx.unbounded_send(RdpInputEvent::Capture(CaptureMessages {
++                    messages: Mutex::new(messages),
++                    queued: queued.clone(),
++                }));
++            }
++            Ok(())
++        };
++        if mic {
++            dvc = dvc.with_dynamic_channel(RdpeaiClient::new(
++                Box::new(BrowserMic(self.microphone.clone())),
++                Box::new(send.clone()),
++            ));
++        }
++        if camera {
++            let session = CameraRedirectionSession::new();
++            let device = session
++                .select_device(
++                    DeviceDescriptor::new("uniTerm Browser Camera".into(), "RDCamera_Browser_0".into())
++                        .expect("camera descriptor"),
++                )
++                .expect("camera device");
++            let state = self.camera.clone();
++            let listener = device.listener(move || Some(BrowserCamera(state.clone())), Arc::new(send));
++            dvc = dvc
++                .with_listener(listener)
++                .with_dynamic_channel(session.enumeration_client(vec![device]).expect("camera enumeration"));
++        }
++        dvc
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use ironrdp::dvc::DvcProcessor;
++    use ironrdp_core::{decode, encode_vec};
++    use ironrdp_rdpeai::pdu::{FormatsPdu, OpenPdu, RdpeaiPdu, Version, VersionPdu, pcm_format};
++    use ironrdp_rdpecam::pdu::{DeviceMessage, DevicePdu, EnumerationPdu};
++    use ironrdp_rdpecam::{DeviceClient, ProtocolVersion};
++
++    #[test]
++    fn microphone_negotiates_and_packetizes_then_stops_on_channel_close() {
++        let state = Arc::new(Mutex::new(Microphone::default()));
++        let packets = Arc::new(Mutex::new(Vec::new()));
++        let output = packets.clone();
++        let mut client = RdpeaiClient::new(
++            Box::new(BrowserMic(state.clone())),
++            Box::new(move |_, messages| {
++                output.lock().unwrap().extend(messages);
++                Ok(())
++            }),
++        );
++        client.start(7).unwrap();
++        let fmt = pcm_format(1, 16000, 16);
++        for pdu in [
++            RdpeaiPdu::Version(VersionPdu::new(Version::V1)),
++            RdpeaiPdu::Formats(FormatsPdu::server(vec![fmt.clone()])),
++            RdpeaiPdu::Open(OpenPdu {
++                frames_per_packet: 320,
++                initial_format: 0,
++                capture_format: fmt,
++            }),
++        ] {
++            client.process(7, &encode_vec(&pdu).unwrap()).unwrap();
++        }
++        assert_eq!(state.lock().unwrap().status()[..2], [16000, 1]);
++        state.lock().unwrap().submit(&vec![1; 300]);
++        assert!(packets.lock().unwrap().is_empty());
++        state.lock().unwrap().submit(&vec![2; 340]);
++        assert_eq!(packets.lock().unwrap().len(), 2);
++        client.close(7);
++        assert!(state.lock().unwrap().status().is_empty());
++        state.lock().unwrap().submit(&vec![3; 640]);
++        assert_eq!(packets.lock().unwrap().len(), 2);
++    }
++    #[test]
++    fn microphone_rejects_unbounded_or_invalid_capture_and_resets_partial_packet() {
++        let state = Arc::new(Mutex::new(Microphone::default()));
++        let mut b = BrowserMic(state.clone());
++        let f = pcm_format(1, 16000, 16);
++        assert_ne!(b.open(&f, &f, 1000000, Box::new(|_| {})), 0);
++        assert_eq!(b.open(&f, &f, 640, Box::new(|_| {})), 0);
++        state.lock().unwrap().submit(&[1, 2]);
++        let epoch = state.lock().unwrap().epoch;
++        assert!(b.set_format(&f, 640));
++        assert!(state.lock().unwrap().pending.is_empty());
++        assert_ne!(state.lock().unwrap().epoch, epoch);
++        b.close();
++        assert!(state.lock().unwrap().sink.is_none());
++    }
++    #[test]
++    fn camera_negotiates_requests_and_rejects_stale_frames_after_restart() {
++        let shared = CameraRedirectionSession::new();
++        let device = shared
++            .select_device(DeviceDescriptor::new("Browser".into(), "RDCamera_Browser_0".into()).unwrap())
++            .unwrap();
++        let mut enumeration = shared.enumeration_client(vec![device.clone()]).unwrap();
++        enumeration.start(2).unwrap();
++        enumeration
++            .process(
++                2,
++                &encode_vec(&EnumerationPdu::SelectVersionResponse(ProtocolVersion::V2)).unwrap(),
++            )
++            .unwrap();
++        let state = Arc::new(Mutex::new(Camera::default()));
++        let packets = Arc::new(Mutex::new(Vec::new()));
++        let output = packets.clone();
++        let mut client = DeviceClient::new(
++            &device,
++            BrowserCamera(state.clone()),
++            Arc::new(move |_, messages| {
++                output.lock().unwrap().extend(messages);
++                Ok(())
++            }),
++        );
++        client.start(3).unwrap();
++        let mut exchange = |pdu| {
++            let out = client
++                .process(3, &encode_vec(&DeviceMessage::new(ProtocolVersion::V2, pdu)).unwrap())
++                .unwrap();
++            out.first()
++                .map(|p| decode::<DeviceMessage>(&encode_vec(p.as_ref()).unwrap()).unwrap().pdu)
++        };
++        assert_eq!(
++            exchange(DevicePdu::ActivateDeviceRequest),
++            Some(DevicePdu::SuccessResponse)
++        );
++        assert_eq!(
++            exchange(DevicePdu::MediaTypeListRequest(0)),
++            Some(DevicePdu::MediaTypeListResponse(vec![camera_format()]))
++        );
++        let start = || {
++            DevicePdu::StartStreamsRequest(vec![StartStreamInfo {
++                stream_index: 0,
++                media_type: camera_format(),
++            }])
++        };
++        assert_eq!(exchange(start()), Some(DevicePdu::SuccessResponse));
++        assert_eq!(state.lock().unwrap().requested(), 0);
++        exchange(DevicePdu::SampleRequest(0));
++        let epoch = state.lock().unwrap().requested();
++        assert_ne!(epoch, 0);
++        state.lock().unwrap().submit(epoch, vec![0xff, 0xd8, 0xff, 0xd9]);
++        assert_eq!(packets.lock().unwrap().len(), 1);
++        exchange(DevicePdu::StopStreamsRequest);
++        assert_eq!(state.lock().unwrap().requested(), 0);
++        exchange(start());
++        exchange(DevicePdu::SampleRequest(0));
++        state.lock().unwrap().submit(epoch, vec![0xff, 0xd8, 0xff, 0xd9]);
++        assert_eq!(packets.lock().unwrap().len(), 1);
++        let epoch = state.lock().unwrap().requested();
++        state.lock().unwrap().submit(epoch, vec![0xff, 0xd8, 0xff, 0xd9]);
++        assert_eq!(packets.lock().unwrap().len(), 2);
++        client.close(3);
++        assert_eq!(state.lock().unwrap().requested(), 0);
++    }
 +}
 diff --git a/crates/ironrdp-web/src/image.rs b/crates/ironrdp-web/src/image.rs
 index 2df63efc..592e3caa 100644
@@ -388,18 +750,19 @@ index 2df63efc..592e3caa 100644
      }
  }
 diff --git a/crates/ironrdp-web/src/lib.rs b/crates/ironrdp-web/src/lib.rs
-index 664e42e6..94dfca58 100644
+index 664e42e6..f9aa63e8 100644
 --- a/crates/ironrdp-web/src/lib.rs
 +++ b/crates/ironrdp-web/src/lib.rs
-@@ -15,6 +15,7 @@ extern crate getrandom2 as _;
+@@ -15,6 +15,8 @@ extern crate getrandom2 as _;
  extern crate getrandom4 as _;
  extern crate time as _;
  
 +mod audio;
++mod capture;
  mod canvas;
  mod clipboard;
  mod error;
-@@ -22,6 +23,9 @@ mod image;
+@@ -22,6 +24,9 @@ mod image;
  mod input;
  mod network_client;
  mod printer;
@@ -708,10 +1071,15 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..7a151b74 100644
+index ac630290..4979a9d6 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
-@@ -5,6 +5,7 @@ use core::time::Duration;
+@@ -1,3 +1,4 @@
++use crate::capture::{Capture, CaptureMessages};
+ use core::cell::RefCell;
+ use core::net::{Ipv4Addr, SocketAddrV4};
+ use core::num::NonZeroU32;
+@@ -5,6 +6,7 @@ use core::time::Duration;
  use std::borrow::Cow;
  use std::rc::Rc;
  
@@ -719,7 +1087,7 @@ index ac630290..7a151b74 100644
  use crate::canvas::Canvas;
  use crate::clipboard;
  use crate::clipboard::{ClipboardData, FileMetadata, WasmClipboard, WasmClipboardBackend, WasmClipboardBackendMessage};
-@@ -12,6 +13,7 @@ use crate::error::IronError;
+@@ -12,6 +14,7 @@ use crate::error::IronError;
  use crate::image::extract_partial_image;
  use crate::input::InputTransaction;
  use crate::network_client::WasmNetworkClient;
@@ -727,7 +1095,7 @@ index ac630290..7a151b74 100644
  use crate::printer::{JsPrinterStreamCallbacks, WasmPrinter, WasmPrinterBackend, wasm_printer_pair};
  use anyhow::Context as _;
  use base64::Engine as _;
-@@ -40,6 +42,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
+@@ -40,6 +43,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
  use ironrdp::session::image::DecodedImage;
  use ironrdp::session::{ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
  use ironrdp_core::WriteBuf;
@@ -735,11 +1103,13 @@ index ac630290..7a151b74 100644
  use ironrdp_futures::{FramedWrite, single_sequence_step_read};
  use rgb::AsPixels as _;
  use tap::prelude::*;
-@@ -95,12 +98,17 @@ struct SessionBuilderInner {
+@@ -95,12 +99,19 @@ struct SessionBuilderInner {
      printer_device_id: Option<u32>,
      printer_driver_name: Option<String>,
  
 +    audio_callback: Option<js_sys::Function>,
++    microphone_enabled: bool,
++    camera_enabled: bool,
      use_display_control: bool,
 +    autologon: bool,
      enable_credssp: bool,
@@ -753,11 +1123,13 @@ index ac630290..7a151b74 100644
  }
  
  impl Default for SessionBuilderInner {
-@@ -141,12 +149,17 @@ impl Default for SessionBuilderInner {
+@@ -141,12 +152,19 @@ impl Default for SessionBuilderInner {
              printer_device_id: None,
              printer_driver_name: None,
  
 +            audio_callback: None,
++            microphone_enabled: false,
++            camera_enabled: false,
              use_display_control: false,
 +            autologon: false,
              enable_credssp: true,
@@ -771,10 +1143,12 @@ index ac630290..7a151b74 100644
          }
      }
  }
-@@ -291,12 +304,35 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -291,12 +309,37 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              |vmconnect: String| { self.0.borrow_mut().vmconnect = Some(vmconnect) };
              |kdc_proxy_url: String| { self.0.borrow_mut().kdc_proxy_url = Some(kdc_proxy_url) };
              |display_control: bool| { self.0.borrow_mut().use_display_control = display_control };
++            |microphone_enabled: bool| { self.0.borrow_mut().microphone_enabled = microphone_enabled };
++            |camera_enabled: bool| { self.0.borrow_mut().camera_enabled = camera_enabled };
 +            |audio_callback: JsValue| { self.0.borrow_mut().audio_callback = audio_callback.dyn_into::<js_sys::Function>().ok() };
 +            |autologon: bool| { self.0.borrow_mut().autologon = autologon };
              |enable_credssp: bool| { self.0.borrow_mut().enable_credssp = enable_credssp };
@@ -807,7 +1181,7 @@ index ac630290..7a151b74 100644
              |outbound_message_size_limit: f64| {
                  let limit = if outbound_message_size_limit >= 0.0 && outbound_message_size_limit <= f64::from(u32::MAX) {
                      #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-@@ -405,6 +441,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -405,6 +448,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name,
              outbound_message_size_limit,
              legacy_graphics,
@@ -815,7 +1189,7 @@ index ac630290..7a151b74 100644
              security,
          );
  
-@@ -450,6 +487,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -450,6 +494,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name = inner.printer_driver_name.clone();
              outbound_message_size_limit = inner.outbound_message_size_limit;
              legacy_graphics = inner.legacy_graphics;
@@ -823,7 +1197,7 @@ index ac630290..7a151b74 100644
              security = SecurityConfig {
                  enable_credssp: inner.enable_credssp,
                  enable_standard_rdp_security: inner.enable_standard_rdp_security,
-@@ -473,13 +511,34 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -473,13 +518,40 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              client_name.clone(),
              desktop_size,
              legacy_graphics,
@@ -852,45 +1226,58 @@ index ac630290..7a151b74 100644
 +        }
  
          let (input_events_tx, input_events_rx) = mpsc::unbounded();
++        let capture = Capture::default();
++        let microphone_enabled = self.0.borrow().microphone_enabled;
++        let camera_enabled = self.0.borrow().camera_enabled;
++        config.enable_audio_capture = microphone_enabled;
 +        let audio_callback = self.0.borrow().audio_callback.clone();
 +        config.enable_audio_playback = audio_callback.is_some();
-+        let audio_backend = audio_callback.as_ref().map(|_| WebAudioBackend::new(input_events_tx.clone()));
++        let audio_backend = audio_callback
++            .as_ref()
++            .map(|_| WebAudioBackend::new(input_events_tx.clone()));
  
          let clipboard = remote_clipboard_changed_callback.clone().map(|callback| {
              WasmClipboard::new(
-@@ -566,6 +625,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -566,6 +638,11 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              vmconnect,
              kdc_proxy_url,
              clipboard_backend: clipboard.as_ref().map(|clip| clip.backend()),
 +            audio_backend,
++            capture: capture.clone(),
++            capture_tx: input_events_tx.clone(),
++            microphone_enabled,
++            camera_enabled,
              printer_backend,
              printer_device_id,
              printer_name,
-@@ -584,6 +644,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -584,6 +661,8 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
          spawn_local(writer_task(writer_rx, rdp_writer, outbound_message_size_limit));
  
          Ok(Session {
 +            audio_callback,
++            capture,
              desktop_size: connection_result.desktop_size,
              input_database: RefCell::new(ironrdp::input::Database::new()),
              writer_tx,
-@@ -606,6 +667,7 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
+@@ -606,6 +685,8 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
  
  #[derive(Debug)]
  pub(crate) enum RdpInputEvent {
 +    Audio(AudioEvent),
++    Capture(CaptureMessages),
      Cliprdr(ClipboardMessage),
      ClipboardBackend(WasmClipboardBackendMessage),
      /// Printer backend → event loop: a print job finished and its bytes are
-@@ -638,6 +700,7 @@ pub(crate) struct Session {
+@@ -638,6 +719,8 @@ pub(crate) struct Session {
      input_events_tx: mpsc::UnboundedSender<RdpInputEvent>,
  
      render_canvas: HtmlCanvasElement,
 +    audio_callback: Option<js_sys::Function>,
++    capture: Capture,
      set_cursor_style_callback: js_sys::Function,
      set_cursor_style_callback_context: JsValue,
  
-@@ -742,7 +805,11 @@ impl iron_remote_desktop::Session for Session {
+@@ -742,7 +825,11 @@ impl iron_remote_desktop::Session for Session {
          let mut requested_resize = None;
  
          // Reused across frames so per-region extraction doesn't allocate on every draw.
@@ -902,7 +1289,7 @@ index ac630290..7a151b74 100644
  
          // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
          let activation_factory = connection_result.activation_factory;
-@@ -763,17 +830,71 @@ impl iron_remote_desktop::Session for Session {
+@@ -763,17 +850,77 @@ impl iron_remote_desktop::Session for Session {
          let mut cleanup_interval = IntervalStream::new(5_000).fuse();
  
          let disconnect_reason = 'outer: loop {
@@ -948,6 +1335,12 @@ index ac630290..7a151b74 100644
                      let event = input_events.context("read next input events")?;
  
                      match event {
++                        RdpInputEvent::Capture(packet) => {
++                            if self.writer_tx.len() > 8 { Vec::new() } else {
++                                let frame = active_stage.encode_dvc_messages(std::mem::take(&mut *packet.messages.lock().unwrap()))?;
++                                vec![ActiveStageOutput::ResponseFrame(frame)]
++                            }
++                        }
 +                        RdpInputEvent::Audio(event) => {
 +                            if let Some(callback) = &self.audio_callback {
 +                                let args = js_sys::Array::new();
@@ -975,7 +1368,7 @@ index ac630290..7a151b74 100644
                          RdpInputEvent::Cliprdr(message) => {
                              if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                                  if let Some(svc_messages) = match message {
-@@ -949,6 +1070,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -949,6 +1096,7 @@ impl iron_remote_desktop::Session for Session {
                      }
                  }
                  _ = cleanup_interval.next() => {
@@ -983,7 +1376,7 @@ index ac630290..7a151b74 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -979,10 +1101,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -979,10 +1127,7 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -995,7 +1388,7 @@ index ac630290..7a151b74 100644
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1213,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1239,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -1004,7 +1397,7 @@ index ac630290..7a151b74 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1300,16 @@ impl iron_remote_desktop::Session for Session {
+@@ -1179,6 +1326,16 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -1021,7 +1414,44 @@ index ac630290..7a151b74 100644
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1517,6 +1648,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1278,6 +1435,36 @@ impl iron_remote_desktop::Session for Session {
+         // to keep the iron-remote-desktop trait surface protocol-agnostic.
+         iron_remote_desktop::extension_match! {
+             match ext;
++            |microphone_status: JsValue| {
++                let _ = microphone_status;
++                let values = self.capture.microphone.lock().unwrap().status();
++                let array = js_sys::Array::new();
++                for value in values { array.push(&JsValue::from_f64(f64::from(value))); }
++                return Ok(array.into());
++            };
++            |microphone_data: JsValue| {
++                let obj = into_object(microphone_data)?;
++                let epoch = get_u32(&obj, "epoch")?;
++                let val = js_sys::Reflect::get(&obj, &JsValue::from_str("data")).unwrap_or(JsValue::NULL);
++                if let Ok(data) = val.dyn_into::<js_sys::Uint8Array>() {
++                    let mut mic = self.capture.microphone.lock().unwrap();
++                    if mic.status().get(2) == Some(&epoch) && data.length() <= 65536 { mic.submit(&data.to_vec()); }
++                }
++                return Ok(JsValue::NULL);
++            };
++            |camera_requested: JsValue| {
++                let _ = camera_requested;
++                return Ok(JsValue::from_f64(f64::from(self.capture.camera.lock().unwrap().requested())));
++            };
++            |camera_data: JsValue| {
++                let obj = into_object(camera_data)?;
++                let epoch = get_u32(&obj, "epoch")?;
++                let val = js_sys::Reflect::get(&obj, &JsValue::from_str("data")).unwrap_or(JsValue::NULL);
++                if let Ok(data) = val.dyn_into::<js_sys::Uint8Array>() {
++                    if data.length() <= 512 * 1024 { self.capture.camera.lock().unwrap().submit(epoch, data.to_vec()); }
++                }
++                return Ok(JsValue::NULL);
++            };
+             |request_file_contents: JsValue| {
+                 let obj = into_object(request_file_contents)?;
+                 let stream_id = get_u32(&obj, "stream_id")?;
+@@ -1517,6 +1704,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -1044,7 +1474,7 @@ index ac630290..7a151b74 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1671,7 @@ fn build_config(
+@@ -1524,6 +1727,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -1052,7 +1482,7 @@ index ac630290..7a151b74 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1723,7 @@ fn build_config(
+@@ -1575,7 +1779,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -1061,23 +1491,31 @@ index ac630290..7a151b74 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -1647,6 +1795,7 @@ struct ConnectParams {
+@@ -1647,6 +1851,11 @@ struct ConnectParams {
      vmconnect: Option<String>,
      kdc_proxy_url: Option<String>,
      clipboard_backend: Option<WasmClipboardBackend>,
 +    audio_backend: Option<WebAudioBackend>,
++    capture: Capture,
++    capture_tx: mpsc::UnboundedSender<RdpInputEvent>,
++    microphone_enabled: bool,
++    camera_enabled: bool,
      printer_backend: Option<WasmPrinterBackend>,
      printer_device_id: u32,
      printer_name: String,
-@@ -1699,6 +1848,7 @@ async fn connect(
+@@ -1699,6 +1908,11 @@ async fn connect(
          vmconnect,
          kdc_proxy_url,
          clipboard_backend,
 +        audio_backend,
++        capture,
++        capture_tx,
++        microphone_enabled,
++        camera_enabled,
          printer_backend,
          printer_device_id,
          printer_name,
-@@ -1712,17 +1862,22 @@ async fn connect(
+@@ -1712,17 +1926,22 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -1101,7 +1539,7 @@ index ac630290..7a151b74 100644
          connector.attach_static_channel(
              Rdpdr::new(Box::new(printer_backend), computer_name).with_printer_driver(
                  printer_device_id,
-@@ -1732,10 +1887,18 @@ async fn connect(
+@@ -1732,10 +1951,19 @@ async fn connect(
          );
      }
  
@@ -1109,7 +1547,7 @@ index ac630290..7a151b74 100644
 -        connector.attach_static_channel(
 -            DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new()))),
 -        );
-+    if use_display_control || use_graphics_pipeline {
++    if use_display_control || use_graphics_pipeline || microphone_enabled || camera_enabled {
 +        let mut dynamic_channels = DrdynvcClient::new();
 +        if use_display_control {
 +            dynamic_channels = dynamic_channels.with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
@@ -1120,11 +1558,12 @@ index ac630290..7a151b74 100644
 +            dynamic_channels =
 +                dynamic_channels.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(WebGraphicsHandler), None));
 +        }
++        dynamic_channels = capture.attach(dynamic_channels, capture_tx, microphone_enabled, camera_enabled);
 +        connector.attach_static_channel(dynamic_channels);
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2208,25 @@ mod tests {
+@@ -2045,10 +2273,25 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -1150,7 +1589,7 @@ index ac630290..7a151b74 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2796,21 @@ mod tests {
+@@ -2618,3 +2861,21 @@ mod tests {
          }
      }
  }

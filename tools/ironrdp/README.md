@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.3.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.4.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -106,4 +106,32 @@ timers. See `results/` for the measured environment and decision.
 
 ## Browser audio
 
-The audio callback extension negotiates mono/stereo 8/16-bit PCM (8–48 kHz) through RDPSND. Web Audio playback follows server channel volume; no microphone redirection or separate volume UI is added. Browser autoplay blocking exposes a click-to-enable prompt. Queues are bounded and disposed on disconnect.
+The audio callback extension negotiates mono/stereo 8/16-bit PCM (8–48 kHz) through RDPSND. Web Audio playback follows server channel volume; no separate playback volume UI is added. Browser autoplay blocking exposes a click-to-enable prompt. Queues are bounded and disposed on disconnect.
+
+## Browser input devices and keys
+
+The RDP status bar and fullscreen toolbar include a Keys menu. Each shortcut
+sends a balanced scancode transaction (including explicit F12) after releasing
+previous held inputs. There are no persistent pressed modifiers in this menu.
+
+Devices are off by default and are not persisted or restored automatically.
+The Devices menu obtains browser consent before reconnecting and advertising
+`AUDIO_INPUT` or `RDCamera_Device_Enumerator`. HTTPS/localhost and remote host
+redirection policy are required. Revocation, tab teardown and unexpected
+connection loss stop the local tracks. An intentional device-change reconnect
+retains consented streams and ignores disconnect events from the old proxy.
+
+- Microphone: AudioWorklet mono capture, streaming resampling to negotiated
+  8–48 kHz mono/stereo PCM16, fixed-size RDPEAI packets, epoch checks on format
+  changes. The worklet allows only one unacknowledged message.
+- Camera: one 640x480 MJPEG stream at up to 10 fps; JPEG encoding only when the
+  server has a pending Sample Request. One encoding job at a time, 512 KiB frame
+  cap, epoch checks on stream restart. No H.264 camera encoder is advertised.
+- Both use the existing DRDYNVC channel and bound pending capture events.
+
+Live Linux xrdp/Chromium tests verify microphone redirection into the remote
+PulseAudio source. Browser fake-device tests verify camera JPEG capture and
+track release; Rust wire-protocol tests verify enumeration, media negotiation,
+sample requests and stale-frame rejection. The xrdp test server does not provide
+a Windows RDPECAM consumer: camera compatibility with Windows applications is
+not yet live-verified. Do not represent those protocol tests as a Windows test.

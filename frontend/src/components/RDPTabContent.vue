@@ -88,6 +88,8 @@
         <el-option value="legacy" :label="t('conn.rdpGraphicsLegacy')" />
         <el-option value="gfx" :label="t('conn.rdpGraphicsSmooth')" />
       </el-select>
+      <RdpKeysMenu :disabled="status !== 'connected'" @send="sendQuickKeys" />
+      <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
       <span class="rdp-status-spacer" />
       <button class="rdp-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
     </div>
@@ -120,6 +122,8 @@
       </template>
       <!-- Keep the toolbar order identical to the status bar: resolution, zoom, quality. -->
       <template #after-zoom>
+        <RdpKeysMenu :disabled="status !== 'connected'" @send="sendQuickKeys" />
+        <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
         <el-select
           v-model="activeQuality"
           class="remote-desktop-toolbar-select"
@@ -163,6 +167,10 @@ import { Loader } from '@lucide/vue'
 import { RdpAudioPlayer } from '../utils/rdpAudio'
 import RemoteDesktopToolbar from './RemoteDesktopToolbar.vue'
 import RemoteMobileControls from './RemoteMobileControls.vue'
+import RdpKeysMenu from './RdpKeysMenu.vue'
+import RdpDevicesMenu from './RdpDevicesMenu.vue'
+import { RdpCapture, type CaptureKind } from '../utils/rdpCapture'
+import { rdpKeyChord } from '../utils/rdpKeys'
 import { useI18n } from '../i18n'
 import type { ConnectionConfig } from '../types/session'
 import { CreateSession, CloseSession, FrontendLog, ClipboardGetFiles, ClipboardReadFileChunkByID,
@@ -257,6 +265,26 @@ const canvasStyle = computed<import('vue').CSSProperties | undefined>(() => {
 })
 
 const audioBlocked = ref(false)
+const microphoneEnabled = ref(false), cameraEnabled = ref(false), captureBusy = ref(false), captureError = ref('')
+const capture = new RdpCapture(() => {
+  microphoneEnabled.value = capture.enabled('microphone')
+  cameraEnabled.value = capture.enabled('camera')
+}, (kind, error) => {
+  captureError.value = `${t(`rdp.${kind}`)}: ${t('rdp.deviceFailed')}`
+  rdpLog(`capture stopped: ${describeError(error)}`)
+})
+async function toggleCapture(kind: CaptureKind) {
+  if (captureBusy.value || reconnecting || status.value !== 'connected') return
+  captureBusy.value = true; captureError.value = ''
+  try {
+    if (capture.enabled(kind)) capture.disable(kind)
+    else if (!await capture.enable(kind)) return
+    await reconnect(true)
+  } catch (error) {
+    captureError.value = t(error instanceof Error && error.message === 'HTTPS_REQUIRED' ? 'rdp.deviceHttps' : 'rdp.deviceFailed')
+    rdpLog(`capture permission: ${describeError(error)}`)
+  } finally { captureBusy.value = false }
+}
 let audioPlayer: RdpAudioPlayer | null = null
 function unlockAudio() { audioPlayer?.unlock() }
 
@@ -465,6 +493,8 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
         // Disconnect/reconnect disposes the player and stops all sound.
       } catch (error) { rdpLog(`audio playback: ${describeError(error)}`) }
     }))
+    builder.extension(new mod.Extension('microphone_enabled', capture.enabled('microphone')))
+    builder.extension(new mod.Extension('camera_enabled', capture.enabled('camera')))
     builder.extension(new mod.Extension('enable_credssp', activeCredSSP))
     builder.extension(new mod.Extension('graphics_pipeline', activeGraphicsMode.value === 'gfx'))
     sessionGraphicsMode.value = activeGraphicsMode.value
@@ -531,6 +561,10 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
       return
     }
     session = connectedSession
+    void capture.attach(async (name, value) => {
+      if (generation !== clientGeneration || session !== connectedSession) throw new Error('Capture session ended')
+      return connectedSession.invokeExtension(new mod.Extension(name, value))
+    })
     clipboardSync = new RdpClipboardSync({
       read: async () => {
         // CF_HDROP takes precedence: Explorer may also expose a text path.
@@ -619,7 +653,9 @@ function runEnded(reason: string, isError = false) {
   teardownClient()
 }
 
-function teardownClient() {
+function teardownClient(preserveCapture = false) {
+  if (preserveCapture) capture.stopBridge()
+  else capture.stopAll()
   audioPlayer?.dispose()
   audioPlayer = null
   audioBlocked.value = false
@@ -652,24 +688,27 @@ async function connect() {
     } else {
       errorMessage.value = 'missing proxy address'
       status.value = 'error'
+      teardownClient()
     }
   } catch (e) {
     rdpLog(`session create error: ${backendErrorText(e)}`)
     errorMessage.value = backendErrorText(e)
     status.value = 'error'
-    clearConnectTimer()
+    teardownClient()
   }
 }
 
-async function reconnect() {
+async function reconnect(preserveCapture = false) {
   if (reconnecting) return
   reconnecting = true
   try {
     clearConnectTimer()
-    teardownClient()
-    if (currentSessionId.value) {
-      try { await CloseSession(currentSessionId.value) } catch (_) {}
-      currentSessionId.value = null
+    // Ignore the old proxy's delayed disconnect event during an intentional reconnect.
+    const closingSessionId = currentSessionId.value
+    currentSessionId.value = null
+    teardownClient(preserveCapture)
+    if (closingSessionId) {
+      try { await CloseSession(closingSessionId) } catch (_) {}
     }
     await connect()
   } finally {
@@ -763,6 +802,19 @@ function onPaste(e: ClipboardEvent) {
 // or WebView handles shortcuts; ordinary DOM events provide the fallback.
 function isLocalKey(e: KeyboardEvent): boolean {
   return e.code === 'F12'
+}
+
+function sendQuickKeys(codes: string[]) {
+  if (!session || !wasmModule || status.value !== 'connected') return
+  const events = rdpKeyChord(codes)
+  if (!events.length) return
+  // Clear physical held keys before sending a self-contained shortcut.
+  onFocusOut()
+  try {
+    const tx = new wasmModule.InputTransaction()
+    for (const e of events) tx.addEvent(e.down ? wasmModule.DeviceEvent.keyPressed(e.code) : wasmModule.DeviceEvent.keyReleased(e.code))
+    session.applyInputs(tx)
+  } catch (error) { rdpLog(`shortcut failed: ${describeError(error)}`) }
 }
 
 function sendScancode(scancode: number, down: boolean) {
@@ -1566,7 +1618,8 @@ watch(activeResolution, (mode) => {
 .rdp-error-detail { color: var(--text-muted); font-size: 0.8125rem; max-width: 30rem; text-align: center; word-break: break-word; }
 .rdp-error-hint { color: var(--text-secondary); font-size: 0.8125rem; max-width: 36rem; text-align: center; word-break: break-word; }
 .rdp-statusbar {
-  height: 1.5rem;
+  min-height: 1.5rem;
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 0.5rem;

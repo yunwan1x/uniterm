@@ -2328,5 +2328,14 @@
   "conn.rdpGraphicsMode": "畫面模式",
   "conn.rdpGraphicsLegacy": "相容",
   "conn.rdpGraphicsSmooth": "流暢",
+  "rdp.keys": "按鍵",
+  "rdp.devices": "裝置",
+  "rdp.microphone": "麥克風",
+  "rdp.camera": "攝影機",
+  "rdp.deviceOn": "共享中",
+  "rdp.deviceOff": "已關閉",
+  "rdp.devicesHint": "變更後將重新連線此工作階段。僅開啟需要共享的裝置，遠端亦須允許裝置重新導向。",
+  "rdp.deviceFailed": "裝置無法使用或授權遭拒，請檢查瀏覽器權限。",
+  "rdp.deviceHttps": "請使用 HTTPS 或 localhost 開啟網頁後共享裝置。",
   "rdp.enableAudio": "點擊啟用聲音"
 }

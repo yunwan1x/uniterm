@@ -1,0 +1,69 @@
+{
+  "browser_capture": {
+    "cameraFrames": 30,
+    "cameraSize": [
+      640,
+      480
+    ],
+    "microphonePackets": 132,
+    "stopped": {
+      "counts": [
+        150,
+        34
+      ],
+      "tracks": [
+        "ended",
+        "ended"
+      ]
+    },
+    "errors": []
+  },
+  "remote_microphone": {
+    "seconds": 6.918548752834467,
+    "rms": 0.02731106970623499,
+    "peak_hz": 1000.0
+  },
+  "remote_key_events": {
+    "F12": 2,
+    "Tab": 2,
+    "Escape": 2
+  },
+  "devices_after_disconnect": [
+    {
+      "kind": "audio",
+      "state": "ended"
+    },
+    {
+      "kind": "video",
+      "state": "ended"
+    }
+  ],
+  "checks": {
+    "frontend": 64,
+    "web_rust": 34,
+    "rdpeai_protocol": 31,
+    "rdpecam_protocol": 18,
+    "typecheck_existing_errors": 569
+  },
+  "windows_camera_live_test": false,
+  "reconnect_failure": {
+    "tracks": [
+      {
+        "kind": "audio",
+        "state": "ended"
+      },
+      {
+        "kind": "video",
+        "state": "ended"
+      }
+    ],
+    "error": true
+  },
+  "image_smoke": {
+    "health": "passed",
+    "login": "passed",
+    "authenticated_user": "passed",
+    "worker_frontend": "passed",
+    "assets_verified": 3
+  }
+}

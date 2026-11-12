@@ -2355,5 +2355,14 @@
   "conn.rdpGraphicsMode": "画面模式",
   "conn.rdpGraphicsLegacy": "兼容",
   "conn.rdpGraphicsSmooth": "流畅",
+  "rdp.keys": "按键",
+  "rdp.devices": "设备",
+  "rdp.microphone": "麦克风",
+  "rdp.camera": "摄像头",
+  "rdp.deviceOn": "共享中",
+  "rdp.deviceOff": "已关闭",
+  "rdp.devicesHint": "更改后将重新连接此会话。仅开启需要共享的设备，远端也须允许设备重定向。",
+  "rdp.deviceFailed": "设备不可用或授权被拒绝，请检查浏览器权限。",
+  "rdp.deviceHttps": "请使用 HTTPS 或 localhost 打开网页后共享设备。",
   "rdp.enableAudio": "点击启用声音"
 }

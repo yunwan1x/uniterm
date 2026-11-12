@@ -2355,5 +2355,14 @@
   "conn.rdpGraphicsMode": "Graphics mode",
   "conn.rdpGraphicsLegacy": "Compatibility",
   "conn.rdpGraphicsSmooth": "Smooth",
+  "rdp.keys": "Keys",
+  "rdp.devices": "Devices",
+  "rdp.microphone": "Microphone",
+  "rdp.camera": "Camera",
+  "rdp.deviceOn": "Sharing",
+  "rdp.deviceOff": "Off",
+  "rdp.devicesHint": "Changes reconnect this session. Only enable devices you want to share. The remote host must allow redirection.",
+  "rdp.deviceFailed": "Device unavailable or permission denied. Check browser permissions.",
+  "rdp.deviceHttps": "Open this page using HTTPS or localhost to share devices.",
   "rdp.enableAudio": "Click to enable sound"
 }
