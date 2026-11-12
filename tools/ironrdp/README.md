@@ -39,9 +39,10 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 7. Handle GFX ResetGraphics extent changes without requiring DeactivateAll:
    clear damage from the old extent and resize/redraw the canvas at presentation.
 
-The connection form and normal/fullscreen RDP toolbar expose **Smooth
-(experimental)** and **Compatibility**. Existing connections default to
-Compatibility; `rdpGraphicsMode: "gfx"` opts in and persists with the connection.
+The connection form and normal/fullscreen RDP toolbar expose **Smooth** and **Compatibility**. New connections and saved connections without
+`rdpGraphicsMode` default to Smooth. An explicit `rdpGraphicsMode: "legacy"`
+keeps the compatibility fallback. The frontend passes the selected mode to the
+WASM extension on every connect; the low-level extension itself stays opt-in.
 Switching reconnects. A server without GFX can still choose legacy graphics;
 selecting Smooth is a requested mode, not proof of the negotiated codec.
 

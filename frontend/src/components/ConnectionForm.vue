@@ -1127,7 +1127,7 @@ const form = reactive<ConnectionConfig>({
   rdpEnableNLA: true,
   rdpAdminSession: false,
   rdpQuality: 'balanced',
-  rdpGraphicsMode: 'legacy',
+  rdpGraphicsMode: 'gfx',
   dbType: '',
   dbName: '',
   dbParams: '',
@@ -1388,7 +1388,7 @@ watch(() => props.editConfig, (config) => {
     form.rdpAdminSession = config.rdpAdminSession ?? false
     // Older connections predate the tier field; they get the default tier.
     form.rdpQuality = config.rdpQuality ?? 'balanced'
-    form.rdpGraphicsMode = config.rdpGraphicsMode ?? 'legacy'
+    form.rdpGraphicsMode = config.rdpGraphicsMode ?? 'gfx'
     form.agentForwarding = config.agentForwarding ?? false
     // Existing SSH connections without the field default to SFTP (old behavior).
     form.fileTransferProto = config.fileTransferProto ?? 'sftp'
@@ -1530,7 +1530,7 @@ function resetForm() {
   form.rdpEnableNLA = true
   form.rdpAdminSession = false
   form.rdpQuality = 'balanced'
-  form.rdpGraphicsMode = 'legacy'
+  form.rdpGraphicsMode = 'gfx'
   form.kerberosRealm = ''
   form.sshAlgorithms = undefined
   form.dbType = ''

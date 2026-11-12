@@ -2327,5 +2327,5 @@
   "tableColumns.saved": "立即生效 · 儲存在目前瀏覽器",
   "conn.rdpGraphicsMode": "畫面模式",
   "conn.rdpGraphicsLegacy": "相容",
-  "conn.rdpGraphicsSmooth": "流暢（實驗）"
+  "conn.rdpGraphicsSmooth": "流暢"
 }

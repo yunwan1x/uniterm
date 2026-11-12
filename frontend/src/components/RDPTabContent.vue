@@ -202,7 +202,7 @@ const activeQuality = ref<RdpQuality>(normalizeRdpQuality(props.config?.rdpQuali
 // The tier the running session was actually started with — the select may
 // hold a newer value until the reconnect it triggers completes.
 const sessionQuality = ref<RdpQuality>(activeQuality.value)
-const activeGraphicsMode = ref<'legacy' | 'gfx'>(props.config?.rdpGraphicsMode === 'gfx' ? 'gfx' : 'legacy')
+const activeGraphicsMode = ref<'legacy' | 'gfx'>(props.config?.rdpGraphicsMode === 'legacy' ? 'legacy' : 'gfx')
 const sessionGraphicsMode = ref(activeGraphicsMode.value)
 // Resolution mode (adaptive / fullscreen / fixed WxH). Seeded from the saved
 // connection; the status bar selector overrides it and persists the choice.
