@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.2.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.3.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -103,3 +103,7 @@ synthetic patterns. `draw*Ms` isolates extraction + alpha normalization +
 ImageData creation + Canvas submission; `work*Ms` also includes synthetic pattern
 generation and region bookkeeping. GPU completion is not measured by these CPU
 timers. See `results/` for the measured environment and decision.
+
+## Browser audio
+
+The audio callback extension negotiates mono/stereo 8/16-bit PCM (8–48 kHz) through RDPSND. Web Audio playback follows server channel volume; no microphone redirection or separate volume UI is added. Browser autoplay blocking exposes a click-to-enable prompt. Queues are bounded and disposed on disconnect.

@@ -4,6 +4,8 @@
     class="rdp-tab-content"
     tabindex="0"
     :data-remote-keyboard="(keyboardFocused && status === 'connected') || mobileKbOpen ? 'true' : undefined"
+    @pointerdown.capture="unlockAudio"
+    @keydown.capture="unlockAudio"
     @keydown="onKeyDown"
     @keyup="onKeyUp"
     @paste="onPaste"
@@ -49,6 +51,8 @@
         :style="canvasStyle"
       />
     </div>
+
+    <button v-if="audioBlocked && status === 'connected'" class="rdp-audio-enable" @click="unlockAudio">{{ t('rdp.enableAudio') }}</button>
 
     <!-- Status bar -->
     <div
@@ -156,6 +160,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
 import { Loader } from '@lucide/vue'
+import { RdpAudioPlayer } from '../utils/rdpAudio'
 import RemoteDesktopToolbar from './RemoteDesktopToolbar.vue'
 import RemoteMobileControls from './RemoteMobileControls.vue'
 import { useI18n } from '../i18n'
@@ -250,6 +255,10 @@ const canvasStyle = computed<import('vue').CSSProperties | undefined>(() => {
     height: `${zoomedCssSize(fb.height, zoom.value, displayPixelRatio.value)}px`,
   }
 })
+
+const audioBlocked = ref(false)
+let audioPlayer: RdpAudioPlayer | null = null
+function unlockAudio() { audioPlayer?.unlock() }
 
 const CONNECT_TIMEOUT = 30_000
 
@@ -444,6 +453,18 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
       .desktopSize(new mod.DesktopSize(size.width, size.height))
       .renderCanvas(canvasEl.value)
     if (domain) builder.serverDomain(domain)
+    audioPlayer?.dispose()
+    const player = new RdpAudioPlayer(blocked => { if (generation === clientGeneration) audioBlocked.value = blocked })
+    audioPlayer = player
+    builder.extension(new mod.Extension('audio_callback', (kind: string, data: Uint8Array | number, rate?: number, channels?: number, bits?: number) => {
+      if (generation !== clientGeneration) return
+      try {
+        if (kind === 'pcm' && data instanceof Uint8Array) player.pcm(data, rate!, channels!, bits!)
+        else if (kind === 'volume' && typeof data === 'number') player.setVolume(data, rate!)
+        // RDPSND Close means the stream ended; let already scheduled samples drain.
+        // Disconnect/reconnect disposes the player and stops all sound.
+      } catch (error) { rdpLog(`audio playback: ${describeError(error)}`) }
+    }))
     builder.extension(new mod.Extension('enable_credssp', activeCredSSP))
     builder.extension(new mod.Extension('graphics_pipeline', activeGraphicsMode.value === 'gfx'))
     sessionGraphicsMode.value = activeGraphicsMode.value
@@ -599,6 +620,9 @@ function runEnded(reason: string, isError = false) {
 }
 
 function teardownClient() {
+  audioPlayer?.dispose()
+  audioPlayer = null
+  audioBlocked.value = false
   onFocusOut()
   ++clientGeneration
   clearConnectTimer()
@@ -1471,6 +1495,12 @@ watch(activeResolution, (mode) => {
 </script>
 
 <style scoped>
+.rdp-audio-enable {
+  position: absolute; top: 12px; right: 12px; z-index: 5;
+  padding: 8px 12px; border: 1px solid var(--el-border-color);
+  border-radius: 6px; background: var(--el-bg-color); color: var(--el-text-color-primary); cursor: pointer;
+}
+
 .rdp-tab-content {
   display: flex;
   flex-direction: column;

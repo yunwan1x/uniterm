@@ -70,6 +70,149 @@ index c964d7ce..6a24ed71 100644
  ironrdp-core.path = "../ironrdp-core"
  ironrdp-cliprdr-format.path = "../ironrdp-cliprdr-format"
  ironrdp-futures.path = "../ironrdp-futures"
+diff --git a/crates/ironrdp-web/src/audio.rs b/crates/ironrdp-web/src/audio.rs
+new file mode 100644
+index 00000000..2c1ac328
+--- /dev/null
++++ b/crates/ironrdp-web/src/audio.rs
+@@ -0,0 +1,137 @@
++//! Bounded PCM bridge. JS owns Web Audio; the protocol backend remains Send.
++use crate::session::RdpInputEvent;
++use futures_channel::mpsc;
++use ironrdp::rdpsnd::{
++    client::RdpsndClientHandler,
++    pdu::{AudioFormat, AudioFormatFlags, PitchPdu, VolumePdu, WaveFormat},
++};
++use std::borrow::Cow;
++use std::sync::{
++    Arc,
++    atomic::{AtomicUsize, Ordering},
++};
++
++const MAX_QUEUED_BYTES: usize = 256 * 1024;
++
++#[derive(Debug)]
++pub(crate) struct PcmPacket {
++    pub format: AudioFormat,
++    pub data: Vec<u8>,
++    queued: Arc<AtomicUsize>,
++}
++impl Drop for PcmPacket {
++    fn drop(&mut self) {
++        self.queued.fetch_sub(self.data.len(), Ordering::Relaxed);
++    }
++}
++#[derive(Debug)]
++pub(crate) enum AudioEvent {
++    Pcm(PcmPacket),
++    Volume(u16, u16),
++    Close,
++}
++
++#[derive(Debug)]
++pub(crate) struct WebAudioBackend {
++    tx: mpsc::UnboundedSender<RdpInputEvent>,
++    queued: Arc<AtomicUsize>,
++}
++impl WebAudioBackend {
++    pub fn new(tx: mpsc::UnboundedSender<RdpInputEvent>) -> Self {
++        Self {
++            tx,
++            queued: Arc::new(AtomicUsize::new(0)),
++        }
++    }
++}
++fn supported(f: &AudioFormat) -> bool {
++    f.format == WaveFormat::PCM
++        && matches!(f.n_channels, 1 | 2)
++        && matches!(f.bits_per_sample, 8 | 16)
++        && (8000..=48000).contains(&f.n_samples_per_sec)
++        && f.n_block_align == f.n_channels * (f.bits_per_sample / 8)
++}
++impl RdpsndClientHandler for WebAudioBackend {
++    fn get_flags(&self) -> AudioFormatFlags {
++        AudioFormatFlags::ALIVE | AudioFormatFlags::VOLUME
++    }
++    fn get_formats(&self) -> &[AudioFormat] {
++        &[]
++    }
++    fn choose_formats(&self, formats: &[AudioFormat]) -> Vec<AudioFormat> {
++        formats.iter().filter(|f| supported(f)).cloned().collect()
++    }
++    fn wave(&mut self, format: &AudioFormat, _ts: u32, data: Cow<'_, [u8]>) {
++        if !supported(format) || data.is_empty() || data.len() % usize::from(format.n_block_align) != 0 {
++            return;
++        }
++        if self
++            .queued
++            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
++                n.checked_add(data.len()).filter(|v| *v <= MAX_QUEUED_BYTES)
++            })
++            .is_err()
++        {
++            return;
++        }
++        let packet = PcmPacket {
++            format: format.clone(),
++            data: data.into_owned(),
++            queued: self.queued.clone(),
++        };
++        let _ = self.tx.unbounded_send(RdpInputEvent::Audio(AudioEvent::Pcm(packet)));
++    }
++    fn set_volume(&mut self, volume: VolumePdu) {
++        let _ = self.tx.unbounded_send(RdpInputEvent::Audio(AudioEvent::Volume(
++            volume.volume_left,
++            volume.volume_right,
++        )));
++    }
++    fn set_pitch(&mut self, _pitch: PitchPdu) {} // PITCH is deliberately not advertised.
++    fn close(&mut self) {
++        let _ = self.tx.unbounded_send(RdpInputEvent::Audio(AudioEvent::Close));
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use futures_util::StreamExt;
++    fn pcm() -> AudioFormat {
++        AudioFormat {
++            format: WaveFormat::PCM,
++            n_channels: 2,
++            n_samples_per_sec: 44100,
++            n_avg_bytes_per_sec: 176400,
++            n_block_align: 4,
++            bits_per_sample: 16,
++            data: None,
++        }
++    }
++    #[test]
++    fn only_advertise_supported_server_pcm_formats() {
++        let (tx, _) = mpsc::unbounded();
++        let b = WebAudioBackend::new(tx);
++        let mut invalid = pcm();
++        invalid.format = WaveFormat::AAC_MS;
++        let mut misaligned = pcm();
++        misaligned.n_block_align = 1;
++        assert_eq!(b.choose_formats(&[invalid, misaligned, pcm()]), vec![pcm()]);
++        assert!(b.get_flags().contains(AudioFormatFlags::ALIVE));
++        assert!(!b.get_flags().contains(AudioFormatFlags::PITCH));
++    }
++    #[test]
++    fn queue_is_bounded_and_released_when_consumed_or_disconnected() {
++        let (tx, mut rx) = mpsc::unbounded();
++        let mut b = WebAudioBackend::new(tx);
++        b.wave(&pcm(), 0, Cow::Owned(vec![0; MAX_QUEUED_BYTES]));
++        b.wave(&pcm(), 1, Cow::Owned(vec![0; 4]));
++        assert_eq!(b.queued.load(Ordering::Relaxed), MAX_QUEUED_BYTES);
++        drop(rx.next().now_or_never().unwrap());
++        assert_eq!(b.queued.load(Ordering::Relaxed), 0);
++        drop(rx);
++        b.wave(&pcm(), 2, Cow::Owned(vec![0; 4]));
++        assert_eq!(b.queued.load(Ordering::Relaxed), 0);
++    }
++    use futures_util::FutureExt;
++}
 diff --git a/crates/ironrdp-web/src/image.rs b/crates/ironrdp-web/src/image.rs
 index 2df63efc..592e3caa 100644
 --- a/crates/ironrdp-web/src/image.rs
@@ -245,10 +388,18 @@ index 2df63efc..592e3caa 100644
      }
  }
 diff --git a/crates/ironrdp-web/src/lib.rs b/crates/ironrdp-web/src/lib.rs
-index 664e42e6..7c1a3192 100644
+index 664e42e6..94dfca58 100644
 --- a/crates/ironrdp-web/src/lib.rs
 +++ b/crates/ironrdp-web/src/lib.rs
-@@ -22,6 +22,9 @@ mod image;
+@@ -15,6 +15,7 @@ extern crate getrandom2 as _;
+ extern crate getrandom4 as _;
+ extern crate time as _;
+ 
++mod audio;
+ mod canvas;
+ mod clipboard;
+ mod error;
+@@ -22,6 +23,9 @@ mod image;
  mod input;
  mod network_client;
  mod printer;
@@ -557,10 +708,18 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..163ab601 100644
+index ac630290..7a151b74 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
-@@ -12,6 +12,7 @@ use crate::error::IronError;
+@@ -5,6 +5,7 @@ use core::time::Duration;
+ use std::borrow::Cow;
+ use std::rc::Rc;
+ 
++use crate::audio::{AudioEvent, WebAudioBackend};
+ use crate::canvas::Canvas;
+ use crate::clipboard;
+ use crate::clipboard::{ClipboardData, FileMetadata, WasmClipboard, WasmClipboardBackend, WasmClipboardBackendMessage};
+@@ -12,6 +13,7 @@ use crate::error::IronError;
  use crate::image::extract_partial_image;
  use crate::input::InputTransaction;
  use crate::network_client::WasmNetworkClient;
@@ -568,7 +727,7 @@ index ac630290..163ab601 100644
  use crate::printer::{JsPrinterStreamCallbacks, WasmPrinter, WasmPrinterBackend, wasm_printer_pair};
  use anyhow::Context as _;
  use base64::Engine as _;
-@@ -40,6 +41,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
+@@ -40,6 +42,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
  use ironrdp::session::image::DecodedImage;
  use ironrdp::session::{ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
  use ironrdp_core::WriteBuf;
@@ -576,9 +735,11 @@ index ac630290..163ab601 100644
  use ironrdp_futures::{FramedWrite, single_sequence_step_read};
  use rgb::AsPixels as _;
  use tap::prelude::*;
-@@ -96,11 +98,15 @@ struct SessionBuilderInner {
+@@ -95,12 +98,17 @@ struct SessionBuilderInner {
+     printer_device_id: Option<u32>,
      printer_driver_name: Option<String>,
  
++    audio_callback: Option<js_sys::Function>,
      use_display_control: bool,
 +    autologon: bool,
      enable_credssp: bool,
@@ -592,9 +753,11 @@ index ac630290..163ab601 100644
  }
  
  impl Default for SessionBuilderInner {
-@@ -142,11 +148,15 @@ impl Default for SessionBuilderInner {
+@@ -141,12 +149,17 @@ impl Default for SessionBuilderInner {
+             printer_device_id: None,
              printer_driver_name: None,
  
++            audio_callback: None,
              use_display_control: false,
 +            autologon: false,
              enable_credssp: true,
@@ -608,10 +771,11 @@ index ac630290..163ab601 100644
          }
      }
  }
-@@ -291,12 +301,34 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -291,12 +304,35 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              |vmconnect: String| { self.0.borrow_mut().vmconnect = Some(vmconnect) };
              |kdc_proxy_url: String| { self.0.borrow_mut().kdc_proxy_url = Some(kdc_proxy_url) };
              |display_control: bool| { self.0.borrow_mut().use_display_control = display_control };
++            |audio_callback: JsValue| { self.0.borrow_mut().audio_callback = audio_callback.dyn_into::<js_sys::Function>().ok() };
 +            |autologon: bool| { self.0.borrow_mut().autologon = autologon };
              |enable_credssp: bool| { self.0.borrow_mut().enable_credssp = enable_credssp };
              |enable_standard_rdp_security: bool| {
@@ -643,7 +807,7 @@ index ac630290..163ab601 100644
              |outbound_message_size_limit: f64| {
                  let limit = if outbound_message_size_limit >= 0.0 && outbound_message_size_limit <= f64::from(u32::MAX) {
                      #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-@@ -405,6 +437,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -405,6 +441,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name,
              outbound_message_size_limit,
              legacy_graphics,
@@ -651,7 +815,7 @@ index ac630290..163ab601 100644
              security,
          );
  
-@@ -450,6 +483,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -450,6 +487,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name = inner.printer_driver_name.clone();
              outbound_message_size_limit = inner.outbound_message_size_limit;
              legacy_graphics = inner.legacy_graphics;
@@ -659,7 +823,7 @@ index ac630290..163ab601 100644
              security = SecurityConfig {
                  enable_credssp: inner.enable_credssp,
                  enable_standard_rdp_security: inner.enable_standard_rdp_security,
-@@ -473,11 +507,29 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -473,13 +511,34 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              client_name.clone(),
              desktop_size,
              legacy_graphics,
@@ -688,8 +852,45 @@ index ac630290..163ab601 100644
 +        }
  
          let (input_events_tx, input_events_rx) = mpsc::unbounded();
++        let audio_callback = self.0.borrow().audio_callback.clone();
++        config.enable_audio_playback = audio_callback.is_some();
++        let audio_backend = audio_callback.as_ref().map(|_| WebAudioBackend::new(input_events_tx.clone()));
  
-@@ -742,7 +794,11 @@ impl iron_remote_desktop::Session for Session {
+         let clipboard = remote_clipboard_changed_callback.clone().map(|callback| {
+             WasmClipboard::new(
+@@ -566,6 +625,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+             vmconnect,
+             kdc_proxy_url,
+             clipboard_backend: clipboard.as_ref().map(|clip| clip.backend()),
++            audio_backend,
+             printer_backend,
+             printer_device_id,
+             printer_name,
+@@ -584,6 +644,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+         spawn_local(writer_task(writer_rx, rdp_writer, outbound_message_size_limit));
+ 
+         Ok(Session {
++            audio_callback,
+             desktop_size: connection_result.desktop_size,
+             input_database: RefCell::new(ironrdp::input::Database::new()),
+             writer_tx,
+@@ -606,6 +667,7 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
+ 
+ #[derive(Debug)]
+ pub(crate) enum RdpInputEvent {
++    Audio(AudioEvent),
+     Cliprdr(ClipboardMessage),
+     ClipboardBackend(WasmClipboardBackendMessage),
+     /// Printer backend → event loop: a print job finished and its bytes are
+@@ -638,6 +700,7 @@ pub(crate) struct Session {
+     input_events_tx: mpsc::UnboundedSender<RdpInputEvent>,
+ 
+     render_canvas: HtmlCanvasElement,
++    audio_callback: Option<js_sys::Function>,
+     set_cursor_style_callback: js_sys::Function,
+     set_cursor_style_callback_context: JsValue,
+ 
+@@ -742,7 +805,11 @@ impl iron_remote_desktop::Session for Session {
          let mut requested_resize = None;
  
          // Reused across frames so per-region extraction doesn't allocate on every draw.
@@ -701,7 +902,7 @@ index ac630290..163ab601 100644
  
          // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
          let activation_factory = connection_result.activation_factory;
-@@ -763,14 +819,44 @@ impl iron_remote_desktop::Session for Session {
+@@ -763,17 +830,71 @@ impl iron_remote_desktop::Session for Session {
          let mut cleanup_interval = IntervalStream::new(5_000).fuse();
  
          let disconnect_reason = 'outer: loop {
@@ -747,7 +948,34 @@ index ac630290..163ab601 100644
                      let event = input_events.context("read next input events")?;
  
                      match event {
-@@ -949,6 +1035,7 @@ impl iron_remote_desktop::Session for Session {
++                        RdpInputEvent::Audio(event) => {
++                            if let Some(callback) = &self.audio_callback {
++                                let args = js_sys::Array::new();
++                                match &event {
++                                    AudioEvent::Pcm(packet) => {
++                                        args.push(&JsValue::from_str("pcm"));
++                                        args.push(&js_sys::Uint8Array::from(packet.data.as_slice()));
++                                        args.push(&JsValue::from_f64(f64::from(packet.format.n_samples_per_sec)));
++                                        args.push(&JsValue::from_f64(f64::from(packet.format.n_channels)));
++                                        args.push(&JsValue::from_f64(f64::from(packet.format.bits_per_sample)));
++                                    }
++                                    AudioEvent::Volume(left, right) => {
++                                        args.push(&JsValue::from_str("volume"));
++                                        args.push(&JsValue::from_f64(f64::from(*left) / 65535.0));
++                                        args.push(&JsValue::from_f64(f64::from(*right) / 65535.0));
++                                    }
++                                    AudioEvent::Close => { args.push(&JsValue::from_str("close")); }
++                                }
++                                if let Err(error) = callback.apply(&JsValue::NULL, &args) {
++                                    warn!(?error, "Audio playback callback failed");
++                                }
++                            }
++                            Vec::new()
++                        }
+                         RdpInputEvent::Cliprdr(message) => {
+                             if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
+                                 if let Some(svc_messages) = match message {
+@@ -949,6 +1070,7 @@ impl iron_remote_desktop::Session for Session {
                      }
                  }
                  _ = cleanup_interval.next() => {
@@ -755,7 +983,7 @@ index ac630290..163ab601 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -979,10 +1066,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -979,10 +1101,7 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -767,7 +995,7 @@ index ac630290..163ab601 100644
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1178,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1213,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -776,7 +1004,7 @@ index ac630290..163ab601 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1265,16 @@ impl iron_remote_desktop::Session for Session {
+@@ -1179,6 +1300,16 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -793,7 +1021,7 @@ index ac630290..163ab601 100644
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1517,6 +1613,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1517,6 +1648,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -816,7 +1044,7 @@ index ac630290..163ab601 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1636,7 @@ fn build_config(
+@@ -1524,6 +1671,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -824,7 +1052,7 @@ index ac630290..163ab601 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1688,7 @@ fn build_config(
+@@ -1575,7 +1723,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -833,7 +1061,23 @@ index ac630290..163ab601 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -1712,6 +1825,7 @@ async fn connect(
+@@ -1647,6 +1795,7 @@ struct ConnectParams {
+     vmconnect: Option<String>,
+     kdc_proxy_url: Option<String>,
+     clipboard_backend: Option<WasmClipboardBackend>,
++    audio_backend: Option<WebAudioBackend>,
+     printer_backend: Option<WasmPrinterBackend>,
+     printer_device_id: u32,
+     printer_name: String,
+@@ -1699,6 +1848,7 @@ async fn connect(
+         vmconnect,
+         kdc_proxy_url,
+         clipboard_backend,
++        audio_backend,
+         printer_backend,
+         printer_device_id,
+         printer_name,
+@@ -1712,17 +1862,22 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -841,7 +1085,23 @@ index ac630290..163ab601 100644
      let mut connector = ClientConnector::new(config, dummy_client_addr);
  
      if let Some(clipboard_backend) = clipboard_backend {
-@@ -1732,10 +1846,18 @@ async fn connect(
+         connector.attach_static_channel(CliprdrClient::new(Box::new(clipboard_backend)));
+     }
+ 
++    if let Some(audio_backend) = audio_backend {
++        connector.attach_static_channel(Rdpsnd::new(Box::new(audio_backend)));
++    } else if printer_backend.is_some() {
++        connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
++    }
+     if let Some(printer_backend) = printer_backend {
+         // Windows servers only speak on RDPDR when RDPSND is advertised too
+         // (MS-RDPEFS Appendix A<1>). We do not play audio in the web client,
+         // but the no-op RDPSND processor satisfies that channel dependency.
+-        connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
+         connector.attach_static_channel(
+             Rdpdr::new(Box::new(printer_backend), computer_name).with_printer_driver(
+                 printer_device_id,
+@@ -1732,10 +1887,18 @@ async fn connect(
          );
      }
  
@@ -864,7 +1124,7 @@ index ac630290..163ab601 100644
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2167,25 @@ mod tests {
+@@ -2045,10 +2208,25 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -890,7 +1150,7 @@ index ac630290..163ab601 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2755,21 @@ mod tests {
+@@ -2618,3 +2796,21 @@ mod tests {
          }
      }
  }

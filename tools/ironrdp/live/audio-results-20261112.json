@@ -1,0 +1,86 @@
+{
+  "full": {
+    "channels": [
+      {
+        "peak_block_rms": 0.30253090321014664,
+        "dominant_hz": 441.4306640625
+      },
+      {
+        "peak_block_rms": 0.30238794656422896,
+        "dominant_hz": 882.861328125
+      }
+    ],
+    "received_pcm_buffers": 134,
+    "sample_rate": 44100
+  },
+  "half": {
+    "channels": [
+      {
+        "peak_block_rms": 0.037865014642141544,
+        "dominant_hz": 441.4306640625
+      },
+      {
+        "peak_block_rms": 0.03779842775675691,
+        "dominant_hz": 882.861328125
+      }
+    ],
+    "received_pcm_buffers": 201,
+    "sample_rate": 44100
+  },
+  "muted": {
+    "channels": [
+      {
+        "peak_block_rms": 0.0,
+        "dominant_hz": 0.0
+      },
+      {
+        "peak_block_rms": 0.0,
+        "dominant_hz": 0.0
+      }
+    ],
+    "received_pcm_buffers": 268,
+    "sample_rate": 44100
+  },
+  "restored": {
+    "channels": [
+      {
+        "peak_block_rms": 0.302530024986779,
+        "dominant_hz": 441.4306640625
+      },
+      {
+        "peak_block_rms": 0.30238820953029694,
+        "dominant_hz": 882.861328125
+      }
+    ],
+    "received_pcm_buffers": 335,
+    "sample_rate": 44100
+  },
+  "session": {
+    "autoplayBlocked": false,
+    "phases": [
+      {
+        "name": "full",
+        "buffers": 134,
+        "frames": 274432
+      },
+      {
+        "name": "half",
+        "buffers": 201,
+        "frames": 411648
+      },
+      {
+        "name": "muted",
+        "buffers": 268,
+        "frames": 548864
+      },
+      {
+        "name": "restored",
+        "buffers": 335,
+        "frames": 686080
+      }
+    ],
+    "disconnected": [
+      "closed"
+    ]
+  }
+}

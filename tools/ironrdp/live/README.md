@@ -50,3 +50,18 @@ with the new image. The driver records raw timing JSON and timestamped JPEGs
 for a separate real-input recording. It asserts that wheel input changed the
 remote page's scroll position. Change the limiter rate between cases, not while
 a case is running. Run cases sequentially because they share one desktop.
+
+## RDPSND audio regression
+
+The `0.5.1-uniterm.3` bundle adds a PCM output callback. Test against a dedicated
+xrdp desktop with `pulseaudio-module-xrdp` loaded and its sink connected to the
+isolated chansrv audio socket. Play a 3-second stereo WAV (440 Hz left, 880 Hz
+right) with `paplay --device=xrdp-sink`. Capture the browser Web Audio merger's
+output with a test-only ScriptProcessor tap; don't inject PCM directly into the
+frontend. Verify the two frequency peaks and non-zero RMS. Repeat after changing
+remote sink volume to 50%, muting, and restoring to 100%; assert reduced RMS,
+zero RMS, and restored RMS respectively. Disconnect and assert AudioContext is
+closed. See `audio-results-20261112.json` for the measured Linux/Chromium run.
+The browser did not block autoplay during that run; blocked playback and stale
+queue behavior are covered by unit tests, not a claimed live policy test.
+Windows server codec negotiation and other browsers remain unverified.

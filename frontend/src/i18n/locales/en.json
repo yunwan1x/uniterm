@@ -2354,5 +2354,6 @@
   "tableColumns.saved": "Applied immediately · Saved in this browser",
   "conn.rdpGraphicsMode": "Graphics mode",
   "conn.rdpGraphicsLegacy": "Compatibility",
-  "conn.rdpGraphicsSmooth": "Smooth"
+  "conn.rdpGraphicsSmooth": "Smooth",
+  "rdp.enableAudio": "Click to enable sound"
 }
