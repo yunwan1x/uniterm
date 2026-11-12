@@ -1,10 +1,12 @@
 import type { ClipboardFile } from './rdpClipboard'
 
-type FileRequest = { streamId: number; index: number; flags: number; position: number; size: number; dataId?: number }
-type FileResponse = { streamId: number; isError: boolean; data: Uint8Array }
-type RemoteFile = ClipboardFile & { isDirectory?: boolean }
+export type FileRequest = { streamId: number; index: number; flags: number; position: number; size: number; dataId?: number }
+export type FileResponse = { streamId: number; isError: boolean; data: Uint8Array }
+export type RemoteFile = ClipboardFile & { isDirectory?: boolean }
 type FileBridge = {
   invoke(name: string, value: unknown): unknown
+  readBytes?(id: string, offset: number, size: number): Promise<Uint8Array>
+  served?(file: ClipboardFile, offset: number, size: number): void
   readChunk(id: string, offset: number, size: number): Promise<string>
   getFiles(): Promise<ClipboardFile[]>
   begin(files: ClipboardFile[]): Promise<string>
@@ -54,7 +56,7 @@ export class RdpFileTransfer {
       } else if (request.flags === 2 && Number.isSafeInteger(request.position) && request.position >= 0 &&
         Number.isInteger(request.size) && request.size >= 0 && request.size <= 8 * 1024 * 1024) {
         if (!file.id) throw new Error('Missing clipboard file token')
-        data = decodeBase64(await this.bridge.readChunk(file.id, request.position, request.size))
+        data = this.bridge.readBytes ? await this.bridge.readBytes(file.id, request.position, request.size) : decodeBase64(await this.bridge.readChunk(file.id, request.position, request.size))
       } else throw new Error('Invalid clipboard file range')
     } catch (error) {
       isError = true
@@ -62,7 +64,10 @@ export class RdpFileTransfer {
     }
     if (this.disposed) return
     try {
-      this.bridge.invoke('submit_file_contents', { stream_id: request.streamId, is_error: isError, data })
+      await this.bridge.invoke('submit_file_contents', { stream_id: request.streamId, is_error: isError, data })
+      const files = request.dataId === undefined ? this.localFiles : this.lockedFiles.get(request.dataId) ?? this.localFiles
+      const file = files[request.index]
+      if (!isError && file && (request.flags === 2 || file.size === 0)) this.bridge.served?.(file, request.position, request.flags === 2 ? data.length : 0)
     } catch (error) {
       this.bridge.log(`clipboard file response failed: ${String(error)}`)
     }
@@ -84,9 +89,9 @@ export class RdpFileTransfer {
       const fail = (error: Error) => { cleanup(); reject(error) }
       this.pending.set(streamId, { resolve: data => { cleanup(); resolve(data) }, reject: fail })
       try {
-        this.bridge.invoke('request_file_contents', {
+        Promise.resolve(this.bridge.invoke('request_file_contents', {
           stream_id: streamId, file_index: index, flags, position, size, clip_data_id: clipDataId ?? null,
-        })
+        })).catch(error => fail(error instanceof Error ? error : new Error(String(error))))
       } catch (error) { fail(error instanceof Error ? error : new Error(String(error))) }
     })
   }
@@ -133,6 +138,34 @@ export class RdpFileTransfer {
     } finally {
       if (!finished) await this.bridge.abort(id)
     }
+  }
+
+  /** Browser path: no server filesystem or Windows clipboard dependency. */
+  async downloadBlob(index: number, file: RemoteFile, clipDataId: number | undefined,
+    progress: (done: number, total: number) => void, maxBytes = 256 * 1024 * 1024): Promise<Blob> {
+    const generation = this.generation
+    const check = () => { if (this.disposed || generation !== this.generation) throw new Error('Clipboard download cancelled') }
+    check()
+    if (file.isDirectory || !Number.isInteger(index) || index < 0) throw new Error('Invalid remote file')
+    const sizeBytes = await this.request(index, 1, 0, 8, clipDataId)
+    check()
+    if (sizeBytes.length !== 8) throw new Error('Invalid clipboard file size response')
+    const size = Number(new DataView(sizeBytes.buffer, sizeBytes.byteOffset, 8).getBigUint64(0, true))
+    if (!Number.isSafeInteger(size) || size > maxBytes) throw new Error('BROWSER_FILE_TOO_LARGE')
+    const chunks: ArrayBuffer[] = []
+    let offset = 0
+    progress(0, size)
+    while (offset < size) {
+      const requested = Math.min(1024 * 1024, size - offset)
+      const data = await this.request(index, 2, offset, requested, clipDataId)
+      check()
+      if (!data.length || data.length > requested) throw new Error('Invalid clipboard file chunk response')
+      chunks.push(new Uint8Array(data).buffer)
+      offset += data.length
+      progress(offset, size)
+    }
+    check()
+    return new Blob(chunks, { type: 'application/octet-stream' })
   }
 
   cancelDownload() {

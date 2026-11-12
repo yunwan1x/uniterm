@@ -1,0 +1,35 @@
+<!doctype html><html><body><script type="module">
+import { DesktopRenderer } from '/src/rdp/renderer.ts';
+window.renderTest = async (mode) => {
+ const canvas=document.createElement('canvas');document.body.append(canvas);let acks=0, firstAck;
+ const r=new DesktopRenderer(canvas,()=>{acks++;firstAck?.();firstAck=undefined},()=>{},mode);
+ let glSamples, originalDraw;const gl=canvas.getContext('webgl2');if(gl){const draw=gl.drawArrays.bind(gl);originalDraw=draw;gl.drawArrays=(...args)=>{draw(...args);glSamples=[[80,180],[240,180],[80,60],[240,60]].map(([x,y])=>{const b=new Uint8Array(4);gl.readPixels(x,y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,b);return [...b]})}}
+ const source=new OffscreenCanvas(320,240);const ctx=source.getContext('2d');
+ ctx.fillStyle='#ff0000';ctx.fillRect(0,0,160,120);ctx.fillStyle='#00ff00';ctx.fillRect(160,0,160,120);
+ ctx.fillStyle='#0000ff';ctx.fillRect(0,120,160,120);ctx.fillStyle='#ffffff';ctx.fillRect(160,120,160,120);
+ const bitmap=await createImageBitmap(source);
+ await new Promise(resolve=>{firstAck=resolve;r.frame(bitmap)});
+ const actual=canvas.getContext(mode==='webgl2'?'webgl2':'2d');
+ const samples=mode==='webgl2'?glSamples:[[80,60],[240,60],[80,180],[240,180]].map(([x,y])=>[...actual.getImageData(x,y,1,1).data]);
+ if(gl)gl.drawArrays=originalDraw;
+ source.width=1920;source.height=1080;ctx.fillStyle='#123456';ctx.fillRect(0,0,1920,1080);
+ const timings=[];
+ for(let i=0;i<30;i++){const bitmap=await createImageBitmap(source);const t=performance.now();r.frame(bitmap);await new Promise(resolve=>requestAnimationFrame(resolve));timings.push(performance.now()-t)}
+ const size=[canvas.width,canvas.height];r.dispose();const dead=await createImageBitmap(source);r.frame(dead);
+ return {mode:r.mode,samples,acks,size,closedAfterDispose:dead.width===0,timings};
+};
+window.avcTest = async(bytes) => {
+ const worker=new Worker(new URL('/src/rdp/avc.worker.ts',location.href),{type:'module'});
+ const control=new Int32Array(new SharedArrayBuffer(16));const pixels=new Uint8Array(new SharedArrayBuffer(64*64*4));
+ const ready=await new Promise(resolve=>{worker.onmessage=e=>resolve(e.data.ready);worker.postMessage({method:'init',control:control.buffer,pixels:pixels.buffer})});
+ let results=[];
+ const inputs=[...bytes.map(data=>({surface:0,data})),...bytes.map(data=>({surface:1,data})),{reset:true,surface:0,data:bytes[0]},{surface:2,data:[1,2,3]}];
+ for(let i=0;i<inputs.length;i++){
+ if(inputs[i].reset)worker.postMessage({method:'reset'});
+ Atomics.store(control,0,0);worker.postMessage({method:'decode',surface:inputs[i].surface,data:new Uint8Array(inputs[i].data),timestamp:i+1});
+ const start=performance.now();while(!Atomics.load(control,0)&&performance.now()-start<2500)await new Promise(r=>setTimeout(r,2));
+ results.push({status:Atomics.load(control,0),width:control[1],height:control[2],nonzero:pixels.some(v=>v>0)});
+ }
+ worker.terminate();return {ready,results};
+};
+</script></body></html>

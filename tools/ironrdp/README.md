@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.4.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.7.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -46,7 +46,7 @@ WASM extension on every connect; the low-level extension itself stays opt-in.
 Switching reconnects. A server without GFX can still choose legacy graphics;
 selecting Smooth is a requested mode, not proof of the negotiated codec.
 
-No WebGL2, Worker, WebCodecs or H.264 implementation is included. This iteration
+The original presentation iteration described below did not include WebGL2, Worker, WebCodecs or H.264. That iteration
 uses the pinned engine's existing ClearCodec/Planar/RemoteFX/Progressive support.
 Actual Linux tests negotiated GFX RemoteFX Progressive. The Go transport and
 credential-handling paths are unchanged.
@@ -161,3 +161,22 @@ with the new client, invoke Windows' sound Test action, and verify received PCM
 buffers with non-zero amplitude and audible left/right output. An established
 Remote Audio device alone does not establish successful playback. This fix
 requires serving the rebuilt frontend and reconnecting existing RDP sessions.
+
+## Worker / WebCodecs follow-up (uniterm.6)
+
+The frontend now defaults to a dedicated protocol worker with bounded complete
+ImageBitmap snapshots. The WASM canvas bridge accepts OffscreenCanvas and its
+scheduler supports worker globals. A nested WebCodecs worker implements AVC420
+through a bounded shared-memory bridge; each surface has an independent decoder.
+AVC444 is not advertised. HTTPS/localhost and cross-origin isolation are required
+for the AVC bridge; the worker can still use existing codecs without them.
+WebGL2 is selected on hardware-capable contexts, with software-GPU avoidance and
+automatic Canvas recovery. No user mode selection is required.
+
+See `../../docs/rdp-worker-performance-20261112.md` and `worker/README.md` for measured results, fallback tests, and limitations.
+
+Browser file transfer uses package revision `.7`. It tolerates an xrdp
+`clipDataId` only when `CAN_LOCK_CLIPDATA` was not negotiated; negotiated
+unknown locks still fail. The combined patch includes the regression test in
+`ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs`. Run it with
+`cargo +stable test --locked -p ironrdp-testsuite-core --test integration_tests_core clipboard`.

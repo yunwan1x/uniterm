@@ -1,0 +1,147 @@
+{
+  "baseline20": {
+    "bytes": 2770457,
+    "median_latency_ms": 336.449951171875,
+    "steps": [
+      {
+        "draws": 1,
+        "latency_ms": 338.580078125
+      },
+      {
+        "draws": 1,
+        "latency_ms": 334.2900390625
+      },
+      {
+        "draws": 1,
+        "latency_ms": 336.77001953125
+      },
+      {
+        "draws": 1,
+        "latency_ms": 336.1298828125
+      },
+      {
+        "draws": 1,
+        "latency_ms": 338.114990234375
+      },
+      {
+        "draws": 1,
+        "latency_ms": 333.610107421875
+      }
+    ],
+    "long_tasks": [
+      [
+        1794494864964.53,
+        62
+      ],
+      [
+        1794494867463.83,
+        58
+      ],
+      [
+        1794494869965.545,
+        59
+      ],
+      [
+        1794494872465.25,
+        59
+      ],
+      [
+        1794494874967.205,
+        59
+      ],
+      [
+        1794494877462.485,
+        59
+      ]
+    ],
+    "stats": null
+  },
+  "worker-final-rfx20": {
+    "bytes": 2776176,
+    "median_latency_ms": 341.0499267578125,
+    "steps": [
+      {
+        "draws": 1,
+        "latency_ms": 346.5
+      },
+      {
+        "draws": 1,
+        "latency_ms": 335.300048828125
+      },
+      {
+        "draws": 1,
+        "latency_ms": 345
+      },
+      {
+        "draws": 1,
+        "latency_ms": 337.099853515625
+      },
+      {
+        "draws": 1,
+        "latency_ms": 348.5
+      },
+      {
+        "draws": 1,
+        "latency_ms": 335.599853515625
+      }
+    ],
+    "long_tasks": [],
+    "stats": {
+      "worker": true,
+      "frames": 10,
+      "coalesced": 0,
+      "avcFrames": 0,
+      "avcAvailable": false,
+      "receivedBytes": 3621159,
+      "maxDecodeMs": 0,
+      "pendingFrames": 0,
+      "dirty": false,
+      "interval": 16,
+      "renderer": "canvas2d"
+    }
+  },
+  "worker-final20": {
+    "bytes": 569497,
+    "median_latency_ms": 115.697509765625,
+    "steps": [
+      {
+        "draws": 1,
+        "latency_ms": 178.824951171875
+      },
+      {
+        "draws": 1,
+        "latency_ms": 72.554931640625
+      },
+      {
+        "draws": 1,
+        "latency_ms": 156.449951171875
+      },
+      {
+        "draws": 1,
+        "latency_ms": 74.945068359375
+      },
+      {
+        "draws": 1,
+        "latency_ms": 157.735107421875
+      },
+      {
+        "draws": 1,
+        "latency_ms": 73.804931640625
+      }
+    ],
+    "long_tasks": [],
+    "stats": {
+      "worker": true,
+      "frames": 9,
+      "coalesced": 0,
+      "avcFrames": 9,
+      "avcAvailable": true,
+      "receivedBytes": 1282928,
+      "maxDecodeMs": 28.355000019073486,
+      "pendingFrames": 0,
+      "dirty": false,
+      "interval": 16,
+      "renderer": "canvas2d"
+    }
+  }
+}

@@ -44,6 +44,7 @@
       @contextmenu.prevent
     >
       <canvas
+        :key="canvasGeneration"
         v-show="status === 'connected'"
         ref="canvasEl"
         class="rdp-area"
@@ -55,6 +56,9 @@
     <button v-if="audioBlocked && status === 'connected'" class="rdp-audio-enable" @click="unlockAudio">{{ t('rdp.enableAudio') }}</button>
 
     <RdpFloatingKeyboard v-if="floatingKeyboardOpen" :disabled="status !== 'connected'" @send="sendQuickKeys" @release="onFocusOut" @close="floatingKeyboardOpen = false" />
+
+    <RdpFilesPanel v-if="browserFilesEnabled" v-show="filesOpen" :ready="status === 'connected' && fileChannelReady" :connected="status === 'connected'" :tasks="browserFileTasks" :remote="remoteFileOffers" :error="browserFilesError"
+      @close="filesOpen = false" @release="onFocusOut" @select="selectBrowserFiles" @download="downloadBrowserFiles" @cancel="id => browserFiles.cancel(id)" @retry="retryBrowserFile" @clear="browserFiles.clearFinished()" />
 
     <!-- Status bar -->
     <div
@@ -92,6 +96,7 @@
       </el-select>
       <RdpKeysMenu :disabled="status !== 'connected'" :open="floatingKeyboardOpen" @toggle="toggleFloatingKeyboard" />
       <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
+      <RdpFilesButton v-if="browserFilesEnabled" :open="filesOpen" :disabled="status !== 'connected'" :count="browserFileCount" @toggle="filesOpen = !filesOpen" />
       <span class="rdp-status-spacer" />
       <button class="rdp-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
     </div>
@@ -126,6 +131,7 @@
       <template #after-zoom>
         <RdpKeysMenu :disabled="status !== 'connected'" :open="floatingKeyboardOpen" @toggle="toggleFloatingKeyboard" />
         <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
+        <RdpFilesButton v-if="browserFilesEnabled" :open="filesOpen" :disabled="status !== 'connected'" :count="browserFileCount" @toggle="filesOpen = !filesOpen" />
         <el-select
           v-model="activeQuality"
           class="remote-desktop-toolbar-select"
@@ -172,6 +178,10 @@ import RemoteMobileControls from './RemoteMobileControls.vue'
 import RdpFloatingKeyboard from './RdpFloatingKeyboard.vue'
 import RdpKeysMenu from './RdpKeysMenu.vue'
 import RdpDevicesMenu from './RdpDevicesMenu.vue'
+import RdpFilesButton from './RdpFilesButton.vue'
+import RdpFilesPanel from './RdpFilesPanel.vue'
+import { RdpBrowserFiles, saveRdpBlob, type FileTask, type RemoteOffer } from '../utils/rdpBrowserFiles'
+import { isWebServerMode } from '../services/webSftpBridge'
 import { RdpCapture, type CaptureKind } from '../utils/rdpCapture'
 import { rdpKeyChord } from '../utils/rdpKeys'
 import { useI18n } from '../i18n'
@@ -370,6 +380,10 @@ let wasmModule: RDPModule | null = null
 
 async function loadWasm(): Promise<RDPModule> {
   if (wasmModule) return wasmModule
+  if (!workerFallbackAttempted && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap === 'function') {
+    wasmModule = await import('../rdp/client')
+    return wasmModule
+  }
   const mod: any = await import('@ys-ll/ironrdp-wasm')
   await mod.default()
   try {
@@ -388,9 +402,32 @@ let started = false
 let clientGeneration = 0
 let activeCredSSP = props.config?.rdpEnableNLA ?? false
 let nlaFallbackAttempted = false
+let avcFallbackAttempted = false
+let workerFallbackAttempted = false
+let canvasFallbackAttempted = false
+const canvasGeneration = ref(0)
 let pendingNlaFallback = false
 let clipboardSync: RdpClipboardSync | null = null
 let fileTransfer: RdpFileTransfer | null = null
+const browserFilesEnabled = ref(false), filesOpen = ref(false), fileChannelReady = ref(false), browserFilesError = ref('')
+const browserFileTasks = ref<FileTask[]>([]), remoteFileOffers = ref<RemoteOffer[]>([])
+const browserFiles = new RdpBrowserFiles(() => {
+  browserFileTasks.value = browserFiles.tasks.map(t => ({ ...t }))
+  remoteFileOffers.value = browserFiles.remote
+}, saveRdpBlob)
+const browserFileCount = computed(() => browserFileTasks.value.filter(t => ['preparing', 'ready', 'queued', 'transferring'].includes(t.state)).length || remoteFileOffers.value.length)
+async function selectBrowserFiles(files: File[]) {
+  browserFilesError.value = ''
+  try { await browserFiles.select(files) } catch (e) { browserFilesError.value = e instanceof Error ? e.message : 'failed' }
+}
+function downloadBrowserFiles(indices: number[]) {
+  browserFilesError.value = ''
+  try { browserFiles.download(indices) } catch { browserFilesError.value = 'tooMany' }
+}
+async function retryBrowserFile(id: string) {
+  browserFilesError.value = ''
+  try { await browserFiles.retry(id) } catch (e) { browserFilesError.value = e instanceof Error ? e.message : 'failed' }
+}
 let clipboardAck: { resolve: () => void; reject: (error: Error) => void } | null = null
 const inputQueue = new RdpInputQueue(error => rdpLog(`input/clipboard failed: ${describeError(error)}`))
 
@@ -460,6 +497,11 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
   }, CONNECT_TIMEOUT)
 
   try {
+    canvasGeneration.value++
+    await nextTick()
+    canvasObserver?.disconnect()
+    if (canvasEl.value) canvasObserver?.observe(canvasEl.value, { attributes: true, attributeFilter: ['width', 'height'] })
+    browserFilesEnabled.value = await isWebServerMode()
     const mod = await loadWasm()
     if (generation !== clientGeneration) return
     const { username, domain } = splitDomainUser(props.config)
@@ -502,6 +544,10 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     builder.extension(new mod.Extension('camera_enabled', capture.enabled('camera')))
     builder.extension(new mod.Extension('enable_credssp', activeCredSSP))
     builder.extension(new mod.Extension('graphics_pipeline', activeGraphicsMode.value === 'gfx'))
+    if (mod.isWorker) {
+      builder.extension(new mod.Extension('webcodecs_enabled', !avcFallbackAttempted))
+      builder.extension(new mod.Extension('canvas2d', canvasFallbackAttempted))
+    }
     sessionGraphicsMode.value = activeGraphicsMode.value
     // Auto-logon with the saved credentials (mstsc saved-creds equivalent) —
     // requires the autologon extension patch in the WASM build.
@@ -528,7 +574,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     })
     builder.forceClipboardUpdateCallback(() => {
       if (generation !== clientGeneration) return
-      clipboardSync?.requestFormatList().catch(error => rdpLog(`clipboard initialization failed: ${describeError(error)}`))
+      clipboardSync?.requestFormatList().then(() => { if (generation === clientGeneration) fileChannelReady.value = true }).catch(error => rdpLog(`clipboard initialization failed: ${describeError(error)}`))
     })
     builder.extension(new mod.Extension('format_list_response_callback', (ok: boolean) => {
       if (generation !== clientGeneration) return
@@ -552,6 +598,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     }))
     builder.extension(new mod.Extension('files_available_callback', (files: any[], clipDataId?: number) => {
       if (generation !== clientGeneration) return
+      if (browserFilesEnabled.value) { clipboardSync?.invalidateLocal(); browserFiles.offerRemote(files, clipDataId); return }
       const transfer = fileTransfer
       if (!transfer) return
       transfer.cancelDownload()
@@ -572,6 +619,10 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     })
     clipboardSync = new RdpClipboardSync({
       read: async () => {
+        if (browserFilesEnabled.value) {
+          if (browserFiles.armed) { const files = browserFiles.localFiles(); return files.length ? { kind: 'files', files } : null }
+          if (browserFiles.remoteActive) return null
+        }
         // CF_HDROP takes precedence: Explorer may also expose a text path.
         const files = await ClipboardGetFiles()
         if (files.length) return { kind: 'files', files }
@@ -596,12 +647,19 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     fileTransfer = new RdpFileTransfer({
       invoke: (name, value) => connectedSession.invokeExtension(new mod.Extension(name, value)),
       readChunk: ClipboardReadFileChunkByID,
+      readBytes: browserFilesEnabled.value ? (id, offset, size) => browserFiles.readBytes(id, offset, size) : undefined,
+      served: browserFilesEnabled.value ? (file, offset, size) => browserFiles.served(file, offset, size) : undefined,
       getFiles: ClipboardGetFiles,
       begin: ClipboardBeginFileTransfer,
       writeChunk: ClipboardWriteFileChunk,
       finish: ClipboardFinishFileTransfer,
       abort: ClipboardAbortFileTransfer,
       log: rdpLog,
+    })
+    if (browserFilesEnabled.value) browserFiles.attach(fileTransfer, async () => {
+      if (!clipboardSync || !fileChannelReady.value) throw new Error('Clipboard not ready')
+      clipboardSync.invalidateLocal()
+      await clipboardSync.sync()
     })
     status.value = 'connected'
     clearConnectTimer()
@@ -632,6 +690,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     clearConnectTimer()
     const detail = describeError(e)
     rdpLog(`connect failed: ${detail}`)
+    if (retryRenderer(detail)) return
     if (retryWithoutNLA(detail)) return
     errorMessage.value = detail
     status.value = 'error'
@@ -639,7 +698,26 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
   }
 }
 
+function retryRenderer(reason: string): boolean {
+  if (/WebGL|shader|canvas context/i.test(reason) && !canvasFallbackAttempted) {
+    canvasFallbackAttempted = true
+  } else if (/RDP worker|OffscreenCanvas/i.test(reason) && !workerFallbackAttempted) {
+    workerFallbackAttempted = true
+    wasmModule = null
+  } else return false
+  rdpLog('Renderer unavailable; reconnecting with the compatible renderer')
+  void reconnect()
+  return true
+}
+
 function runEnded(reason: string, isError = false) {
+  if (isError && retryRenderer(reason)) return
+  if (isError && /WebCodecs|AVC decode/i.test(reason) && !avcFallbackAttempted) {
+    avcFallbackAttempted = true
+    rdpLog('AVC decoder unavailable; reconnecting with the existing GFX codecs')
+    void reconnect()
+    return
+  }
   if (retryWithoutNLA(reason)) return
   onFocusOut()
   stopClipboardPoll()
@@ -772,6 +850,7 @@ function onRemoteClipboard(clipboardData: any) {
       if (item.mimeType() === 'text/plain') {
         const value = item.value()
         if (typeof value === 'string') {
+          if (browserFilesEnabled.value) browserFiles.remoteText()
           fileTransfer?.cancelDownload()
           clipboardSync?.receiveText(value).catch(error => rdpLog(`remote clipboard write failed: ${describeError(error)}`))
         }
@@ -1151,6 +1230,7 @@ function onFullscreenEvent(event: Event) {
 let clipPollTimer: ReturnType<typeof setInterval> | null = null
 
 async function syncLocalClipboardNow(text?: string): Promise<void> {
+  if (text !== undefined && browserFilesEnabled.value) browserFiles.remoteText()
   if (status.value === 'connected') await clipboardSync?.sync(false, text)
 }
 
@@ -1183,6 +1263,8 @@ function startClipboardPoll() {
 }
 
 function stopClipboardPoll() {
+  fileChannelReady.value = false
+  browserFiles.detach()
   if (clipPollTimer !== null) {
     clearInterval(clipPollTimer)
     clipPollTimer = null

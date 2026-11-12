@@ -16,6 +16,25 @@ index bd2558ee..a7db36b6 100644
   "ironrdp-rdpfile",
   "ironrdp-svc",
   "ironrdp-vmconnect",
+diff --git a/crates/ironrdp-cliprdr/src/lib.rs b/crates/ironrdp-cliprdr/src/lib.rs
+index c820a672..ac3e6d27 100644
+--- a/crates/ironrdp-cliprdr/src/lib.rs
++++ b/crates/ironrdp-cliprdr/src/lib.rs
+@@ -1887,7 +1887,13 @@ impl<R: Role> SvcProcessor for Cliprdr<R> {
+                     Ok(Vec::new())
+                 }
+             }
+-            ClipboardPdu::FileContentsRequest(request) => {
++            ClipboardPdu::FileContentsRequest(mut request) => {
++                // xrdp appends a zero clipDataId even when locking was not negotiated.
++                // It cannot refer to a snapshot in that mode; use the current offer.
++                // Keep strict unknown-lock rejection when locking IS negotiated.
++                if !self.capabilities.flags().contains(ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA) {
++                    request.data_id = None;
++                }
+                 // [MS-RDPECLIP] 2.2.2.1.1.1 - CB_STREAM_FILECLIP_ENABLED must be negotiated
+                 if !self
+                     .capabilities
 diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
 index 672a1494..d2f42e87 100644
 --- a/crates/ironrdp-connector/src/connection_finalization.rs
@@ -56,6 +75,67 @@ index 672a1494..d2f42e87 100644
                  };
  
                  (Written::Nothing, next_state)
+diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
+index a4392fa4..35251b3e 100644
+--- a/crates/ironrdp-egfx/src/client.rs
++++ b/crates/ironrdp-egfx/src/client.rs
+@@ -1244,6 +1244,8 @@ impl GraphicsPipelineClient {
+             return Ok(());
+         };
+ 
++        decoder.select_surface(surface_id);
++
+         // A decoder returning YUV planes is converted with the transform MS-RDPEGFX
+         // specifies, whatever matrix it would convert with itself.
+         let frame = if decoder.supports_yuv420() {
+diff --git a/crates/ironrdp-egfx/src/decode.rs b/crates/ironrdp-egfx/src/decode.rs
+index 1adc2fed..58205d65 100644
+--- a/crates/ironrdp-egfx/src/decode.rs
++++ b/crates/ironrdp-egfx/src/decode.rs
+@@ -304,6 +304,8 @@ pub type DecoderResult<T> = Result<T, DecoderError>;
+ /// }
+ /// ```
+ pub trait H264Decoder: Send {
++    /// Select an independent surface bitstream before decoding.
++    fn select_surface(&mut self, _surface_id: u16) {}
+     /// Decode H.264 NAL units, as an Annex B byte stream or in AVC format
+     /// (4-byte BE length prefix), into an RGBA bitmap.
+     ///
+diff --git a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
+index 2d65a124..a281702f 100644
+--- a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
++++ b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
+@@ -246,3 +246,30 @@ fn expire_via_format_list_transitions_state() {
+     // Bookkeeping: lock still tracked (expired, not removed)
+     assert_eq!(cliprdr.__test_outgoing_locks().len(), 1);
+ }
++
++#[test]
++fn xrdp_unnegotiated_lock_id_uses_current_offer_but_negotiated_unknown_lock_fails() {
++    for locking in [false, true] {
++        let mut client = timed_locking_client(200, 10_000);
++        if !locking {
++            *client.__test_capabilities_mut() = Capabilities::new(
++                ClipboardProtocolVersion::V2,
++                ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED,
++            );
++        }
++        *client.__test_local_file_list_mut() = Some(sized_file_list(&[("test.bin", 16)]));
++        let request = ClipboardPdu::FileContentsRequest(FileContentsRequest {
++            stream_id: 7, index: 0, flags: FileContentsFlags::RANGE,
++            position: 0, requested_size: 16, data_id: Some(0),
++        });
++        let bytes = ironrdp_core::encode_vec(&request).unwrap();
++        let messages = client.process(&bytes).unwrap();
++        if locking {
++            assert_eq!(messages.len(), 1);
++            decode_pdu!(messages[0] => encoded, pdu);
++            assert!(matches!(pdu, ClipboardPdu::FileContentsResponse(ref r) if r.is_error()));
++        } else {
++            assert!(messages.is_empty(), "request must reach the backend, not fail for lock zero");
++        }
++    }
++}
 diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
 index c964d7ce..c2cee187 100644
 --- a/crates/ironrdp-web/Cargo.toml
@@ -221,6 +301,69 @@ index 00000000..2c1ac328
 +    }
 +    use futures_util::FutureExt;
 +}
+diff --git a/crates/ironrdp-web/src/canvas.rs b/crates/ironrdp-web/src/canvas.rs
+index 30ba5be7..a867c9e0 100644
+--- a/crates/ironrdp-web/src/canvas.rs
++++ b/crates/ironrdp-web/src/canvas.rs
+@@ -5,16 +5,17 @@ use anyhow::anyhow;
+ use ironrdp::pdu::geometry::InclusiveRectangle;
+ #[cfg(target_arch = "wasm32")]
+ use ironrdp::pdu::geometry::Rectangle as _;
++use wasm_bindgen::JsValue;
+ #[cfg(target_arch = "wasm32")]
+ use wasm_bindgen::{Clamped, JsCast as _};
++use web_sys::HtmlCanvasElement;
+ #[cfg(target_arch = "wasm32")]
+ use web_sys::ImageData;
+-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
+ 
+ /// Web render surface: blits each dirty region to the canvas with `put_image_data`.
+ pub(crate) struct Canvas {
+     canvas: HtmlCanvasElement,
+-    ctx: CanvasRenderingContext2d,
++    ctx: JsValue,
+ }
+ 
+ impl Canvas {
+@@ -51,8 +52,17 @@ impl Canvas {
+                 u32::from(region.height()),
+             )
+             .map_err(|err| anyhow!("ImageData::new failed: {err:?}"))?;
+-            self.ctx
+-                .put_image_data(&image, f64::from(region.left), f64::from(region.top))
++            js_sys::Reflect::get(&self.ctx, &"putImageData".into())
++                .and_then(|f| f.dyn_into::<js_sys::Function>())
++                .and_then(|f| {
++                    f.call3(
++                        &self.ctx,
++                        &image,
++                        &f64::from(region.left).into(),
++                        &f64::from(region.top).into(),
++                    )
++                })
++                .map(|_| ())
+                 .map_err(|err| anyhow!("put_image_data failed: {err:?}"))
+         }
+         #[cfg(not(target_arch = "wasm32"))]
+@@ -64,15 +74,14 @@ impl Canvas {
+ }
+ 
+ /// Acquires the canvas 2D context (wasm only; panics on other targets).
+-fn context_2d(canvas: &HtmlCanvasElement) -> anyhow::Result<CanvasRenderingContext2d> {
++fn context_2d(canvas: &HtmlCanvasElement) -> anyhow::Result<JsValue> {
+     #[cfg(target_arch = "wasm32")]
+     {
+         canvas
+             .get_context("2d")
+             .map_err(|err| anyhow!("get_context(\"2d\") failed: {err:?}"))?
+-            .ok_or_else(|| anyhow!("canvas has no 2d context"))?
+-            .dyn_into::<CanvasRenderingContext2d>()
+-            .map_err(|_| anyhow!("2d context is not a CanvasRenderingContext2d"))
++            .ok_or_else(|| anyhow!("canvas has no 2d context"))
++            .map(Into::into)
+     }
+     #[cfg(not(target_arch = "wasm32"))]
+     {
 diff --git a/crates/ironrdp-web/src/capture.rs b/crates/ironrdp-web/src/capture.rs
 new file mode 100644
 index 00000000..e63e5444
@@ -750,19 +893,20 @@ index 2df63efc..592e3caa 100644
      }
  }
 diff --git a/crates/ironrdp-web/src/lib.rs b/crates/ironrdp-web/src/lib.rs
-index 664e42e6..f9aa63e8 100644
+index 664e42e6..00358f26 100644
 --- a/crates/ironrdp-web/src/lib.rs
 +++ b/crates/ironrdp-web/src/lib.rs
-@@ -15,6 +15,8 @@ extern crate getrandom2 as _;
+@@ -15,13 +15,19 @@ extern crate getrandom2 as _;
  extern crate getrandom4 as _;
  extern crate time as _;
  
 +mod audio;
 +mod capture;
  mod canvas;
++mod webcodecs;
  mod clipboard;
  mod error;
-@@ -22,6 +24,9 @@ mod image;
+ mod image;
  mod input;
  mod network_client;
  mod printer;
@@ -774,16 +918,16 @@ index 664e42e6..f9aa63e8 100644
  
 diff --git a/crates/ironrdp-web/src/presentation.rs b/crates/ironrdp-web/src/presentation.rs
 new file mode 100644
-index 00000000..7d9ebc3f
+index 00000000..4b7ac686
 --- /dev/null
 +++ b/crates/ironrdp-web/src/presentation.rs
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,152 @@
 +//! Bound presentation work without dropping any protocol updates.
 +use core::pin::Pin;
 +use core::task::{Context, Poll};
 +use futures_channel::oneshot;
 +use ironrdp::pdu::geometry::{InclusiveRectangle, Rectangle as _};
-+use wasm_bindgen::{JsCast as _, closure::Closure};
++use wasm_bindgen::{JsCast as _, JsValue, closure::Closure};
 +
 +const MAX_REGIONS: usize = 32;
 +#[derive(Default)]
@@ -834,13 +978,13 @@ index 00000000..7d9ebc3f
 +// keep accumulating bounded damage; protocol processing is never held for RAF.
 +pub(crate) struct AnimationFrame {
 +    receiver: oneshot::Receiver<()>,
-+    window: web_sys::Window,
++    global: JsValue,
 +    id: i32,
 +    _callback: Closure<dyn FnMut(f64)>,
 +}
 +impl AnimationFrame {
 +    pub(crate) fn new() -> anyhow::Result<Self> {
-+        let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("window unavailable"))?;
++        let global: JsValue = js_sys::global().into();
 +        let (sender, receiver) = oneshot::channel();
 +        let mut sender = Some(sender);
 +        let callback = Closure::wrap(Box::new(move |_time: f64| {
@@ -848,12 +992,14 @@ index 00000000..7d9ebc3f
 +                let _ = sender.send(());
 +            }
 +        }) as Box<dyn FnMut(f64)>);
-+        let id = window
-+            .request_animation_frame(callback.as_ref().unchecked_ref())
++        let id = js_sys::Reflect::get(&global, &"requestAnimationFrame".into())
++            .and_then(|f| f.dyn_into::<js_sys::Function>())
++            .and_then(|f| f.call1(&global, callback.as_ref()))
++            .map(|v| v.as_f64().unwrap_or_default() as i32)
 +            .map_err(|e| anyhow::anyhow!("requestAnimationFrame: {e:?}"))?;
 +        Ok(Self {
 +            receiver,
-+            window,
++            global,
 +            id,
 +            _callback: callback,
 +        })
@@ -867,7 +1013,11 @@ index 00000000..7d9ebc3f
 +}
 +impl Drop for AnimationFrame {
 +    fn drop(&mut self) {
-+        let _ = self.window.cancel_animation_frame(self.id);
++        if let Ok(f) = js_sys::Reflect::get(&self.global, &"cancelAnimationFrame".into()) {
++            if let Ok(f) = f.dyn_into::<js_sys::Function>() {
++                let _ = f.call1(&self.global, &self.id.into());
++            }
++        }
 +    }
 +}
 +pub(crate) async fn wait_for_frame(frame: &mut Option<AnimationFrame>) {
@@ -1071,7 +1221,7 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..ff6077e0 100644
+index ac630290..ad0e4549 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
 @@ -1,3 +1,4 @@
@@ -1570,7 +1720,7 @@ index ac630290..ff6077e0 100644
 +            // The session ActiveStage already composites EGFX output at EndFrame.
 +            // Without an AVC decoder the client only advertises codecs it can decode.
 +            dynamic_channels =
-+                dynamic_channels.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(WebGraphicsHandler), None));
++                dynamic_channels.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(WebGraphicsHandler), crate::webcodecs::decoder()));
 +        }
 +        dynamic_channels = capture.attach(dynamic_channels, capture_tx, microphone_enabled, camera_enabled);
 +        connector.attach_static_channel(dynamic_channels);
@@ -1648,5 +1798,55 @@ index ac630290..ff6077e0 100644
 +fn ensure_audio_device_channel(connector: &mut ClientConnector, audio_enabled: bool, computer_name: String) {
 +    if audio_enabled && connector.static_channels.get_by_type::<Rdpdr>().is_none() {
 +        connector.attach_static_channel(Rdpdr::new(Box::new(NoopRdpdrBackend), computer_name));
++    }
++}
+diff --git a/crates/ironrdp-web/src/webcodecs.rs b/crates/ironrdp-web/src/webcodecs.rs
+new file mode 100644
+index 00000000..01273716
+--- /dev/null
++++ b/crates/ironrdp-web/src/webcodecs.rs
+@@ -0,0 +1,44 @@
++//! The JS bridge runs only in a dedicated worker. Its nested WebCodecs worker
++//! completes one picture before waking this synchronous protocol decoder.
++use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder};
++use wasm_bindgen::{JsCast, JsValue};
++
++struct WebDecoder {
++    surface: u16,
++}
++fn invoke(name: &str, args: &js_sys::Array) -> Result<JsValue, JsValue> {
++    let global = js_sys::global();
++    js_sys::Reflect::get(&global, &name.into())?
++        .dyn_into::<js_sys::Function>()?
++        .apply(&global, args)
++}
++pub(crate) fn decoder() -> Option<Box<dyn H264Decoder>> {
++    #[cfg(target_arch = "wasm32")]
++    if js_sys::Reflect::get(&js_sys::global(), &"unitermDecodeAvc".into()).is_ok_and(|v| v.is_function()) {
++        return Some(Box::new(WebDecoder { surface: 0 }));
++    }
++    None
++}
++impl H264Decoder for WebDecoder {
++    fn select_surface(&mut self, surface_id: u16) {
++        self.surface = surface_id;
++    }
++    fn decode(&mut self, data: &[u8]) -> DecoderResult<DecodedFrame> {
++        let args = js_sys::Array::new();
++        args.push(&self.surface.into());
++        args.push(&js_sys::Uint8Array::from(data));
++        let result = invoke("unitermDecodeAvc", &args).map_err(|_| DecoderError::msg("WebCodecs AVC decode failed"))?;
++        let a = js_sys::Array::from(&result);
++        let width = a.get(0).as_f64().unwrap_or_default() as u32;
++        let height = a.get(1).as_f64().unwrap_or_default() as u32;
++        let pixels = js_sys::Uint8Array::new(&a.get(2)).to_vec();
++        if width == 0 || height == 0 || u64::from(width) * u64::from(height) * 4 != pixels.len() as u64 {
++            return Err(DecoderError::msg("Invalid WebCodecs frame extent"));
++        }
++        Ok(DecodedFrame::new(pixels, width, height))
++    }
++    // AVC444 is deliberately not advertised: its paired YUV views need a separate adapter.
++    fn reset(&mut self) {
++        let _ = invoke("unitermResetAvc", &js_sys::Array::new());
 +    }
 +}

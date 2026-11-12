@@ -191,6 +191,10 @@ func NewMultiUserGateway(dataRoot, workerBinary string, idleTimeout time.Duratio
 }
 
 func (gw *MultiUserGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Enables the RDP worker's bounded shared-memory WebCodecs bridge on HTTPS
+	// (and localhost). Plain HTTP browsers automatically use non-AVC codecs.
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Embedder-Policy", "credentialless")
 	// 1. Public health check for Docker / Kubernetes probes
 	if r.URL.Path == "/health" {
 		w.Header().Set("Content-Type", "application/json")

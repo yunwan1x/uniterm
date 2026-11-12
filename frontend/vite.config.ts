@@ -25,7 +25,9 @@ export default defineConfig({
   // no syntax downleveling, so TLA in deps passes through untouched; the old
   // optimizeDeps.esbuildOptions.target is deprecated and has no rolldown
   // equivalent).
+  worker: { format: 'es' },
   server: {
+    headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless' },
     host: '127.0.0.1',
     port: 34115,
     strictPort: true
