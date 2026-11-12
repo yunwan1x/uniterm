@@ -2324,5 +2324,8 @@
   "tableColumns.search": "搜尋欄位",
   "tableColumns.required": "必選",
   "tableColumns.noMatch": "沒有符合的欄位",
-  "tableColumns.saved": "立即生效 · 儲存在目前瀏覽器"
+  "tableColumns.saved": "立即生效 · 儲存在目前瀏覽器",
+  "conn.rdpGraphicsMode": "畫面模式",
+  "conn.rdpGraphicsLegacy": "相容",
+  "conn.rdpGraphicsSmooth": "流暢（實驗）"
 }

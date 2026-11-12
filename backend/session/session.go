@@ -134,7 +134,8 @@ type ConnectionConfig struct {
 	// Empty keeps the "high" default. The tier only changes the RDP
 	// connection_type + performance flags sent by the webview client; the
 	// backend itself does not act on it.
-	RdpQuality string `json:"rdpQuality,omitempty"`
+	RdpQuality      string `json:"rdpQuality,omitempty"`
+	RdpGraphicsMode string `json:"rdpGraphicsMode,omitempty"`
 	// Local terminal shell path
 	ShellPath string `json:"shellPath,omitempty"`
 	// Extra command-line arguments appended to the local shell's launch

@@ -62,6 +62,7 @@ export interface ConnectionConfig {
   // (default, broadband: wallpaper/theming off), 'low' (modem profile for
   // low-bandwidth links). Maps to the RDP connection_type + performance flags.
   rdpQuality?: 'high' | 'balanced' | 'low'
+  rdpGraphicsMode?: 'legacy' | 'gfx'
   // Local terminal shell path (for WSL, `wsl://<distro>` carries the distro)
   shellPath?: string
   // Extra command-line arguments appended to the local shell's launch

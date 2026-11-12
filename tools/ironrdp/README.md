@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.1.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.2.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -31,7 +31,24 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
    so a burst cannot indefinitely starve RAF/input tasks. Individual PDU decoding
    remains synchronous and cannot be preempted by this budget.
 
-No WebGL2, Worker, codec-negotiation or transport change is included.
+6. Opt-in EGFX: the `graphics_pipeline` extension requests 32-bit color,
+   advertises the GFX early capability, and registers `GraphicsPipelineClient`
+   alongside Display Control in the same DRDYNVC channel. The pinned engine's
+   existing compositor applies surface/cache commands and only releases updates
+   after EndFrame. Its capabilities exclude AVC when no H.264 decoder is supplied.
+7. Handle GFX ResetGraphics extent changes without requiring DeactivateAll:
+   clear damage from the old extent and resize/redraw the canvas at presentation.
+
+The connection form and normal/fullscreen RDP toolbar expose **Smooth
+(experimental)** and **Compatibility**. Existing connections default to
+Compatibility; `rdpGraphicsMode: "gfx"` opts in and persists with the connection.
+Switching reconnects. A server without GFX can still choose legacy graphics;
+selecting Smooth is a requested mode, not proof of the negotiated codec.
+
+No WebGL2, Worker, WebCodecs or H.264 implementation is included. This iteration
+uses the pinned engine's existing ClearCodec/Planar/RemoteFX/Progressive support.
+Actual Linux tests negotiated GFX RemoteFX Progressive. The Go transport and
+credential-handling paths are unchanged.
 
 ## Rebuild production package
 
@@ -58,6 +75,7 @@ In the patched IronRDP checkout:
 
 ```sh
 cargo +stable test -p ironrdp-web --lib --locked -- --skip clipboard::tests
+cargo +stable test -p ironrdp-egfx --lib --locked
 cargo +stable build --locked -p ironrdp-web --target wasm32-unknown-unknown \
   --release --features render-benchmark
 wasm-bindgen target/wasm32-unknown-unknown/release/ironrdp_web.wasm \

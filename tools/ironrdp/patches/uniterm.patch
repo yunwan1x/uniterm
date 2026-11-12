@@ -1,3 +1,15 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index bd2558ee..5e96e66f 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3794,6 +3794,7 @@ dependencies = [
+  "ironrdp",
+  "ironrdp-cliprdr-format",
+  "ironrdp-core 0.3.1",
++ "ironrdp-egfx",
+  "ironrdp-futures",
+  "ironrdp-pdu",
+  "ironrdp-propertyset",
 diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
 index 672a1494..d2f42e87 100644
 --- a/crates/ironrdp-connector/src/connection_finalization.rs
@@ -39,7 +51,7 @@ index 672a1494..d2f42e87 100644
  
                  (Written::Nothing, next_state)
 diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
-index c964d7ce..0126ad67 100644
+index c964d7ce..6a24ed71 100644
 --- a/crates/ironrdp-web/Cargo.toml
 +++ b/crates/ironrdp-web/Cargo.toml
 @@ -18,6 +18,7 @@ test = false
@@ -50,6 +62,14 @@ index c964d7ce..0126ad67 100644
  default = ["panic_hook"]
  panic_hook = ["iron-remote-desktop/panic_hook"]
  qoi = ["ironrdp/qoi"]
+@@ -38,6 +39,7 @@ ironrdp = { path = "../ironrdp", features = [
+     "displaycontrol",
+     "pdu",
+ ] }
++ironrdp-egfx.path = "../ironrdp-egfx"
+ ironrdp-core.path = "../ironrdp-core"
+ ironrdp-cliprdr-format.path = "../ironrdp-cliprdr-format"
+ ironrdp-futures.path = "../ironrdp-futures"
 diff --git a/crates/ironrdp-web/src/image.rs b/crates/ironrdp-web/src/image.rs
 index 2df63efc..592e3caa 100644
 --- a/crates/ironrdp-web/src/image.rs
@@ -537,18 +557,26 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..11e982d9 100644
+index ac630290..163ab601 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
-@@ -6,6 +6,7 @@ use std::borrow::Cow;
- use std::rc::Rc;
- 
- use crate::canvas::Canvas;
+@@ -12,6 +12,7 @@ use crate::error::IronError;
+ use crate::image::extract_partial_image;
+ use crate::input::InputTransaction;
+ use crate::network_client::WasmNetworkClient;
 +use crate::presentation::{AnimationFrame, Damage, wait_for_frame};
- use crate::clipboard;
- use crate::clipboard::{ClipboardData, FileMetadata, WasmClipboard, WasmClipboardBackend, WasmClipboardBackendMessage};
- use crate::error::IronError;
-@@ -96,11 +97,14 @@ struct SessionBuilderInner {
+ use crate::printer::{JsPrinterStreamCallbacks, WasmPrinter, WasmPrinterBackend, wasm_printer_pair};
+ use anyhow::Context as _;
+ use base64::Engine as _;
+@@ -40,6 +41,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
+ use ironrdp::session::image::DecodedImage;
+ use ironrdp::session::{ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
+ use ironrdp_core::WriteBuf;
++use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
+ use ironrdp_futures::{FramedWrite, single_sequence_step_read};
+ use rgb::AsPixels as _;
+ use tap::prelude::*;
+@@ -96,11 +98,15 @@ struct SessionBuilderInner {
      printer_driver_name: Option<String>,
  
      use_display_control: bool,
@@ -557,13 +585,14 @@ index ac630290..11e982d9 100644
      enable_standard_rdp_security: bool,
      enable_server_pointer: bool,
      legacy_graphics: bool,
++    graphics_pipeline: bool,
      outbound_message_size_limit: Option<usize>,
 +    connection_type: Option<u32>,
 +    performance_flags: Option<u32>,
  }
  
  impl Default for SessionBuilderInner {
-@@ -142,11 +146,14 @@ impl Default for SessionBuilderInner {
+@@ -142,11 +148,15 @@ impl Default for SessionBuilderInner {
              printer_driver_name: None,
  
              use_display_control: false,
@@ -572,13 +601,14 @@ index ac630290..11e982d9 100644
              enable_standard_rdp_security: false,
              enable_server_pointer: true,
              legacy_graphics: false,
++            graphics_pipeline: false,
              outbound_message_size_limit: None,
 +            connection_type: None,
 +            performance_flags: None,
          }
      }
  }
-@@ -291,12 +298,33 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -291,12 +301,34 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              |vmconnect: String| { self.0.borrow_mut().vmconnect = Some(vmconnect) };
              |kdc_proxy_url: String| { self.0.borrow_mut().kdc_proxy_url = Some(kdc_proxy_url) };
              |display_control: bool| { self.0.borrow_mut().use_display_control = display_control };
@@ -589,6 +619,7 @@ index ac630290..11e982d9 100644
              };
              |enable_server_pointer: bool| { self.0.borrow_mut().enable_server_pointer = enable_server_pointer };
              |legacy_graphics: bool| { self.0.borrow_mut().legacy_graphics = legacy_graphics };
++            |graphics_pipeline: bool| { self.0.borrow_mut().graphics_pipeline = graphics_pipeline };
 +            |connection_type: f64| {
 +                let value = if connection_type >= 1.0 && connection_type <= 7.0 {
 +                    #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -612,7 +643,7 @@ index ac630290..11e982d9 100644
              |outbound_message_size_limit: f64| {
                  let limit = if outbound_message_size_limit >= 0.0 && outbound_message_size_limit <= f64::from(u32::MAX) {
                      #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-@@ -405,6 +433,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -405,6 +437,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name,
              outbound_message_size_limit,
              legacy_graphics,
@@ -620,7 +651,7 @@ index ac630290..11e982d9 100644
              security,
          );
  
-@@ -450,6 +479,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -450,6 +483,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name = inner.printer_driver_name.clone();
              outbound_message_size_limit = inner.outbound_message_size_limit;
              legacy_graphics = inner.legacy_graphics;
@@ -628,7 +659,7 @@ index ac630290..11e982d9 100644
              security = SecurityConfig {
                  enable_credssp: inner.enable_credssp,
                  enable_standard_rdp_security: inner.enable_standard_rdp_security,
-@@ -473,12 +503,29 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -473,11 +507,29 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              client_name.clone(),
              desktop_size,
              legacy_graphics,
@@ -638,7 +669,8 @@ index ac630290..11e982d9 100644
  
          let enable_server_pointer = self.0.borrow().enable_server_pointer;
          config.enable_server_pointer = enable_server_pointer;
- 
++        configure_graphics_pipeline(&mut config, self.0.borrow().graphics_pipeline && !legacy_graphics);
++
 +        // Optional network profile overrides (uniTerm low-bandwidth tiers):
 +        // connection_type is honored by the server only together with the
 +        // VALID_CONNECTION_TYPE early capability flag, which the connector
@@ -654,13 +686,14 @@ index ac630290..11e982d9 100644
 +                config.performance_flags = PerformanceFlags::from_bits_truncate(performance_flags);
 +            }
 +        }
-+
+ 
          let (input_events_tx, input_events_rx) = mpsc::unbounded();
  
-         let clipboard = remote_clipboard_changed_callback.clone().map(|callback| {
-@@ -743,6 +790,9 @@ impl iron_remote_desktop::Session for Session {
+@@ -742,7 +794,11 @@ impl iron_remote_desktop::Session for Session {
+         let mut requested_resize = None;
  
          // Reused across frames so per-region extraction doesn't allocate on every draw.
++        let mut framebuffer_dimensions = (image.width(), image.height());
          let mut draw_buffer = WriteBuf::new();
 +        let mut damage = Damage::default();
 +        let mut animation_frame = None;
@@ -668,7 +701,7 @@ index ac630290..11e982d9 100644
  
          // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
          let activation_factory = connection_result.activation_factory;
-@@ -763,14 +813,27 @@ impl iron_remote_desktop::Session for Session {
+@@ -763,14 +819,44 @@ impl iron_remote_desktop::Session for Session {
          let mut cleanup_interval = IntervalStream::new(5_000).fuse();
  
          let disconnect_reason = 'outer: loop {
@@ -677,6 +710,16 @@ index ac630290..11e982d9 100644
 +                _ = wait_for_frame(&mut animation_frame).fuse() => {
 +                    processing_started = js_sys::Date::now();
 +                    animation_frame = None;
++                    if self.render_canvas.width() != u32::from(image.width()) || self.render_canvas.height() != u32::from(image.height()) {
++                        gui.resize(
++                            NonZeroU32::new(u32::from(image.width())).context("zero graphics width")?,
++                            NonZeroU32::new(u32::from(image.height())).context("zero graphics height")?,
++                        );
++                        damage.clear();
++                        damage.add(ironrdp::pdu::geometry::InclusiveRectangle {
++                            left: 0, top: 0, right: image.width() - 1, bottom: image.height() - 1,
++                        });
++                    }
 +                    for region in damage.take() {
 +                        let region = extract_partial_image(&image, region, &mut draw_buffer);
 +                        gui.draw(draw_buffer.filled_mut(), region).context("draw batched region")?;
@@ -689,14 +732,22 @@ index ac630290..11e982d9 100644
                      let (action, payload) = frame.context("read frame")?;
                      trace!(?action, frame_length = payload.len(), "Frame received");
  
-                     active_stage.process(&mut image, action, &payload, framed.last_read_at())?
+-                    active_stage.process(&mut image, action, &payload, framed.last_read_at())?
++                    let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
++                    if framebuffer_dimensions != (image.width(), image.height()) {
++                        // ResetGraphics may resize without DeactivateAll. Discard rectangles
++                        // from the old extent before the next animation callback reads pixels.
++                        damage.clear();
++                        framebuffer_dimensions = (image.width(), image.height());
++                    }
++                    outputs
                  }
                  input_events = input_events.next() => {
 +                    processing_started = js_sys::Date::now();
                      let event = input_events.context("read next input events")?;
  
                      match event {
-@@ -949,6 +1012,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -949,6 +1035,7 @@ impl iron_remote_desktop::Session for Session {
                      }
                  }
                  _ = cleanup_interval.next() => {
@@ -704,7 +755,7 @@ index ac630290..11e982d9 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -979,10 +1043,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -979,10 +1066,7 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -716,7 +767,7 @@ index ac630290..11e982d9 100644
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1155,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1178,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -725,7 +776,7 @@ index ac630290..11e982d9 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1242,16 @@ impl iron_remote_desktop::Session for Session {
+@@ -1179,6 +1265,16 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -742,7 +793,7 @@ index ac630290..11e982d9 100644
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1517,6 +1590,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1517,6 +1613,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -765,7 +816,7 @@ index ac630290..11e982d9 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1613,7 @@ fn build_config(
+@@ -1524,6 +1636,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -773,7 +824,7 @@ index ac630290..11e982d9 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1665,7 @@ fn build_config(
+@@ -1575,7 +1688,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -782,7 +833,38 @@ index ac630290..11e982d9 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -2045,6 +2135,7 @@ mod tests {
+@@ -1712,6 +1825,7 @@ async fn connect(
+     // In web browser environments, we do not have an easy access to the local address of the socket.
+     let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
+ 
++    let use_graphics_pipeline = config.support_dyn_vc_gfx_protocol;
+     let mut connector = ClientConnector::new(config, dummy_client_addr);
+ 
+     if let Some(clipboard_backend) = clipboard_backend {
+@@ -1732,10 +1846,18 @@ async fn connect(
+         );
+     }
+ 
+-    if use_display_control {
+-        connector.attach_static_channel(
+-            DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new()))),
+-        );
++    if use_display_control || use_graphics_pipeline {
++        let mut dynamic_channels = DrdynvcClient::new();
++        if use_display_control {
++            dynamic_channels = dynamic_channels.with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
++        }
++        if use_graphics_pipeline {
++            // The session ActiveStage already composites EGFX output at EndFrame.
++            // Without an AVC decoder the client only advertises codecs it can decode.
++            dynamic_channels =
++                dynamic_channels.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(WebGraphicsHandler), None));
++        }
++        connector.attach_static_channel(dynamic_channels);
+     }
+ 
+     let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
+@@ -2045,10 +2167,25 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -790,3 +872,43 @@ index ac630290..11e982d9 100644
              security,
          )
      }
+ 
++    #[test]
++    fn graphics_pipeline_is_opt_in_and_requires_true_color() {
++        let mut config = connector_config(SecurityConfig {
++            enable_credssp: true,
++            enable_standard_rdp_security: false,
++        });
++        configure_graphics_pipeline(&mut config, false);
++        assert!(!config.support_dyn_vc_gfx_protocol);
++        assert_eq!(config.bitmap.as_ref().unwrap().color_depth, 16);
++        configure_graphics_pipeline(&mut config, true);
++        assert!(config.support_dyn_vc_gfx_protocol);
++        assert_eq!(config.bitmap.as_ref().unwrap().color_depth, 32);
++    }
++
+     fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
+         let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
+             ironrdp::pdu::nego::ConnectionConfirm::Response {
+@@ -2618,3 +2755,21 @@ mod tests {
+         }
+     }
+ }
++
++struct WebGraphicsHandler;
++impl GraphicsPipelineHandler for WebGraphicsHandler {
++    fn on_frame_complete(&mut self, frame_id: u32) {
++        trace!(frame_id, "Web EGFX frame complete");
++    }
++}
++
++// GFX requires 32-bit color. Keep the compatibility path's existing 16-bit
++// preference when the experimental pipeline is disabled.
++fn configure_graphics_pipeline(config: &mut connector::Config, enabled: bool) {
++    config.support_dyn_vc_gfx_protocol = enabled;
++    if enabled {
++        if let Some(bitmap) = config.bitmap.as_mut() {
++            bitmap.color_depth = 32;
++        }
++    }
++}

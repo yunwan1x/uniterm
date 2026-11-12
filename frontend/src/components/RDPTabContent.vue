@@ -80,6 +80,10 @@
       >
         <el-option v-for="q in RDP_QUALITY_OPTIONS" :key="q.value" :value="q.value" :label="t(q.label)" />
       </el-select>
+      <el-select v-model="activeGraphicsMode" class="rdp-quality-select" :disabled="status === 'connecting'" :aria-label="t('conn.rdpGraphicsMode')" @change="onGraphicsModeChange">
+        <el-option value="legacy" :label="t('conn.rdpGraphicsLegacy')" />
+        <el-option value="gfx" :label="t('conn.rdpGraphicsSmooth')" />
+      </el-select>
       <span class="rdp-status-spacer" />
       <button class="rdp-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
     </div>
@@ -123,6 +127,10 @@
         >
           <el-option v-for="q in RDP_QUALITY_OPTIONS" :key="q.value" :value="q.value" :label="t(q.label)" />
         </el-select>
+        <el-select v-model="activeGraphicsMode" class="remote-desktop-toolbar-select" :teleported="false" :disabled="status === 'connecting'" :aria-label="t('conn.rdpGraphicsMode')" @change="onGraphicsModeChange">
+        <el-option value="legacy" :label="t('conn.rdpGraphicsLegacy')" />
+        <el-option value="gfx" :label="t('conn.rdpGraphicsSmooth')" />
+      </el-select>
       </template>
     </RemoteDesktopToolbar>
 
@@ -194,6 +202,8 @@ const activeQuality = ref<RdpQuality>(normalizeRdpQuality(props.config?.rdpQuali
 // The tier the running session was actually started with — the select may
 // hold a newer value until the reconnect it triggers completes.
 const sessionQuality = ref<RdpQuality>(activeQuality.value)
+const activeGraphicsMode = ref<'legacy' | 'gfx'>(props.config?.rdpGraphicsMode === 'gfx' ? 'gfx' : 'legacy')
+const sessionGraphicsMode = ref(activeGraphicsMode.value)
 // Resolution mode (adaptive / fullscreen / fixed WxH). Seeded from the saved
 // connection; the status bar selector overrides it and persists the choice.
 // Component state, not props.config — the panel holds a snapshot taken at
@@ -262,6 +272,12 @@ const resolutionOptions = computed(() => [
 // connection like the other status bar preferences. sessionQuality is the
 // comparison baseline: v-model has already written the select's value into
 // activeQuality by the time @change fires.
+function onGraphicsModeChange(mode: 'legacy' | 'gfx') {
+  if (mode === sessionGraphicsMode.value) return
+  if (props.config?.id) void connectionStore.update(props.config.id, { rdpGraphicsMode: mode })
+  if (status.value !== 'connecting') void reconnect()
+}
+
 function onQualityChange(quality: RdpQuality) {
   if (quality === sessionQuality.value) return
   if (props.config?.id) void connectionStore.update(props.config.id, { rdpQuality: quality })
@@ -411,7 +427,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     scaleSyncAttempts = 0
     displayControlUsable = null
     clearScaleSync()
-    rdpLog(`client start: tier=${activeQuality.value} res=${activeResolution.value} zoom=${zoom.value} size=${size.width}x${size.height} dpi=${localScalePercent()}% credssp=${activeCredSSP} displayControl=${isAdaptive()} gen=${generation}`)
+    rdpLog(`client start: tier=${activeQuality.value} graphics=${activeGraphicsMode.value} res=${activeResolution.value} zoom=${zoom.value} size=${size.width}x${size.height} dpi=${localScalePercent()}% credssp=${activeCredSSP} displayControl=${isAdaptive()} gen=${generation}`)
 
     // proxyUrl: ws://127.0.0.1:<port>/<token> on desktop, or the same-origin
     // path /api/web/session-proxy/<token> in server mode — the token doubles
@@ -429,6 +445,8 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
       .renderCanvas(canvasEl.value)
     if (domain) builder.serverDomain(domain)
     builder.extension(new mod.Extension('enable_credssp', activeCredSSP))
+    builder.extension(new mod.Extension('graphics_pipeline', activeGraphicsMode.value === 'gfx'))
+    sessionGraphicsMode.value = activeGraphicsMode.value
     // Auto-logon with the saved credentials (mstsc saved-creds equivalent) —
     // requires the autologon extension patch in the WASM build.
     builder.extension(new mod.Extension('autologon', !!props.config.password))

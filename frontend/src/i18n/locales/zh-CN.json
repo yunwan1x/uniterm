@@ -2351,5 +2351,8 @@
   "tableColumns.search": "搜索列",
   "tableColumns.required": "必选",
   "tableColumns.noMatch": "没有匹配的列",
-  "tableColumns.saved": "立即生效 · 保存在当前浏览器"
+  "tableColumns.saved": "立即生效 · 保存在当前浏览器",
+  "conn.rdpGraphicsMode": "画面模式",
+  "conn.rdpGraphicsLegacy": "兼容",
+  "conn.rdpGraphicsSmooth": "流畅（实验）"
 }

@@ -2351,5 +2351,8 @@
   "tableColumns.search": "Search columns",
   "tableColumns.required": "Required",
   "tableColumns.noMatch": "No matching columns",
-  "tableColumns.saved": "Applied immediately · Saved in this browser"
+  "tableColumns.saved": "Applied immediately · Saved in this browser",
+  "conn.rdpGraphicsMode": "Graphics mode",
+  "conn.rdpGraphicsLegacy": "Compatibility",
+  "conn.rdpGraphicsSmooth": "Smooth (experimental)"
 }
