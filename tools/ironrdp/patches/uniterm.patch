@@ -1071,7 +1071,7 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..4979a9d6 100644
+index ac630290..ff6077e0 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
 @@ -1,3 +1,4 @@
@@ -1095,7 +1095,14 @@ index ac630290..4979a9d6 100644
  use crate::printer::{JsPrinterStreamCallbacks, WasmPrinter, WasmPrinterBackend, wasm_printer_pair};
  use anyhow::Context as _;
  use base64::Engine as _;
-@@ -40,6 +43,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
+@@ -34,12 +37,13 @@ use ironrdp::graphics::image_processing::PixelFormat;
+ use ironrdp::pdu::input::fast_path::FastPathInputEvent;
+ use ironrdp::pdu::rdp::capability_sets::{BitmapCodecs, client_codecs_capabilities};
+ use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+-use ironrdp::rdpdr::Rdpdr;
+ use ironrdp::rdpdr::pdu::efs::{DEFAULT_PRINTER_DRIVER_NAME, MICROSOFT_PRINT_TO_PDF_DRIVER_NAME};
++use ironrdp::rdpdr::{NoopRdpdrBackend, Rdpdr};
+ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
  use ironrdp::session::image::DecodedImage;
  use ironrdp::session::{ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
  use ironrdp_core::WriteBuf;
@@ -1515,7 +1522,7 @@ index ac630290..4979a9d6 100644
          printer_backend,
          printer_device_id,
          printer_name,
-@@ -1712,17 +1926,22 @@ async fn connect(
+@@ -1712,30 +1926,45 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -1526,22 +1533,29 @@ index ac630290..4979a9d6 100644
          connector.attach_static_channel(CliprdrClient::new(Box::new(clipboard_backend)));
      }
  
+-    if let Some(printer_backend) = printer_backend {
+-        // Windows servers only speak on RDPDR when RDPSND is advertised too
+-        // (MS-RDPEFS Appendix A<1>). We do not play audio in the web client,
+-        // but the no-op RDPSND processor satisfies that channel dependency.
++    let audio_enabled = audio_backend.is_some();
 +    if let Some(audio_backend) = audio_backend {
 +        connector.attach_static_channel(Rdpsnd::new(Box::new(audio_backend)));
 +    } else if printer_backend.is_some() {
-+        connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
+         connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
 +    }
-     if let Some(printer_backend) = printer_backend {
-         // Windows servers only speak on RDPDR when RDPSND is advertised too
-         // (MS-RDPEFS Appendix A<1>). We do not play audio in the web client,
-         // but the no-op RDPSND processor satisfies that channel dependency.
--        connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
++    if let Some(printer_backend) = printer_backend {
++        // Printing also requires RDPSND (MS-RDPEFS Appendix A<1>).
++        // Reuse the real audio channel when present; otherwise use its no-op backend.
          connector.attach_static_channel(
-             Rdpdr::new(Box::new(printer_backend), computer_name).with_printer_driver(
+-            Rdpdr::new(Box::new(printer_backend), computer_name).with_printer_driver(
++            Rdpdr::new(Box::new(printer_backend), computer_name.clone()).with_printer_driver(
                  printer_device_id,
-@@ -1732,10 +1951,19 @@ async fn connect(
+                 printer_name,
+                 printer_driver_name,
+             ),
          );
      }
++    ensure_audio_device_channel(&mut connector, audio_enabled, computer_name);
  
 -    if use_display_control {
 -        connector.attach_static_channel(
@@ -1563,7 +1577,7 @@ index ac630290..4979a9d6 100644
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2273,25 @@ mod tests {
+@@ -2045,10 +2274,42 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -1572,6 +1586,23 @@ index ac630290..4979a9d6 100644
          )
      }
  
++    #[test]
++    fn audio_registers_rdpdr_without_printing_and_preserves_existing_processor() {
++        let config = connector_config(SecurityConfig { enable_credssp: true, enable_standard_rdp_security: false });
++        let mut connector = ClientConnector::new(config, "127.0.0.1:3389".parse().unwrap());
++        ensure_audio_device_channel(&mut connector, false, "test".into());
++        assert!(connector.static_channels.get_by_type::<Rdpdr>().is_none());
++        let (tx, _rx) = mpsc::unbounded();
++        connector.attach_static_channel(Rdpsnd::new(Box::new(WebAudioBackend::new(tx))));
++        ensure_audio_device_channel(&mut connector, true, "test".into());
++        assert!(connector.static_channels.get_by_type::<Rdpsnd>().is_some());
++        let original = connector.static_channels.get_by_type::<Rdpdr>().unwrap() as *const _;
++        assert_eq!(connector.static_channels.len(), 2);
++        ensure_audio_device_channel(&mut connector, true, "other".into());
++        assert_eq!(connector.static_channels.len(), 2);
++        assert_eq!(connector.static_channels.get_by_type::<Rdpdr>().unwrap() as *const _, original);
++    }
++
 +    #[test]
 +    fn graphics_pipeline_is_opt_in_and_requires_true_color() {
 +        let mut config = connector_config(SecurityConfig {
@@ -1589,7 +1620,7 @@ index ac630290..4979a9d6 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2861,21 @@ mod tests {
+@@ -2618,3 +2879,29 @@ mod tests {
          }
      }
  }
@@ -1609,5 +1640,13 @@ index ac630290..4979a9d6 100644
 +        if let Some(bitmap) = config.bitmap.as_mut() {
 +            bitmap.color_depth = 32;
 +        }
++    }
++}
++
++// MS-RDPEA Appendix A<1>: Windows needs RDPDR as well as RDPSND for audio.
++// Keep an existing printer processor; otherwise negotiate with no devices.
++fn ensure_audio_device_channel(connector: &mut ClientConnector, audio_enabled: bool, computer_name: String) {
++    if audio_enabled && connector.static_channels.get_by_type::<Rdpdr>().is_none() {
++        connector.attach_static_channel(Rdpdr::new(Box::new(NoopRdpdrBackend), computer_name));
 +    }
 +}

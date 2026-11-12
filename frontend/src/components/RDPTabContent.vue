@@ -54,6 +54,8 @@
 
     <button v-if="audioBlocked && status === 'connected'" class="rdp-audio-enable" @click="unlockAudio">{{ t('rdp.enableAudio') }}</button>
 
+    <RdpFloatingKeyboard v-if="floatingKeyboardOpen" :disabled="status !== 'connected'" @send="sendQuickKeys" @release="onFocusOut" @close="floatingKeyboardOpen = false" />
+
     <!-- Status bar -->
     <div
       v-show="!isFullscreen"
@@ -88,7 +90,7 @@
         <el-option value="legacy" :label="t('conn.rdpGraphicsLegacy')" />
         <el-option value="gfx" :label="t('conn.rdpGraphicsSmooth')" />
       </el-select>
-      <RdpKeysMenu :disabled="status !== 'connected'" @send="sendQuickKeys" />
+      <RdpKeysMenu :disabled="status !== 'connected'" :open="floatingKeyboardOpen" @toggle="toggleFloatingKeyboard" />
       <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
       <span class="rdp-status-spacer" />
       <button class="rdp-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
@@ -122,7 +124,7 @@
       </template>
       <!-- Keep the toolbar order identical to the status bar: resolution, zoom, quality. -->
       <template #after-zoom>
-        <RdpKeysMenu :disabled="status !== 'connected'" @send="sendQuickKeys" />
+        <RdpKeysMenu :disabled="status !== 'connected'" :open="floatingKeyboardOpen" @toggle="toggleFloatingKeyboard" />
         <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
         <el-select
           v-model="activeQuality"
@@ -167,6 +169,7 @@ import { Loader } from '@lucide/vue'
 import { RdpAudioPlayer } from '../utils/rdpAudio'
 import RemoteDesktopToolbar from './RemoteDesktopToolbar.vue'
 import RemoteMobileControls from './RemoteMobileControls.vue'
+import RdpFloatingKeyboard from './RdpFloatingKeyboard.vue'
 import RdpKeysMenu from './RdpKeysMenu.vue'
 import RdpDevicesMenu from './RdpDevicesMenu.vue'
 import { RdpCapture, type CaptureKind } from '../utils/rdpCapture'
@@ -234,6 +237,8 @@ const container = ref<HTMLDivElement | null>(null)
 const { zoom } = useRemoteDesktopPreferences(() => props.config)
 const isFullscreen = ref(false)
 const keyboardFocused = ref(false)
+const floatingKeyboardOpen = ref(false)
+function toggleFloatingKeyboard() { onFocusOut(); floatingKeyboardOpen.value = !floatingKeyboardOpen.value }
 let keyboardCaptureId = ''
 let keyboardHeartbeat: ReturnType<typeof setInterval> | null = null
 const viewportEl = ref<HTMLDivElement | null>(null)

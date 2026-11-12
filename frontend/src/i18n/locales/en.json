@@ -2364,5 +2364,11 @@
   "rdp.devicesHint": "Changes reconnect this session. Only enable devices you want to share. The remote host must allow redirection.",
   "rdp.deviceFailed": "Device unavailable or permission denied. Check browser permissions.",
   "rdp.deviceHttps": "Open this page using HTTPS or localhost to share devices.",
-  "rdp.enableAudio": "Click to enable sound"
+  "rdp.enableAudio": "Click to enable sound",
+  "rdp.floatingKeyboard": "Floating keyboard",
+  "rdp.keyboardMove": "Drag to move; arrow keys also move",
+  "rdp.keyboardCollapse": "Collapse keyboard",
+  "rdp.keyboardExpand": "Expand keyboard",
+  "rdp.keyboardClose": "Close keyboard",
+  "rdp.keyboardModifierHint": "Tap modifier for next key; hold to lock, tap again to release"
 }

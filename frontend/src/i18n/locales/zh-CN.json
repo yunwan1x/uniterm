@@ -2364,5 +2364,11 @@
   "rdp.devicesHint": "更改后将重新连接此会话。仅开启需要共享的设备，远端也须允许设备重定向。",
   "rdp.deviceFailed": "设备不可用或授权被拒绝，请检查浏览器权限。",
   "rdp.deviceHttps": "请使用 HTTPS 或 localhost 打开网页后共享设备。",
-  "rdp.enableAudio": "点击启用声音"
+  "rdp.enableAudio": "点击启用声音",
+  "rdp.floatingKeyboard": "悬浮键盘",
+  "rdp.keyboardMove": "拖动移动，也可使用方向键",
+  "rdp.keyboardCollapse": "收起键盘",
+  "rdp.keyboardExpand": "展开键盘",
+  "rdp.keyboardClose": "关闭键盘",
+  "rdp.keyboardModifierHint": "单击修饰键待用；长按锁定，再次点击释放"
 }

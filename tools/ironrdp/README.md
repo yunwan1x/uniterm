@@ -135,3 +135,29 @@ track release; Rust wire-protocol tests verify enumeration, media negotiation,
 sample requests and stale-frame rejection. The xrdp test server does not provide
 a Windows RDPECAM consumer: camera compatibility with Windows applications is
 not yet live-verified. Do not represent those protocol tests as a Windows test.
+
+### Windows audio channel dependency (uniterm.5)
+
+When audio playback is enabled, the web client now registers both `rdpsnd` and
+`rdpdr`, as required by MS-RDPEA Appendix A, note 1 for Windows. If printing has
+already installed an RDPDR processor, it is retained. Otherwise an RDPDR
+processor with `NoopRdpdrBackend` handles protocol negotiation with an empty
+device list; this does not enable drive or printer redirection.
+
+Regression coverage checks that enabling audio installs RDPDR without printing,
+that disabled audio does not install it, and that an existing processor is not
+replaced. The vendor package and frontend lockfile are updated together to
+`0.5.1-uniterm.5`.
+
+Validation on 2026-11-12: WASM release build, frontend production build,
+42 RDPDR library tests, 35 native-compatible web tests and 6 browser audio-player
+unit tests passed. The native web suite's clipboard tests require JavaScript
+imports: running the entire suite natively yields 19 environment failures;
+they are excluded from the compatible subset, not reported as passing.
+The patch applies cleanly to the pinned upstream commit.
+
+Windows acceptance remains pending access to the user's `wy` session: reconnect
+with the new client, invoke Windows' sound Test action, and verify received PCM
+buffers with non-zero amplitude and audible left/right output. An established
+Remote Audio device alone does not establish successful playback. This fix
+requires serving the rebuilt frontend and reconnecting existing RDP sessions.

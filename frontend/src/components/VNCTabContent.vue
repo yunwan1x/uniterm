@@ -126,6 +126,8 @@ import { CreateSession, CloseSession, SetVNCKeyboardCapture, EncodeVNCClipboardT
 import { createVncClipboard } from '../utils/vncClipboard'
 import { installVncPixelScaling } from '../utils/vncScaling'
 import { installVncCursor } from '../utils/vncCursor'
+import { installVncPerformance } from '../utils/vncPerformance'
+import { installVncImageEncoding } from '../utils/vncImageEncoding'
 import { captureVncPreview, installVncDisplays, type DesktopDisplayState, type DesktopPreview, type DesktopRegion, type DesktopView } from '../utils/vncDisplays'
 import { deleteDesktopRegion, saveDesktopRegion, suggestedDesktopRegion } from '../utils/desktopRegions'
 import { msg } from '../services/message'
@@ -156,6 +158,8 @@ const vncContainer = ref<HTMLDivElement | null>(null)
 const savedPassword = ref<string>('')
 const { zoom, scaleViewport, viewOnly, showDotCursor } = useRemoteDesktopPreferences(() => props.config)
 const displayState = ref<DesktopDisplayState>({ displays: [], width: 0, height: 0, view: { selected: 'all' } })
+let restorePerformance: (() => void) | null = null
+let restoreImageEncoding: (() => void) | null = null
 let displayController: ReturnType<typeof installVncDisplays> | null = null
 const regionEditor = ref<{ preview: DesktopPreview; region: DesktopRegion; editingExisting: boolean } | null>(null)
 
@@ -298,6 +302,10 @@ async function reconnect() {
   restorePixelScaling = null
   restoreCursor?.()
   restoreCursor = null
+  restoreImageEncoding?.()
+  restoreImageEncoding = null
+  restorePerformance?.()
+  restorePerformance = null
   if (currentSessionId.value) {
     try { await CloseSession(currentSessionId.value) } catch (_) {}
     currentSessionId.value = null
@@ -321,6 +329,10 @@ function initRFB(proxyAddr: string, password: string, forceRfb33 = false) {
   restorePixelScaling = null
   restoreCursor?.()
   restoreCursor = null
+  restoreImageEncoding?.()
+  restoreImageEncoding = null
+  restorePerformance?.()
+  restorePerformance = null
 
   // Fresh attempt (not the 3.3 downgrade retry): reset negotiation state
   // and remember the proxy address the downgrade retry would reuse.
@@ -358,6 +370,11 @@ function initRFB(proxyAddr: string, password: string, forceRfb33 = false) {
 
 function applyRFBOptions() {
   if (!rfb) return
+  restoreImageEncoding?.()
+  restoreImageEncoding = null
+  restorePerformance?.()
+  restorePerformance = installVncPerformance(rfb)
+  restoreImageEncoding = installVncImageEncoding(rfb)
   displayController?.dispose()
   restorePixelScaling?.()
   restorePixelScaling = installVncPixelScaling(rfb, () => zoom.value)
@@ -774,6 +791,10 @@ onBeforeUnmount(() => {
   restorePixelScaling = null
   restoreCursor?.()
   restoreCursor = null
+  restoreImageEncoding?.()
+  restoreImageEncoding = null
+  restorePerformance?.()
+  restorePerformance = null
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   window.removeEventListener('vnc:fullscreen', onFullscreenEvent)
   themeObserver?.disconnect()

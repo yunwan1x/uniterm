@@ -2337,5 +2337,11 @@
   "rdp.devicesHint": "變更後將重新連線此工作階段。僅開啟需要共享的裝置，遠端亦須允許裝置重新導向。",
   "rdp.deviceFailed": "裝置無法使用或授權遭拒，請檢查瀏覽器權限。",
   "rdp.deviceHttps": "請使用 HTTPS 或 localhost 開啟網頁後共享裝置。",
-  "rdp.enableAudio": "點擊啟用聲音"
+  "rdp.enableAudio": "點擊啟用聲音",
+  "rdp.floatingKeyboard": "懸浮鍵盤",
+  "rdp.keyboardMove": "拖曳移動，也可使用方向鍵",
+  "rdp.keyboardCollapse": "收合鍵盤",
+  "rdp.keyboardExpand": "展開鍵盤",
+  "rdp.keyboardClose": "關閉鍵盤",
+  "rdp.keyboardModifierHint": "點擊修飾鍵待用；長按鎖定，再次點擊釋放"
 }

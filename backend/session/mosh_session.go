@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strconv"
@@ -98,7 +99,7 @@ func (s *MoshSession) Connect(config ConnectionConfig) error {
 	s.sshClient = client
 
 	// Step 2: Dial mosh server over UDP.
-	moshClient, err := mosh.Dial(config.Host, udpPort, key)
+	moshClient, udpAddr, err := dialMoshPeer(client.RemoteAddr(), udpPort, key)
 	if err != nil {
 		client.Close()
 		s.setStatus(StatusError)
@@ -106,7 +107,6 @@ func (s *MoshSession) Connect(config ConnectionConfig) error {
 	}
 
 	s.moshClient = moshClient
-	s.setStatus(StatusConnected)
 
 	// Send the initial terminal size.  Transport().SetPending injects the
 	// resize as the next state in the mosh protocol, bypassing the Client
@@ -117,6 +117,16 @@ func (s *MoshSession) Connect(config ConnectionConfig) error {
 	})
 	moshClient.Transport().SetPending(resizeBytes)
 
+	// DialUDP only creates a socket. Do not report success until the server
+	// acknowledges our encrypted initial state (a random UDP packet is not enough).
+	if err := waitMoshReady(moshClient, s.quit, 10*time.Second); err != nil {
+		moshClient.Close()
+		client.Close()
+		s.setStatus(StatusError)
+		return fmt.Errorf("mosh UDP %s: %w (SSH succeeded; check the remote UDP port/firewall)", udpAddr, err)
+	}
+	s.setStatus(StatusConnected)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
@@ -125,6 +135,54 @@ func (s *MoshSession) Connect(config ConnectionConfig) error {
 	go s.runPostLoginScript(ctx, config.PostLoginScript)
 
 	return nil
+}
+
+// Use the authenticated SSH peer, not a second DNS lookup. mosh-go's Dial
+// calls net.ParseIP(host), which turns a DNS name into a nil/loopback address.
+// DialConn also lets us preserve IPv6 peers and link-local zones.
+func dialMoshPeer(peer net.Addr, port int, key string) (*mosh.Client, *net.UDPAddr, error) {
+	tcp, ok := peer.(*net.TCPAddr)
+	if !ok || tcp.IP == nil || tcp.IP.IsUnspecified() || port < 1 || port > 65535 {
+		return nil, nil, fmt.Errorf("invalid SSH peer or Mosh UDP port")
+	}
+	addr := &net.UDPAddr{IP: tcp.IP, Zone: tcp.Zone, Port: port}
+	rawKey, err := base64.StdEncoding.DecodeString(key + strings.Repeat("=", (4-len(key)%4)%4))
+	if err != nil {
+		return nil, addr, fmt.Errorf("invalid Mosh session key")
+	}
+	ocb, err := mosh.NewOCB(rawKey)
+	if err != nil {
+		return nil, addr, fmt.Errorf("invalid Mosh session key length")
+	}
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		return nil, addr, err
+	}
+	client, err := mosh.DialConn(conn, ocb)
+	if err != nil {
+		conn.Close()
+		return nil, addr, err
+	}
+	return client, addr, nil
+}
+
+func waitMoshReady(client *mosh.Client, quit <-chan struct{}, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if client.Transport().AckedByRemote() > 0 {
+			return nil
+		}
+		select {
+		case <-quit:
+			return fmt.Errorf("connection cancelled")
+		case <-timer.C:
+			return fmt.Errorf("no authenticated server response within %s", timeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *MoshSession) runPostLoginScript(ctx context.Context, script string) {
