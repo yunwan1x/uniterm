@@ -26,6 +26,7 @@ RUN /go/bin/wails3 generate bindings -f "-tags server,production" -clean=true
 FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 WORKDIR /src/frontend
 COPY frontend/package*.json ./
+COPY frontend/vendor/ ./vendor/
 RUN for i in 1 2 3; do npm ci && break; [ "$i" = 3 ] && exit 1; sleep 5; done
 COPY --from=bindings-generator /src/frontend/bindings ./bindings
 COPY frontend/ ./

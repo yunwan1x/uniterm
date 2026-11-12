@@ -1,0 +1,51 @@
+<!doctype html><meta charset="utf-8"><title>RDP renderer replay</title>
+<style>canvas{width:480px;height:270px;border:1px solid #999}body{font:14px sans-serif}</style>
+<h1>RDP renderer replay: original versus batched Canvas 2D</h1><div id="views"></div>
+<script type="module">
+import init,{RenderReplay,check_frame_clock} from './pkg/ironrdp.js';
+await init();
+const raf=()=>new Promise(requestAnimationFrame);
+function updates(kind,w,h,f){
+ if(kind==='narrow-overlap')return Array.from({length:12},(_,i)=>[100,80,64,128,f*31+i]);
+ if(kind==='tiles')return Array.from({length:32},(_,i)=>[(i%16)*64,Math.floor(i/16)*64,64,64,f*31+i]);
+ if(kind==='scattered')return Array.from({length:16},(_,i)=>[(i%4)*Math.floor(w/4),Math.floor(i/4)*Math.floor(h/4),24,24,f*31+i]);
+ return [[0,0,w,h,f*31]];
+}
+const percentile=(a,p)=>[...a].sort((x,y)=>x-y)[Math.min(a.length-1,Math.floor(a.length*p))];
+window.runReplay=async function(w,h,kind,frames=60,reverse=false){
+ const canvases=[document.createElement('canvas'),document.createElement('canvas')];
+ document.querySelector('#views').replaceChildren(...canvases);
+ const renderers=canvases.map((c,i)=>new RenderReplay(c,w,h,i===0));
+ const metrics=[];
+ for(const index of (reverse?[1,0]:[0,1])){
+  const renderer=renderers[index];renderer.update(0,0,w,h,0);renderer.flush();
+  for(let f=0;f<8;f++){for(const u of updates(kind,w,h,f))renderer.update(...u);renderer.flush();}
+  renderer.reset_stats();
+  const work=[],flush=[],draw=[],intervals=[];let last=performance.now();
+  for(let f=0;f<frames;f++){
+   await raf();const now=performance.now();intervals.push(now-last);last=now;
+   const drawBefore=renderer.draw_time_ms();
+   for(const u of updates(kind,w,h,f))renderer.update(...u);
+   const beforeFlush=performance.now();renderer.flush();
+   draw.push(renderer.draw_time_ms()-drawBefore);flush.push(performance.now()-beforeFlush);work.push(performance.now()-now);
+  }
+  metrics.push({mode:index===0?'baseline':'batched',drawMeanMs:draw.reduce((a,b)=>a+b,0)/frames,drawP95Ms:percentile(draw,.95),workMeanMs:work.reduce((a,b)=>a+b,0)/frames,workP95Ms:percentile(work,.95),flushP95Ms:percentile(flush,.95),frameIntervalP95Ms:percentile(intervals.slice(1),.95),drawCalls:renderer.draw_calls(),copiedBytes:renderer.copied_bytes()});
+ }
+ const pixels=canvases.map(c=>c.getContext('2d').getImageData(0,0,w,h).data);
+ let mismatches=0;for(let i=0;i<pixels[0].length;i++)if(pixels[0][i]!==pixels[1][i])mismatches++;
+ renderers.forEach(r=>r.free());
+ if(mismatches)throw Error(`Pixel mismatch: ${mismatches}`);
+ return {width:w,height:h,kind,frames,identicalPixels:true,metrics};
+};
+window.runEdgeCases=()=>{
+ const cs=[document.createElement('canvas'),document.createElement('canvas')];
+ const rs=cs.map((c,i)=>new RenderReplay(c,100,100,i===0));
+ // A resize invalidates pending updates from the previous dimensions.
+ for(const r of rs){r.update(90,90,10,10,3);r.resize(80,60);r.update(0,0,80,60,7);r.update(79,59,1,1,11);r.flush();}
+ const pixels=cs.map(c=>c.getContext('2d').getImageData(0,0,80,60).data);
+ const equal=pixels[0].every((v,i)=>v===pixels[1][i]);rs.forEach(r=>r.free());
+ if(!equal)throw Error('Resize/edge mismatch');return {resizeAndEdgePixels:true};
+};
+window.checkFrameClock=check_frame_clock;
+window.ready=true;
+</script>

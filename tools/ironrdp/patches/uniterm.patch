@@ -1,0 +1,792 @@
+diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
+index 672a1494..d2f42e87 100644
+--- a/crates/ironrdp-connector/src/connection_finalization.rs
++++ b/crates/ironrdp-connector/src/connection_finalization.rs
+@@ -267,7 +267,34 @@ impl Sequence for ConnectionFinalizationSequence {
+ 
+                         ConnectionFinalizationState::Finished
+                     }
+-                    _ => return Err(general_err!("unexpected server message")),
++                    // MS-RDPBCGR lets the server start sending share traffic
++                    // (graphics updates, pointer shapes, session info, ...) once
++                    // the Confirm Active PDU has been processed, so these PDUs
++                    // legitimately race with the Font Map during finalization.
++                    // Skip them and keep waiting instead of failing the connect.
++                    ShareDataPdu::SaveSessionInfo(_)
++                    | ShareDataPdu::FrameAcknowledge(_)
++                    | ShareDataPdu::SuppressOutput(_)
++                    | ShareDataPdu::RefreshRectangle(_)
++                    | ShareDataPdu::Update(_)
++                    | ShareDataPdu::Pointer(_)
++                    | ShareDataPdu::PlaySound(_)
++                    | ShareDataPdu::SetKeyboardIndicators(_)
++                    | ShareDataPdu::SetKeyboardImeStatus(_)
++                    | ShareDataPdu::StatusInfoPdu(_) => {
++                        debug!(
++                            pdu = ctx.pdu.as_short_name(),
++                            "Skipped a non-finalization PDU while waiting for the Font Map",
++                        );
++                        ConnectionFinalizationState::WaitForResponse
++                    }
++                    _ => {
++                        return Err(reason_err!(
++                            "connection finalization",
++                            "unexpected server message: {}",
++                            ctx.pdu.as_short_name(),
++                        ));
++                    }
+                 };
+ 
+                 (Written::Nothing, next_state)
+diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
+index c964d7ce..0126ad67 100644
+--- a/crates/ironrdp-web/Cargo.toml
++++ b/crates/ironrdp-web/Cargo.toml
+@@ -18,6 +18,7 @@ test = false
+ crate-type = ["cdylib", "rlib"]
+ 
+ [features]
++render-benchmark = []
+ default = ["panic_hook"]
+ panic_hook = ["iron-remote-desktop/panic_hook"]
+ qoi = ["ironrdp/qoi"]
+diff --git a/crates/ironrdp-web/src/image.rs b/crates/ironrdp-web/src/image.rs
+index 2df63efc..592e3caa 100644
+--- a/crates/ironrdp-web/src/image.rs
++++ b/crates/ironrdp-web/src/image.rs
+@@ -5,82 +5,111 @@ use ironrdp::session::image::DecodedImage;
+ use ironrdp_core::WriteBuf;
+ 
+ /// Copies the dirty `region` into `buffer` from its current cursor (clear it between regions).
+-/// The returned rect may be wider than `region`: the whole-rows path widens to full image width.
++/// The returned rect exactly matches `region`; full-row copying never widens damage.
+ pub(crate) fn extract_partial_image(
+     image: &DecodedImage,
+     region: InclusiveRectangle,
+     buffer: &mut WriteBuf,
+ ) -> InclusiveRectangle {
+-    // PERF: needs actual benchmark to find a better heuristic
+-    if region.height() > 64 || region.width() > 512 {
+-        extract_whole_rows(image, region, buffer)
++    extract_region(image.data(), image.width(), image.bytes_per_pixel(), region, buffer)
++}
++
++pub(crate) fn extract_region(
++    src: &[u8],
++    width: u16,
++    pixel_size: usize,
++    region: InclusiveRectangle,
++    buffer: &mut WriteBuf,
++) -> InclusiveRectangle {
++    if region.left == 0 && region.width() == width {
++        extract_whole_rows(src, width, pixel_size, region, buffer)
+     } else {
+-        extract_smallest_rectangle(image, region, buffer)
++        extract_smallest_rectangle(src, width, pixel_size, region, buffer)
+     }
+ }
+ 
+-// Faster for low-height and smaller images
+ fn extract_smallest_rectangle(
+-    image: &DecodedImage,
++    src: &[u8],
++    width: u16,
++    pixel_size: usize,
+     region: InclusiveRectangle,
+     buffer: &mut WriteBuf,
+ ) -> InclusiveRectangle {
+-    let pixel_size = usize::from(image.pixel_format().bytes_per_pixel());
+-
+-    let image_width = usize::from(image.width());
+-    let image_stride = image_width * pixel_size;
+-
+-    let region_top = usize::from(region.top);
+-    let region_left = usize::from(region.left);
+-    let region_width = usize::from(region.width());
+-    let region_height = usize::from(region.height());
+-    let region_stride = region_width * pixel_size;
+-
+-    let dst_buf_size = region_width * region_height * pixel_size;
++    let image_stride = usize::from(width) * pixel_size;
++    let region_stride = usize::from(region.width()) * pixel_size;
++    let dst_buf_size = region_stride * usize::from(region.height());
+     let dst = buffer.unfilled_to(dst_buf_size);
+-
+-    let src = image.data();
+-
+-    for row in 0..region_height {
+-        let src_begin = image_stride * (region_top + row) + region_left * pixel_size;
+-        let src_end = src_begin + region_stride;
+-        let src_slice = &src[src_begin..src_end];
+-
+-        let target_begin = region_stride * row;
+-        let target_end = target_begin + region_stride;
+-        let target_slice = &mut dst[target_begin..target_end];
+-
+-        target_slice.copy_from_slice(src_slice);
++    for (row, target) in dst.chunks_exact_mut(region_stride).enumerate() {
++        let begin = image_stride * (usize::from(region.top) + row) + usize::from(region.left) * pixel_size;
++        target.copy_from_slice(&src[begin..begin + region_stride]);
+     }
+-
+     buffer.advance(dst_buf_size);
+-
++    region
++}
++fn extract_whole_rows(
++    src: &[u8],
++    width: u16,
++    pixel_size: usize,
++    region: InclusiveRectangle,
++    buffer: &mut WriteBuf,
++) -> InclusiveRectangle {
++    let stride = usize::from(width) * pixel_size;
++    let begin = usize::from(region.top) * stride;
++    let end = (usize::from(region.bottom) + 1) * stride;
++    buffer.unfilled_to(end - begin).copy_from_slice(&src[begin..end]);
++    buffer.advance(end - begin);
+     region
+ }
+ 
+-// Faster for high-height and bigger images
+-fn extract_whole_rows(image: &DecodedImage, region: InclusiveRectangle, buffer: &mut WriteBuf) -> InclusiveRectangle {
+-    let pixel_size = usize::from(image.pixel_format().bytes_per_pixel());
+-
+-    let image_width = usize::from(image.width());
+-    let image_stride = image_width * pixel_size;
+-
+-    let region_top = usize::from(region.top);
+-    let region_bottom = usize::from(region.bottom);
+-
+-    let src = image.data();
+-
+-    let src_begin = region_top * image_stride;
+-    let src_end = (region_bottom + 1) * image_stride;
+-    let len = src_end - src_begin;
+-
+-    buffer.unfilled_to(len).copy_from_slice(&src[src_begin..src_end]);
+-    buffer.advance(len);
+-
+-    InclusiveRectangle {
+-        left: 0,
+-        top: region.top,
+-        right: image.width() - 1,
+-        bottom: region.bottom,
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn tall_narrow_damage_is_not_widened() {
++        let image = DecodedImage::new(ironrdp::graphics::image_processing::PixelFormat::RgbA32, 1920, 1080);
++        let r = InclusiveRectangle {
++            left: 100,
++            top: 200,
++            right: 163,
++            bottom: 327,
++        };
++        let mut b = WriteBuf::new();
++        assert_eq!(extract_partial_image(&image, r.clone(), &mut b), r);
++        assert_eq!(b.filled().len(), 64 * 128 * 4);
++    }
++    #[test]
++    fn extracts_exact_pixels_at_edges_and_full_rows() {
++        let data: Vec<u8> = (0..20 * 10 * 4).map(|i| (i % 251) as u8).collect();
++        for r in [
++            InclusiveRectangle {
++                left: 3,
++                top: 2,
++                right: 8,
++                bottom: 7,
++            },
++            InclusiveRectangle {
++                left: 0,
++                top: 2,
++                right: 19,
++                bottom: 4,
++            },
++            InclusiveRectangle {
++                left: 19,
++                top: 9,
++                right: 19,
++                bottom: 9,
++            },
++        ] {
++            let mut b = WriteBuf::new();
++            extract_region(&data, 20, 4, r.clone(), &mut b);
++            let expected: Vec<u8> = (r.top..=r.bottom)
++                .flat_map(|y| (r.left..=r.right).flat_map(move |x| (0..4).map(move |c| data_index(x, y, c))))
++                .map(|i| data[i])
++                .collect();
++            assert_eq!(b.filled(), expected);
++        }
++    }
++    fn data_index(x: u16, y: u16, c: usize) -> usize {
++        (usize::from(y) * 20 + usize::from(x)) * 4 + c
+     }
+ }
+diff --git a/crates/ironrdp-web/src/lib.rs b/crates/ironrdp-web/src/lib.rs
+index 664e42e6..7c1a3192 100644
+--- a/crates/ironrdp-web/src/lib.rs
++++ b/crates/ironrdp-web/src/lib.rs
+@@ -22,6 +22,9 @@ mod image;
+ mod input;
+ mod network_client;
+ mod printer;
++mod presentation;
++#[cfg(feature = "render-benchmark")]
++mod render_benchmark;
+ mod rdp_file;
+ mod session;
+ 
+diff --git a/crates/ironrdp-web/src/presentation.rs b/crates/ironrdp-web/src/presentation.rs
+new file mode 100644
+index 00000000..7d9ebc3f
+--- /dev/null
++++ b/crates/ironrdp-web/src/presentation.rs
+@@ -0,0 +1,146 @@
++//! Bound presentation work without dropping any protocol updates.
++use core::pin::Pin;
++use core::task::{Context, Poll};
++use futures_channel::oneshot;
++use ironrdp::pdu::geometry::{InclusiveRectangle, Rectangle as _};
++use wasm_bindgen::{JsCast as _, closure::Closure};
++
++const MAX_REGIONS: usize = 32;
++#[derive(Default)]
++pub(crate) struct Damage {
++    regions: Vec<InclusiveRectangle>,
++}
++fn area(r: &InclusiveRectangle) -> u64 {
++    u64::from(r.width()) * u64::from(r.height())
++}
++impl Damage {
++    pub(crate) fn add(&mut self, mut region: InclusiveRectangle) {
++        // Merge only when the bounding rectangle costs at most 25% extra pixels.
++        // Repeat after each merge: a bridge may join two previously separate regions.
++        let mut i = 0;
++        while i < self.regions.len() {
++            let other = &self.regions[i];
++            let union = region.union(other);
++            if area(&union) * 4 <= (area(&region) + area(other)) * 5 {
++                region = union;
++                self.regions.swap_remove(i);
++                i = 0;
++            } else {
++                i += 1;
++            }
++        }
++        self.regions.push(region);
++        if self.regions.len() > MAX_REGIONS {
++            let mut merged = self.regions[0].clone();
++            for r in &self.regions[1..] {
++                merged = merged.union(r);
++            }
++            self.regions.clear();
++            self.regions.push(merged);
++        }
++    }
++    pub(crate) fn is_empty(&self) -> bool {
++        self.regions.is_empty()
++    }
++    pub(crate) fn take(&mut self) -> Vec<InclusiveRectangle> {
++        core::mem::take(&mut self.regions)
++    }
++    pub(crate) fn clear(&mut self) {
++        self.regions.clear();
++    }
++}
++
++// Own and cancel the RAF callback on resize/disconnect. A paused/hidden tab can
++// keep accumulating bounded damage; protocol processing is never held for RAF.
++pub(crate) struct AnimationFrame {
++    receiver: oneshot::Receiver<()>,
++    window: web_sys::Window,
++    id: i32,
++    _callback: Closure<dyn FnMut(f64)>,
++}
++impl AnimationFrame {
++    pub(crate) fn new() -> anyhow::Result<Self> {
++        let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("window unavailable"))?;
++        let (sender, receiver) = oneshot::channel();
++        let mut sender = Some(sender);
++        let callback = Closure::wrap(Box::new(move |_time: f64| {
++            if let Some(sender) = sender.take() {
++                let _ = sender.send(());
++            }
++        }) as Box<dyn FnMut(f64)>);
++        let id = window
++            .request_animation_frame(callback.as_ref().unchecked_ref())
++            .map_err(|e| anyhow::anyhow!("requestAnimationFrame: {e:?}"))?;
++        Ok(Self {
++            receiver,
++            window,
++            id,
++            _callback: callback,
++        })
++    }
++}
++impl Future for AnimationFrame {
++    type Output = ();
++    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
++        Pin::new(&mut self.receiver).poll(cx).map(|_| ())
++    }
++}
++impl Drop for AnimationFrame {
++    fn drop(&mut self) {
++        let _ = self.window.cancel_animation_frame(self.id);
++    }
++}
++pub(crate) async fn wait_for_frame(frame: &mut Option<AnimationFrame>) {
++    if let Some(frame) = frame {
++        frame.await
++    } else {
++        core::future::pending::<()>().await
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn rect(x: u16, y: u16, w: u16, h: u16) -> InclusiveRectangle {
++        InclusiveRectangle {
++            left: x,
++            top: y,
++            right: x + w - 1,
++            bottom: y + h - 1,
++        }
++    }
++    #[test]
++    fn merges_overlaps_and_adjacent_tiles() {
++        let mut d = Damage::default();
++        d.add(rect(0, 0, 64, 64));
++        d.add(rect(64, 0, 64, 64));
++        d.add(rect(10, 10, 20, 20));
++        assert_eq!(d.take(), vec![rect(0, 0, 128, 64)]);
++        assert!(d.is_empty());
++    }
++    #[test]
++    fn preserves_separated_regions_without_full_screen_union() {
++        let mut d = Damage::default();
++        d.add(rect(0, 0, 5, 5));
++        d.add(rect(1900, 1000, 5, 5));
++        assert_eq!(d.take().len(), 2);
++    }
++    #[test]
++    fn bounds_damage_and_covers_every_input_pixel() {
++        let mut d = Damage::default();
++        let inputs: Vec<_> = (0..100).map(|n| rect((n % 10) * 100, (n / 10) * 100, 2, 2)).collect();
++        for r in &inputs {
++            d.add(r.clone());
++            assert!(d.regions.len() <= MAX_REGIONS)
++        }
++        for r in inputs {
++            assert!(
++                d.regions
++                    .iter()
++                    .any(|m| m.left <= r.left && m.top <= r.top && m.right >= r.right && m.bottom >= r.bottom)
++            )
++        }
++        d.clear();
++        assert!(d.is_empty());
++    }
++}
+diff --git a/crates/ironrdp-web/src/render_benchmark.rs b/crates/ironrdp-web/src/render_benchmark.rs
+new file mode 100644
+index 00000000..8e530699
+--- /dev/null
++++ b/crates/ironrdp-web/src/render_benchmark.rs
+@@ -0,0 +1,140 @@
++//! Synthetic framebuffer replay; compiled only for the browser benchmark.
++use crate::{canvas::Canvas, image::extract_region, presentation::Damage};
++use core::num::NonZeroU32;
++use ironrdp::pdu::geometry::{InclusiveRectangle, Rectangle as _};
++use ironrdp_core::WriteBuf;
++use wasm_bindgen::prelude::*;
++
++#[wasm_bindgen]
++pub struct RenderReplay {
++    canvas: Canvas,
++    pixels: Vec<u8>,
++    width: u16,
++    height: u16,
++    baseline: bool,
++    damage: Damage,
++    buffer: WriteBuf,
++    copied_bytes: u64,
++    calls: u32,
++    draw_ms: f64,
++}
++#[wasm_bindgen]
++impl RenderReplay {
++    #[wasm_bindgen(constructor)]
++    pub fn new(
++        canvas: web_sys::HtmlCanvasElement,
++        width: u16,
++        height: u16,
++        baseline: bool,
++    ) -> Result<RenderReplay, JsValue> {
++        let w = NonZeroU32::new(u32::from(width)).ok_or_else(|| JsValue::from_str("width"))?;
++        let h = NonZeroU32::new(u32::from(height)).ok_or_else(|| JsValue::from_str("height"))?;
++        Ok(Self {
++            canvas: Canvas::new(canvas, w, h).map_err(|e| JsValue::from_str(&e.to_string()))?,
++            pixels: vec![0; usize::from(width) * usize::from(height) * 4],
++            width,
++            height,
++            baseline,
++            damage: Damage::default(),
++            buffer: WriteBuf::new(),
++            copied_bytes: 0,
++            calls: 0,
++            draw_ms: 0.0,
++        })
++    }
++    pub fn update(&mut self, x: u16, y: u16, w: u16, h: u16, seed: u32) -> Result<(), JsValue> {
++        if w == 0
++            || h == 0
++            || u32::from(x) + u32::from(w) > u32::from(self.width)
++            || u32::from(y) + u32::from(h) > u32::from(self.height)
++        {
++            return Err(JsValue::from_str("bounds"));
++        }
++        for yy in y..y + h {
++            for xx in x..x + w {
++                let p = (usize::from(yy) * usize::from(self.width) + usize::from(xx)) * 4;
++                self.pixels[p] = (u32::from(xx) * 17 + seed) as u8;
++                self.pixels[p + 1] = (u32::from(yy) * 11 + seed) as u8;
++                self.pixels[p + 2] = seed as u8;
++                self.pixels[p + 3] = 255;
++            }
++        }
++        let mut r = InclusiveRectangle {
++            left: x,
++            top: y,
++            right: x + w - 1,
++            bottom: y + h - 1,
++        };
++        if self.baseline {
++            if r.height() > 64 || r.width() > 512 {
++                r.left = 0;
++                r.right = self.width - 1;
++            }
++            self.draw(r)?;
++        } else {
++            self.damage.add(r);
++        }
++        Ok(())
++    }
++    pub fn flush(&mut self) -> Result<(), JsValue> {
++        for r in self.damage.take() {
++            self.draw(r)?;
++        }
++        Ok(())
++    }
++    pub fn resize(&mut self, width: u16, height: u16) -> Result<(), JsValue> {
++        let w = NonZeroU32::new(u32::from(width)).ok_or_else(|| JsValue::from_str("width"))?;
++        let h = NonZeroU32::new(u32::from(height)).ok_or_else(|| JsValue::from_str("height"))?;
++        self.damage.clear();
++        self.width = width;
++        self.height = height;
++        self.pixels = vec![0; usize::from(width) * usize::from(height) * 4];
++        self.canvas.resize(w, h);
++        Ok(())
++    }
++    pub fn reset_stats(&mut self) {
++        self.copied_bytes = 0;
++        self.calls = 0;
++        self.draw_ms = 0.0;
++    }
++    pub fn draw_time_ms(&self) -> f64 {
++        self.draw_ms
++    }
++    pub fn copied_bytes(&self) -> f64 {
++        self.copied_bytes as f64
++    }
++    pub fn draw_calls(&self) -> u32 {
++        self.calls
++    }
++}
++impl RenderReplay {
++    fn draw(&mut self, r: InclusiveRectangle) -> Result<(), JsValue> {
++        let performance = web_sys::window()
++            .and_then(|w| w.performance())
++            .expect("browser performance");
++        let started = performance.now();
++        let r = extract_region(&self.pixels, self.width, 4, r, &mut self.buffer);
++        self.copied_bytes += self.buffer.filled().len() as u64;
++        self.calls += 1;
++        self.canvas
++            .draw(self.buffer.filled_mut(), r)
++            .map_err(|e| JsValue::from_str(&e.to_string()))?;
++        self.buffer.clear();
++        self.draw_ms += performance.now() - started;
++        Ok(())
++    }
++}
++
++#[wasm_bindgen]
++pub async fn check_frame_clock() -> Result<(), JsValue> {
++    use crate::presentation::{AnimationFrame, wait_for_frame};
++    // Cancel pending callbacks (resize/disconnect) and then wait for an idle
++    // frame. A missing cancel would invoke an already-dropped WASM closure.
++    for _ in 0..16 {
++        let frame = AnimationFrame::new().map_err(|e| JsValue::from_str(&e.to_string()))?;
++        drop(frame);
++    }
++    let mut frame = Some(AnimationFrame::new().map_err(|e| JsValue::from_str(&e.to_string()))?);
++    wait_for_frame(&mut frame).await;
++    Ok(())
++}
+diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
+index ac630290..11e982d9 100644
+--- a/crates/ironrdp-web/src/session.rs
++++ b/crates/ironrdp-web/src/session.rs
+@@ -6,6 +6,7 @@ use std::borrow::Cow;
+ use std::rc::Rc;
+ 
+ use crate::canvas::Canvas;
++use crate::presentation::{AnimationFrame, Damage, wait_for_frame};
+ use crate::clipboard;
+ use crate::clipboard::{ClipboardData, FileMetadata, WasmClipboard, WasmClipboardBackend, WasmClipboardBackendMessage};
+ use crate::error::IronError;
+@@ -96,11 +97,14 @@ struct SessionBuilderInner {
+     printer_driver_name: Option<String>,
+ 
+     use_display_control: bool,
++    autologon: bool,
+     enable_credssp: bool,
+     enable_standard_rdp_security: bool,
+     enable_server_pointer: bool,
+     legacy_graphics: bool,
+     outbound_message_size_limit: Option<usize>,
++    connection_type: Option<u32>,
++    performance_flags: Option<u32>,
+ }
+ 
+ impl Default for SessionBuilderInner {
+@@ -142,11 +146,14 @@ impl Default for SessionBuilderInner {
+             printer_driver_name: None,
+ 
+             use_display_control: false,
++            autologon: false,
+             enable_credssp: true,
+             enable_standard_rdp_security: false,
+             enable_server_pointer: true,
+             legacy_graphics: false,
+             outbound_message_size_limit: None,
++            connection_type: None,
++            performance_flags: None,
+         }
+     }
+ }
+@@ -291,12 +298,33 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+             |vmconnect: String| { self.0.borrow_mut().vmconnect = Some(vmconnect) };
+             |kdc_proxy_url: String| { self.0.borrow_mut().kdc_proxy_url = Some(kdc_proxy_url) };
+             |display_control: bool| { self.0.borrow_mut().use_display_control = display_control };
++            |autologon: bool| { self.0.borrow_mut().autologon = autologon };
+             |enable_credssp: bool| { self.0.borrow_mut().enable_credssp = enable_credssp };
+             |enable_standard_rdp_security: bool| {
+                 self.0.borrow_mut().enable_standard_rdp_security = enable_standard_rdp_security;
+             };
+             |enable_server_pointer: bool| { self.0.borrow_mut().enable_server_pointer = enable_server_pointer };
+             |legacy_graphics: bool| { self.0.borrow_mut().legacy_graphics = legacy_graphics };
++            |connection_type: f64| {
++                let value = if connection_type >= 1.0 && connection_type <= 7.0 {
++                    #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
++                    { Some(connection_type as u32) }
++                } else {
++                    warn!(connection_type, "Invalid connection_type; ignoring (valid range 1-7)");
++                    None
++                };
++                self.0.borrow_mut().connection_type = value;
++            };
++            |performance_flags: f64| {
++                let value = if performance_flags >= 0.0 && performance_flags <= f64::from(u32::MAX) {
++                    #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
++                    { Some(performance_flags as u32) }
++                } else {
++                    warn!(performance_flags, "Invalid performance_flags; ignoring");
++                    None
++                };
++                self.0.borrow_mut().performance_flags = value;
++            };
+             |outbound_message_size_limit: f64| {
+                 let limit = if outbound_message_size_limit >= 0.0 && outbound_message_size_limit <= f64::from(u32::MAX) {
+                     #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+@@ -405,6 +433,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+             printer_driver_name,
+             outbound_message_size_limit,
+             legacy_graphics,
++            autologon,
+             security,
+         );
+ 
+@@ -450,6 +479,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+             printer_driver_name = inner.printer_driver_name.clone();
+             outbound_message_size_limit = inner.outbound_message_size_limit;
+             legacy_graphics = inner.legacy_graphics;
++            autologon = inner.autologon;
+             security = SecurityConfig {
+                 enable_credssp: inner.enable_credssp,
+                 enable_standard_rdp_security: inner.enable_standard_rdp_security,
+@@ -473,12 +503,29 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+             client_name.clone(),
+             desktop_size,
+             legacy_graphics,
++            autologon,
+             security,
+         );
+ 
+         let enable_server_pointer = self.0.borrow().enable_server_pointer;
+         config.enable_server_pointer = enable_server_pointer;
+ 
++        // Optional network profile overrides (uniTerm low-bandwidth tiers):
++        // connection_type is honored by the server only together with the
++        // VALID_CONNECTION_TYPE early capability flag, which the connector
++        // already sets unconditionally.
++        {
++            let inner = self.0.borrow();
++            if let Some(connection_type) = inner.connection_type.and_then(connection_type_from_u32) {
++                config.connection_type = connection_type;
++            }
++            if let Some(performance_flags) = inner.performance_flags {
++                // Unknown bits are ignored rather than rejected, so callers can
++                // pass raw MS-RDPBCGR TS_PERF flag values.
++                config.performance_flags = PerformanceFlags::from_bits_truncate(performance_flags);
++            }
++        }
++
+         let (input_events_tx, input_events_rx) = mpsc::unbounded();
+ 
+         let clipboard = remote_clipboard_changed_callback.clone().map(|callback| {
+@@ -743,6 +790,9 @@ impl iron_remote_desktop::Session for Session {
+ 
+         // Reused across frames so per-region extraction doesn't allocate on every draw.
+         let mut draw_buffer = WriteBuf::new();
++        let mut damage = Damage::default();
++        let mut animation_frame = None;
++        let mut processing_slice_ms = 0.0;
+ 
+         // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
+         let activation_factory = connection_result.activation_factory;
+@@ -763,14 +813,27 @@ impl iron_remote_desktop::Session for Session {
+         let mut cleanup_interval = IntervalStream::new(5_000).fuse();
+ 
+         let disconnect_reason = 'outer: loop {
++            let processing_started;
+             let outputs = select! {
++                _ = wait_for_frame(&mut animation_frame).fuse() => {
++                    processing_started = js_sys::Date::now();
++                    animation_frame = None;
++                    for region in damage.take() {
++                        let region = extract_partial_image(&image, region, &mut draw_buffer);
++                        gui.draw(draw_buffer.filled_mut(), region).context("draw batched region")?;
++                        draw_buffer.clear();
++                    }
++                    Vec::new()
++                }
+                 frame = framed.read_pdu().fuse() => {
++                    processing_started = js_sys::Date::now();
+                     let (action, payload) = frame.context("read frame")?;
+                     trace!(?action, frame_length = payload.len(), "Frame received");
+ 
+                     active_stage.process(&mut image, action, &payload, framed.last_read_at())?
+                 }
+                 input_events = input_events.next() => {
++                    processing_started = js_sys::Date::now();
+                     let event = input_events.context("read next input events")?;
+ 
+                     match event {
+@@ -949,6 +1012,7 @@ impl iron_remote_desktop::Session for Session {
+                     }
+                 }
+                 _ = cleanup_interval.next() => {
++                    processing_started = js_sys::Date::now();
+                     // Drive clipboard lock timeout cleanup
+                     if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
+                         match cliprdr.drive_timeouts() {
+@@ -979,10 +1043,7 @@ impl iron_remote_desktop::Session for Session {
+                             .context("Send frame to writer task")?;
+                     }
+                     ActiveStageOutput::GraphicsUpdate(region) => {
+-                        let region = extract_partial_image(&image, region, &mut draw_buffer);
+-                        gui.draw(draw_buffer.filled_mut(), region)
+-                            .context("draw updated region")?;
+-                        draw_buffer.clear();
++                        damage.add(region);
+                     }
+                     ActiveStageOutput::PointerDefault => {
+                         self.set_cursor_style(CursorStyle::Default)?;
+@@ -1094,6 +1155,8 @@ impl iron_remote_desktop::Session for Session {
+                         // RemoteApp windows are not meaningful to the protocol-agnostic web component.
+                     }
+                     ActiveStageOutput::DeactivateAll => {
++                        damage.clear();
++                        animation_frame = None;
+                         // Execute the Deactivation-Reactivation Sequence:
+                         // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
+                         debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
+@@ -1179,6 +1242,16 @@ impl iron_remote_desktop::Session for Session {
+                     ActiveStageOutput::Terminate(reason) => break 'outer reason,
+                 }
+             }
++            if !damage.is_empty() && animation_frame.is_none() {
++                animation_frame = Some(AnimationFrame::new()?);
++            }
++            // Buffered PDUs may all be immediately ready. Yield to the browser
++            // periodically so RAF and input tasks can run even during a burst.
++            processing_slice_ms += js_sys::Date::now() - processing_started;
++            if processing_slice_ms >= 8.0 {
++                gloo_timers::future::sleep(Duration::ZERO).await;
++                processing_slice_ms = 0.0;
++            }
+         };
+ 
+         info!(%disconnect_reason, "RDP session terminated");
+@@ -1517,6 +1590,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+     Ok(file_list)
+ }
+ 
++/// Map a raw TS_CONNECTION_TYPE value (MS-RDPBCGR 2.2.1.11.1.1.1.1) to the
++/// GCC enum; unknown values fall back to `None` and keep the default.
++fn connection_type_from_u32(value: u32) -> Option<ironrdp::pdu::gcc::ConnectionType> {
++    match value {
++        0 => Some(ironrdp::pdu::gcc::ConnectionType::NotUsed),
++        1 => Some(ironrdp::pdu::gcc::ConnectionType::Modem),
++        2 => Some(ironrdp::pdu::gcc::ConnectionType::BroadbandLow),
++        3 => Some(ironrdp::pdu::gcc::ConnectionType::Satellite),
++        4 => Some(ironrdp::pdu::gcc::ConnectionType::BroadbandHigh),
++        5 => Some(ironrdp::pdu::gcc::ConnectionType::Wan),
++        6 => Some(ironrdp::pdu::gcc::ConnectionType::Lan),
++        7 => Some(ironrdp::pdu::gcc::ConnectionType::Autodetect),
++        _ => None,
++    }
++}
++
+ fn build_config(
+     username: String,
+     password: String,
+@@ -1524,6 +1613,7 @@ fn build_config(
+     client_name: String,
+     desktop_size: DesktopSize,
+     legacy_graphics: bool,
++    autologon: bool,
+     security: SecurityConfig,
+ ) -> connector::Config {
+     // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
+@@ -1575,7 +1665,7 @@ fn build_config(
+         platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
+         compression_type: None,
+         enable_server_pointer: true,
+-        autologon: false,
++        autologon,
+         enable_audio_playback: false,
+         enable_audio_capture: false,
+         request_data: None,
+@@ -2045,6 +2135,7 @@ mod tests {
+                 height: DEFAULT_HEIGHT,
+             },
+             false,
++            false,
+             security,
+         )
+     }

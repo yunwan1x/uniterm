@@ -1,0 +1,780 @@
+{
+  "environment": {
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36",
+    "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "devicePixelRatio": 1
+  },
+  "edges": {
+    "resizeAndEdgePixels": true
+  },
+  "results": [
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "narrow-overlap",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 2.6266667286554974,
+          "drawP95Ms": 3.4000000953674316,
+          "workMeanMs": 2.8916666587193807,
+          "workP95Ms": 3.5999999046325684,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 720,
+          "copiedBytes": 707788800
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.038333344459533694,
+          "drawP95Ms": 0.10000038146972656,
+          "workMeanMs": 0.24500001271565755,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.10000038146972656,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 1966080
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "tiles",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.18166664441426594,
+          "drawP95Ms": 0.39999961853027344,
+          "workMeanMs": 0.6949999968210856,
+          "workP95Ms": 1,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 1920,
+          "copiedBytes": 31457280
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.1633332888285319,
+          "drawP95Ms": 0.20000028610229492,
+          "workMeanMs": 0.656666628519694,
+          "workP95Ms": 0.9000000953674316,
+          "flushP95Ms": 0.2999997138977051,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 31457280
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "scattered",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.06166666348775228,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.15333333015441894,
+          "workP95Ms": 0.20000028610229492,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.06833330790201823,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.17166666984558104,
+          "workP95Ms": 0.2999997138977051,
+          "flushP95Ms": 0.20000028610229492,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "full-screen",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 3.0133333444595336,
+          "drawP95Ms": 3.5,
+          "workMeanMs": 6.24333336353302,
+          "workP95Ms": 7.299999713897705,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 60,
+          "copiedBytes": 497664000
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 2.790000001589457,
+          "drawP95Ms": 3.0999999046325684,
+          "workMeanMs": 6.003333298365275,
+          "workP95Ms": 6.5,
+          "flushP95Ms": 3.0999999046325684,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 497664000
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "narrow-overlap",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 5.053333346048991,
+          "drawP95Ms": 5.300000190734863,
+          "workMeanMs": 5.359999966621399,
+          "workP95Ms": 5.5,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 28.600000381469727,
+          "drawCalls": 720,
+          "copiedBytes": 1415577600
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.04333333174387614,
+          "drawP95Ms": 0.10000038146972656,
+          "workMeanMs": 0.27333333492279055,
+          "workP95Ms": 0.40000009536743164,
+          "flushP95Ms": 0.10000038146972656,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 1966080
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "tiles",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.1783333381017049,
+          "drawP95Ms": 0.40000009536743164,
+          "workMeanMs": 0.7733333110809326,
+          "workP95Ms": 1,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 23.59999990463257,
+          "drawCalls": 1920,
+          "copiedBytes": 31457280
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.17333335876464845,
+          "drawP95Ms": 0.2999997138977051,
+          "workMeanMs": 0.6699999968210856,
+          "workP95Ms": 1,
+          "flushP95Ms": 0.3000001907348633,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 31457280
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "scattered",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.0849999984105428,
+          "drawP95Ms": 0.20000028610229492,
+          "workMeanMs": 0.2,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 25,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.07499996821085612,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.19999999205271404,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.19999980926513672,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "full-screen",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 12.22333331902822,
+          "drawP95Ms": 12.800000190734863,
+          "workMeanMs": 25.269999996821085,
+          "workP95Ms": 28.5,
+          "flushP95Ms": 0.10000038146972656,
+          "frameIntervalP95Ms": 47.89999961853027,
+          "drawCalls": 60,
+          "copiedBytes": 1990656000
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 10.923333342870077,
+          "drawP95Ms": 11.199999809265137,
+          "workMeanMs": 23.70333333015442,
+          "workP95Ms": 25.40000009536743,
+          "flushP95Ms": 11.200000286102295,
+          "frameIntervalP95Ms": 40.59999990463257,
+          "drawCalls": 60,
+          "copiedBytes": 1990656000
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "narrow-overlap",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.039999993642171223,
+          "drawP95Ms": 0.10000038146972656,
+          "workMeanMs": 0.23833332856496176,
+          "workP95Ms": 0.40000009536743164,
+          "flushP95Ms": 0.10000038146972656,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 1966080
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 2.1950000286102296,
+          "drawP95Ms": 2.4000000953674316,
+          "workMeanMs": 2.431666644414266,
+          "workP95Ms": 2.6999998092651367,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 720,
+          "copiedBytes": 707788800
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "tiles",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.1700000286102295,
+          "drawP95Ms": 0.3000001907348633,
+          "workMeanMs": 0.650000007947286,
+          "workP95Ms": 1,
+          "flushP95Ms": 0.3000001907348633,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 31457280
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.17666670481363933,
+          "drawP95Ms": 0.39999961853027344,
+          "workMeanMs": 0.8266666809717814,
+          "workP95Ms": 1.1999998092651367,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 1920,
+          "copiedBytes": 31457280
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "scattered",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.05666666030883789,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.15666664441426595,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.19999980926513672,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.07666664918263753,
+          "drawP95Ms": 0.20000028610229492,
+          "workMeanMs": 0.20000000794728598,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "full-screen",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 2.993333331743876,
+          "drawP95Ms": 3.5999999046325684,
+          "workMeanMs": 6.1899999936421715,
+          "workP95Ms": 7.5,
+          "flushP95Ms": 3.5999999046325684,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 497664000
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 2.786666679382324,
+          "drawP95Ms": 3.0999999046325684,
+          "workMeanMs": 6.151666688919067,
+          "workP95Ms": 8.5,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 16.700000286102295,
+          "drawCalls": 60,
+          "copiedBytes": 497664000
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "narrow-overlap",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.03499998251597087,
+          "drawP95Ms": 0.10000038146972656,
+          "workMeanMs": 0.23333330949147543,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.10000038146972656,
+          "frameIntervalP95Ms": 22.700000286102295,
+          "drawCalls": 60,
+          "copiedBytes": 1966080
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 4.608333277702331,
+          "drawP95Ms": 5.899999141693115,
+          "workMeanMs": 4.919999965031942,
+          "workP95Ms": 6.299999713897705,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 25.899999618530273,
+          "drawCalls": 720,
+          "copiedBytes": 1415577600
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "tiles",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.17333339055379232,
+          "drawP95Ms": 0.3000001907348633,
+          "workMeanMs": 0.5466667175292969,
+          "workP95Ms": 0.7000002861022949,
+          "flushP95Ms": 0.3000001907348633,
+          "frameIntervalP95Ms": 26,
+          "drawCalls": 60,
+          "copiedBytes": 31457280
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.20333337783813477,
+          "drawP95Ms": 0.40000009536743164,
+          "workMeanMs": 0.8700000047683716,
+          "workP95Ms": 1,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 19.800000190734863,
+          "drawCalls": 1920,
+          "copiedBytes": 31457280
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "scattered",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.0883332888285319,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.20999996662139891,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.20000028610229492,
+          "frameIntervalP95Ms": 22.200000286102295,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.07666666507720947,
+          "drawP95Ms": 0.20000028610229492,
+          "workMeanMs": 0.21833336353302002,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 42.40000009536743,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "full-screen",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "batched",
+          "drawMeanMs": 12.044999925295512,
+          "drawP95Ms": 13,
+          "workMeanMs": 25.01666664282481,
+          "workP95Ms": 30.90000009536743,
+          "flushP95Ms": 13,
+          "frameIntervalP95Ms": 48.80000019073486,
+          "drawCalls": 60,
+          "copiedBytes": 1990656000
+        },
+        {
+          "mode": "baseline",
+          "drawMeanMs": 10.888333328564961,
+          "drawP95Ms": 11.199999809265137,
+          "workMeanMs": 23.511666663487752,
+          "workP95Ms": 24.59999990463257,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 31.700000286102295,
+          "drawCalls": 60,
+          "copiedBytes": 1990656000
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "narrow-overlap",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 2.58833331267039,
+          "drawP95Ms": 3.5,
+          "workMeanMs": 2.831666652361552,
+          "workP95Ms": 3.8000001907348633,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 720,
+          "copiedBytes": 707788800
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.05000000794728597,
+          "drawP95Ms": 0.10000038146972656,
+          "workMeanMs": 0.26833334763844807,
+          "workP95Ms": 0.40000009536743164,
+          "flushP95Ms": 0.10000038146972656,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 60,
+          "copiedBytes": 1966080
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "tiles",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.2,
+          "drawP95Ms": 0.5,
+          "workMeanMs": 0.7399999856948852,
+          "workP95Ms": 0.9000000953674316,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 1920,
+          "copiedBytes": 31457280
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.1900000015894572,
+          "drawP95Ms": 0.3000001907348633,
+          "workMeanMs": 0.8616666555404663,
+          "workP95Ms": 1,
+          "flushP95Ms": 0.3000001907348633,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 31457280
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "scattered",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.0849999984105428,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.17333331902821858,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.07499998410542806,
+          "drawP95Ms": 0.19999980926513672,
+          "workMeanMs": 0.1883333126703898,
+          "workP95Ms": 0.2999997138977051,
+          "flushP95Ms": 0.20000028610229492,
+          "frameIntervalP95Ms": 16.799999713897705,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "kind": "full-screen",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 2.964999969800313,
+          "drawP95Ms": 3.200000286102295,
+          "workMeanMs": 6.039999953905741,
+          "workP95Ms": 6.300000190734863,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 497664000
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 2.7449999968210856,
+          "drawP95Ms": 2.9000000953674316,
+          "workMeanMs": 6.013333336512248,
+          "workP95Ms": 7.299999713897705,
+          "flushP95Ms": 3,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 497664000
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "narrow-overlap",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 5.2100000540415445,
+          "drawP95Ms": 5.800000190734863,
+          "workMeanMs": 5.541666658719381,
+          "workP95Ms": 6,
+          "flushP95Ms": 0.09999990463256836,
+          "frameIntervalP95Ms": 28.300000190734863,
+          "drawCalls": 720,
+          "copiedBytes": 1415577600
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.03666663964589437,
+          "drawP95Ms": 0.09999990463256836,
+          "workMeanMs": 0.2516666650772095,
+          "workP95Ms": 0.40000009536743164,
+          "flushP95Ms": 0.19999980926513672,
+          "frameIntervalP95Ms": 24.5,
+          "drawCalls": 60,
+          "copiedBytes": 1966080
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "tiles",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.21166663964589436,
+          "drawP95Ms": 0.40000009536743164,
+          "workMeanMs": 0.8166667222976685,
+          "workP95Ms": 1.0999999046325684,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 24,
+          "drawCalls": 1920,
+          "copiedBytes": 31457280
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.18000001112620037,
+          "drawP95Ms": 0.3000001907348633,
+          "workMeanMs": 0.6266666809717815,
+          "workP95Ms": 0.9000000953674316,
+          "flushP95Ms": 0.3000001907348633,
+          "frameIntervalP95Ms": 20.800000190734863,
+          "drawCalls": 60,
+          "copiedBytes": 31457280
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "scattered",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 0.09000000953674317,
+          "drawP95Ms": 0.20000028610229492,
+          "workMeanMs": 0.20166667302449545,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 22.700000286102295,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 0.09333334763844808,
+          "drawP95Ms": 0.20000028610229492,
+          "workMeanMs": 0.18999998569488524,
+          "workP95Ms": 0.3000001907348633,
+          "flushP95Ms": 0.20000028610229492,
+          "frameIntervalP95Ms": 16.800000190734863,
+          "drawCalls": 960,
+          "copiedBytes": 2211840
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "kind": "full-screen",
+      "frames": 60,
+      "identicalPixels": true,
+      "metrics": [
+        {
+          "mode": "baseline",
+          "drawMeanMs": 12.548333311080933,
+          "drawP95Ms": 13.900000095367432,
+          "workMeanMs": 25.806666612625122,
+          "workP95Ms": 28.699999809265137,
+          "flushP95Ms": 0,
+          "frameIntervalP95Ms": 53.19999980926514,
+          "drawCalls": 60,
+          "copiedBytes": 1990656000
+        },
+        {
+          "mode": "batched",
+          "drawMeanMs": 10.96666673819224,
+          "drawP95Ms": 11.799999713897705,
+          "workMeanMs": 23.77333339055379,
+          "workP95Ms": 26.09999990463257,
+          "flushP95Ms": 11.799999713897705,
+          "frameIntervalP95Ms": 35.90000009536743,
+          "drawCalls": 60,
+          "copiedBytes": 1990656000
+        }
+      ],
+      "repetition": 2
+    }
+  ]
+}
