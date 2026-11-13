@@ -47,6 +47,7 @@
               :config="getPanelConfig(activeTab.panelId)"
               :session-id="getPanelSessionId(activeTab.panelId)"
             />
+            <AndroidTabContent v-else-if="activeTab.type === 'android'" :key="activeTab.id" :panel-id="activeTab.panelId" :config="getPanelConfig(activeTab.panelId)" :session-id="getPanelSessionId(activeTab.panelId)" />
             <VNCTabContent
               v-else-if="activeTab.type === 'vnc'"
               :key="activeTab.id"
@@ -196,6 +197,7 @@ import LocalServices from './components/localsrv/LocalServices.vue'
 import WorkspaceContent from './components/WorkspaceContent.vue'
 import FileTabContent from './components/FileTabContent.vue'
 import RDPTabContent from './components/RDPTabContent.vue'
+import AndroidTabContent from './components/AndroidTabContent.vue'
 import VNCTabContent from './components/VNCTabContent.vue'
 import SPICETabContent from './components/SPICETabContent.vue'
 import X11DesktopTabContent from './components/X11DesktopTabContent.vue'
@@ -1326,7 +1328,7 @@ async function closeTab(tabId: string, opts: { skipConfirm?: boolean } = {}) {
       }
     }
   }
-  if (tab && tab.type === 'rdp') {
+  if (tab && (tab.type === 'rdp' || tab.type === 'android')) {
     const p = panelStore.getPanel(tab.panelId)
     if (p?.sessionId) {
       try { await CloseSession(p.sessionId) } catch (_) {}

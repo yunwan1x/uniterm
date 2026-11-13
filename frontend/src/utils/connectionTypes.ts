@@ -68,6 +68,7 @@ export const CONNECTION_TYPES: ConnectionTypeInfo[] = [
   { type: 'container-file', label: 'Container Files', icon: FileBox, category: 'filetransfer', formHidden: true },
   // Remote desktop
   { type: 'rdp', label: 'RDP', icon: Monitor, category: 'remote', defaultPort: 3389, connectMenuKey: 'sidebar.connectRDP' },
+  { type: 'android', label: 'Android', icon: MonitorSmartphone, category: 'remote', defaultPort: 5555, connectMenuKey: 'android.connect' },
   { type: 'vnc', label: 'VNC', icon: MonitorSmartphone, category: 'remote', defaultPort: 5900, connectMenuKey: 'sidebar.connectVNC' },
   { type: 'spice', label: 'SPICE', icon: MonitorCloud, category: 'remote', defaultPort: 5900, connectMenuKey: 'sidebar.connectSPICE' },
   { type: 'x11-desktop', label: 'X11 Desktop', icon: AppWindow, category: 'remote', defaultPort: 22, connectMenuKey: 'sidebar.connectX11Desktop' },

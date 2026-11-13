@@ -36,6 +36,9 @@ func (sm *SessionManager) Create(sessionType string, config ConnectionConfig) (S
 	case "rdp":
 		s = NewRDPSession(config.ID)
 
+	case "android":
+		s = NewAndroidSession(config.ID)
+
 	case "vnc":
 		s = NewVNCSession(config.ID)
 

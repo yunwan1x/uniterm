@@ -1,4 +1,4 @@
-export type PanelType = 'ssh' | 'telnet' | 'mosh' | 'sftp' | 'settings' | 'rdp' | 'vnc' | 'spice' | 'local' | 'wsl' | 'database' | 'monitor' | 'serial' | 'tcp' | 'k8s' | 'container' | 'container-exec' | 'x11-desktop' | 'netscan' | 'other'
+export type PanelType = 'ssh' | 'telnet' | 'mosh' | 'sftp' | 'settings' | 'rdp' | 'android' | 'vnc' | 'spice' | 'local' | 'wsl' | 'database' | 'monitor' | 'serial' | 'tcp' | 'k8s' | 'container' | 'container-exec' | 'x11-desktop' | 'netscan' | 'other'
 export type PanelStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 import type { ConnectionConfig } from './session'
@@ -35,7 +35,7 @@ export type LayoutNode =
 
 // ── Tab types ──
 
-export type Tab = TerminalTab | SettingsTab | WorkspaceTab | SFTPTab | RDPTab | VNCTab | SPICETab | DBTab | MonitorTab | StartTab | K8sTab | ContainerTab | X11DesktopTab | NetscanTab
+export type Tab = TerminalTab | SettingsTab | WorkspaceTab | SFTPTab | RDPTab | AndroidTab | VNCTab | SPICETab | DBTab | MonitorTab | StartTab | K8sTab | ContainerTab | X11DesktopTab | NetscanTab
 
 export interface TerminalTab {
   type: 'terminal'
@@ -139,3 +139,5 @@ export interface NetscanTab {
   name: string
   locked?: boolean
 }
+
+export interface AndroidTab { type: 'android'; id: string; name: string; panelId: string; locked?: boolean }

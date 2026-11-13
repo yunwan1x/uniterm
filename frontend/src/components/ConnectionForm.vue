@@ -104,10 +104,16 @@
                 </el-button>
               </div>
             </el-form-item>
-            <el-form-item v-if="(form.authType !== 'identity' || isSSHAlgoType) && form.type !== 'vnc' && form.type !== 'spice' && !(form.type === 'database' && form.dbType === 'rqlite') && !isSqliteDb && form.type !== 'local' && form.type !== 'wsl' && form.type !== 'serial' && form.type !== 'tcp' && form.type !== 'k8s' && form.type !== 'container' && !isEsApiKey" :label="form.authType === 'identity' ? t('conn.identityUserOverride') : (form.type === 's3' ? 'Access Key' : t('conn.user'))">
+            <template v-if="form.type === 'android'">
+              <p>{{t('android.pairHint')}}</p>
+              <el-form-item :label="t('android.pairPort')"><el-input-number v-model="pairPort" :min="1" :max="65535" /></el-form-item>
+              <el-form-item :label="t('android.pairCode')"><el-input v-model="pairCode" maxlength="6" type="password" show-password /></el-form-item>
+              <el-button :loading="pairBusy" @click="pairAndroid">{{t('android.pair')}}</el-button><p role="status">{{pairStatus}}</p>
+            </template>
+            <el-form-item v-if="(form.authType !== 'identity' || isSSHAlgoType) && form.type !== 'vnc' && form.type !== 'spice' && !(form.type === 'database' && form.dbType === 'rqlite') && !isSqliteDb && form.type !== 'android' && form.type !== 'local' && form.type !== 'wsl' && form.type !== 'serial' && form.type !== 'tcp' && form.type !== 'k8s' && form.type !== 'container' && !isEsApiKey" :label="form.authType === 'identity' ? t('conn.identityUserOverride') : (form.type === 's3' ? 'Access Key' : t('conn.user'))">
               <el-input v-model="form.user" :placeholder="form.authType === 'identity' ? t('conn.identityUserOverrideHint') : (form.type === 's3' ? 'Access Key ID' : t('conn.userPlaceholder'))" />
             </el-form-item>
-            <el-form-item v-if="form.type !== 'local' && form.type !== 'wsl' && form.type !== 'serial' && form.type !== 'tcp' && form.type !== 'k8s' && form.type !== 'container' && form.authType !== 'identity' && ((form.authType === 'password') || form.type === 'vnc' || form.type === 'spice' || form.type === 'database' || form.type === 'telnet' || form.type === 'ftp' || form.type === 'smb' || form.type === 'webdav' || form.type === 's3' || form.type === 'elasticsearch') && !(form.type === 'database' && form.dbType === 'rqlite') && !isSqliteDb" :label="form.type === 's3' ? 'Secret Key' : (isEsApiKey ? t('conn.esApiKey') : t('conn.password'))">
+            <el-form-item v-if="form.type !== 'android' && form.type !== 'local' && form.type !== 'wsl' && form.type !== 'serial' && form.type !== 'tcp' && form.type !== 'k8s' && form.type !== 'container' && form.authType !== 'identity' && ((form.authType === 'password') || form.type === 'vnc' || form.type === 'spice' || form.type === 'database' || form.type === 'telnet' || form.type === 'ftp' || form.type === 'smb' || form.type === 'webdav' || form.type === 's3' || form.type === 'elasticsearch') && !(form.type === 'database' && form.dbType === 'rqlite') && !isSqliteDb" :label="form.type === 's3' ? 'Secret Key' : (isEsApiKey ? t('conn.esApiKey') : t('conn.password'))">
               <el-input v-model="form.password" type="password" show-password :key="passwordInputKey" :placeholder="form.type === 's3' ? 'Secret Access Key' : (isEsApiKey ? t('conn.esApiKeyPlaceholder') : '')" />
             </el-form-item>
             <el-form-item v-if="form.authType === 'kerberos' && !isMobilePlatform()" :label="t('conn.kerberos')">
@@ -936,6 +942,9 @@ const passwordInputKey = ref(0)
 const postLoginMode = ref<'script' | 'expect'>('script')
 const showAdvanced = ref(false)
 
+const pairPort=ref(0),pairCode=ref(''),pairBusy=ref(false),pairStatus=ref('')
+async function pairAndroid(){pairBusy.value=true;pairStatus.value='';try{const {AndroidPair}=await import('../../bindings/github.com/ys-ll/uniterm/app');await AndroidPair(form.host,pairPort.value,pairCode.value);pairStatus.value=t('android.paired')}catch(e){pairStatus.value=String(e)}finally{pairCode.value='';pairBusy.value=false}}
+
 // Connection types that support the "test connection" button (issue #377).
 // local/serial/mosh/vnc/rdp/spice/x11-desktop don't have a non-interactive probe.
 const TESTABLE_TYPES = ['ssh', 'telnet', 'ftp', 'sftp', 'scp', 's3', 'webdav', 'smb', 'database', 'mongodb', 'redis', 'elasticsearch', 'k8s', 'container', 'tcp']
@@ -1007,6 +1016,7 @@ let handled = false
 // no group) for a frame. Reopening the dialog cancels the pending reset.
 let pendingReset = false
 watch(visible, (v) => {
+  pairCode.value='';pairStatus.value=''
   if (v) {
     handled = false
     pendingReset = false
@@ -1458,7 +1468,7 @@ watch(() => form.type, (newType) => {
     // ES shares the common `authType` field; default to 'password' unless an API key was already chosen.
     form.authType = form.authType === 'apikey' ? 'apikey' : 'password'
   }
-  if (['rdp', 'vnc', 'spice', 'x11-desktop'].includes(newType) || newType === 'database') {
+  if (['android', 'rdp', 'vnc', 'spice', 'x11-desktop'].includes(newType) || newType === 'database') {
     form.authType = 'password'
   }
   // The shell ("terminal type") is specific to local/wsl; always reset to the

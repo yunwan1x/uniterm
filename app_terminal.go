@@ -182,6 +182,9 @@ func (a *App) CreateSession(sessionType string, config session.ConnectionConfig)
 		}
 		if status == session.StatusConnected {
 			// Attach proxyAddr for VNC and SPICE sessions
+			if android, ok := s.(*session.AndroidSession); ok {
+				payload["proxyAddr"] = android.ProxyAddr()
+			}
 			if vnc, ok := s.(*session.VNCSession); ok {
 				payload["proxyAddr"] = vnc.ProxyAddr()
 			}
@@ -233,7 +236,7 @@ func (a *App) CreateSession(sessionType string, config session.ConnectionConfig)
 		// Without this gap Claude Code draws tables at the 80x24 default
 		// before SessionResize propagates the real width, and the borders
 		// drift across output batches.
-	} else if sessionType == "vnc" || sessionType == "spice" || sessionType == "rdp" {
+	} else if sessionType == "android" || sessionType == "vnc" || sessionType == "spice" || sessionType == "rdp" {
 		// RDP, VNC and SPICE start a local WebSocket↔TCP proxy synchronously
 		// so the proxyAddr is available when CreateSession returns.
 		// Avoids a race between the goroutine's session:status emit and
@@ -266,6 +269,9 @@ func (a *App) CreateSession(sessionType string, config session.ConnectionConfig)
 	// client without racing the session:status event (whose 'connected'
 	// emission happens inside s.Connect, before the frontend sets the
 	// session id / stores the proxy addr — see SESSION regression).
+	if android, ok := s.(*session.AndroidSession); ok {
+		info.ProxyAddr = android.ProxyAddr()
+	}
 	if vnc, ok := s.(*session.VNCSession); ok {
 		info.ProxyAddr = vnc.ProxyAddr()
 	}
@@ -356,7 +362,9 @@ func (a *App) setupJumpHostTunnel(sessionID string, sessionType string, config *
 
 	// VNC/SPICE use libvirt display numbers (port < 100 → 5900+N).
 	targetPort := config.Port
-	if sessionType == "vnc" || sessionType == "spice" {
+	if sessionType == "android" && targetPort <= 0 {
+		targetPort = 5555
+	} else if sessionType == "vnc" || sessionType == "spice" {
 		if targetPort <= 0 {
 			targetPort = 5900
 		} else if targetPort < 100 {

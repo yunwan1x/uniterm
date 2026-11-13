@@ -60,6 +60,7 @@ FROM alpine:3.21
 ARG EXTRA_PACKAGES=""
 RUN for i in 1 2 3; do apk add --no-cache \
     ca-certificates \
+    android-tools \
     tzdata \
     wget \
     $EXTRA_PACKAGES \

@@ -148,7 +148,7 @@ async function closeTab(id: string) {
   }
 
   // Close the RDP proxy session.
-  if (tab && tab.type === 'rdp') {
+  if (tab && (tab.type === 'rdp' || tab.type === 'android')) {
     const rdpPanel = panelStore.getPanel(tab.panelId)
     if (rdpPanel?.sessionId) {
       try { await CloseSession(rdpPanel.sessionId) } catch (_) {}
