@@ -17,9 +17,10 @@ type PiPWindowAPI = {
 
 // Move the existing view, never create a second decoder or Android session.
 export function useFloatingWindow(
-  root: Ref<HTMLElement | undefined>,
+  root: Ref<HTMLElement | null | undefined>,
   onRestore?: () => void,
   getVideoSize?: () => { width: number; height: number },
+  title = 'Android · uniTerm',
 ) {
   const kind = ref<'inline' | 'page' | 'native' | 'window'>('inline')
   const target = shallowRef<HTMLElement | null>(null)
@@ -77,7 +78,7 @@ export function useFloatingWindow(
       themeObserver.observe(document.documentElement, { attributes: true })
       themeObserver.observe(document.body, { attributes: true })
     }
-    destination.title = 'Android · uniTerm'
+    destination.title = title
   }
   function syncTheme(destination: Document) {
     const tokens = getComputedStyle(document.documentElement)
@@ -92,7 +93,7 @@ export function useFloatingWindow(
       ';height:100%;background:var(--bg-base);color:var(--text-primary);'
     destination.body.style.cssText =
       'margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg-base);color:var(--text-primary);'
-    destination.title = 'Android · uniTerm'
+    destination.title = title
   }
   function returned() {
     const wasFloating = floating.value
@@ -173,7 +174,7 @@ export function useFloatingWindow(
   }
   function focus() {
     if (pip) pip.focus()
-    else root.value?.querySelector<HTMLElement>('.android-screen')?.focus()
+    else (root.value?.querySelector<HTMLElement>('.android-screen') ?? root.value)?.focus()
   }
   function drag(e: PointerEvent, resize: boolean | 'right' | 'bottom' = false) {
     if (kind.value !== 'page' || e.button !== 0) return

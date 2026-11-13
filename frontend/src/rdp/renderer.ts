@@ -9,8 +9,12 @@ export class DesktopRenderer {
   private pending: ImageBitmap | null = null
   private raf = 0
   private stopped = false
+  private owner: Window
+  private doc: Document
   readonly mode: 'webgl2' | 'canvas2d'
   constructor(private canvas: HTMLCanvasElement, private ack: () => void, private failure: () => void, preference: 'auto' | 'canvas2d' | 'webgl2' = 'auto') {
+    this.doc = canvas.ownerDocument
+    this.owner = this.doc.defaultView ?? window
     // Probe a separate canvas: a failed GL attempt must not lock the real canvas out of 2D.
     const probe = document.createElement('canvas').getContext('webgl2')
     const debug = probe?.getExtension('WEBGL_debug_renderer_info')
@@ -23,10 +27,10 @@ export class DesktopRenderer {
     else this.ctx = canvas.getContext('2d', { alpha: false })
     if (!this.gl && !this.ctx) throw new Error('RDP canvas context unavailable')
     canvas.addEventListener('webglcontextlost', this.contextLost)
-    document.addEventListener('visibilitychange', this.visibility)
+    this.doc.addEventListener('visibilitychange', this.visibility)
   }
   private contextLost = (e: Event) => { e.preventDefault(); if (!this.stopped) this.failure() }
-  private visibility = () => { if (document.hidden) this.flush(); else this.schedule() }
+  private visibility = () => { if (this.doc.hidden) this.flush(); else this.schedule() }
   private initGL() {
     const gl = this.gl!
     const compile = (type: number, source: string) => {
@@ -53,11 +57,18 @@ export class DesktopRenderer {
   }
   frame(bitmap: ImageBitmap) {
     if (this.stopped) { bitmap.close(); return }
+    if (this.doc !== this.canvas.ownerDocument) {
+      this.owner.cancelAnimationFrame(this.raf); this.raf = 0
+      this.doc.removeEventListener('visibilitychange', this.visibility)
+      this.doc = this.canvas.ownerDocument
+      this.owner = this.doc.defaultView ?? window
+      this.doc.addEventListener('visibilitychange', this.visibility)
+    }
     this.pending?.close(); this.pending = bitmap
-    if (document.hidden) this.flush()
+    if (this.doc.hidden) this.flush()
     else this.schedule()
   }
-  private schedule() { if (this.pending && !this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.flush() }) }
+  private schedule() { if (this.pending && !this.raf) this.raf = this.owner.requestAnimationFrame(() => { this.raf = 0; this.flush() }) }
   private flush() {
     const bitmap = this.pending; if (!bitmap) return
     this.pending = null
@@ -76,9 +87,9 @@ export class DesktopRenderer {
     } finally { bitmap.close(); this.ack() }
   }
   dispose() {
-    this.stopped = true; cancelAnimationFrame(this.raf); this.pending?.close(); this.pending = null
+    this.stopped = true; this.owner.cancelAnimationFrame(this.raf); this.pending?.close(); this.pending = null
     this.canvas.removeEventListener('webglcontextlost', this.contextLost)
-    document.removeEventListener('visibilitychange', this.visibility)
+    this.doc.removeEventListener('visibilitychange', this.visibility)
     if (this.gl) { this.gl.deleteTexture(this.texture); this.gl.deleteProgram(this.program) }
   }
 }

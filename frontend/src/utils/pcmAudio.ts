@@ -33,6 +33,7 @@ export class PcmAudioPlayer {
   private nextTime = 0
   private volume = [1, 1]
   private disposed = false
+  private enabled = true
 
   constructor(private readonly onBlocked: (blocked: boolean) => void,
     private readonly createContext = () => new AudioContext({ latencyHint: 'interactive' })) {}
@@ -52,7 +53,7 @@ export class PcmAudioPlayer {
     })
     merger.connect(ctx.destination)
     ctx.onstatechange = () => {
-      if (this.disposed) return
+      if (this.disposed || !this.enabled) return
       if (ctx.state !== 'running') this.clear()
       this.onBlocked(ctx.state !== 'running')
     }
@@ -61,17 +62,18 @@ export class PcmAudioPlayer {
 
   /** Must also be called synchronously from a trusted pointer/key gesture. */
   unlock() {
+    if (!this.enabled || this.disposed) return
     try {
       const ctx = this.ensureContext()
       if (!ctx || ctx.state === 'running') { if (ctx) this.onBlocked(false); return }
-      void ctx.resume().then(() => { if (!this.disposed) this.onBlocked(ctx.state !== 'running') }).catch(() => {
-        if (!this.disposed) this.onBlocked(true)
+      void ctx.resume().then(() => { if (!this.disposed && this.enabled) this.onBlocked(ctx.state !== 'running') }).catch(() => {
+        if (!this.disposed && this.enabled) this.onBlocked(true)
       })
     } catch { /* No Web Audio implementation; never break the RDP connection. */ }
   }
 
   pcm(data: Uint8Array, sampleRate: number, channels: number, bits: number) {
-    if (this.disposed || !Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 48000) return
+    if (this.disposed || !this.enabled || !Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 48000) return
     if (!data.byteLength || data.byteLength > sampleRate * channels * (bits / 8)) return
     const ctx = this.ensureContext()
     if (!ctx) return
@@ -171,8 +173,18 @@ export class PcmAudioPlayer {
   }
 
   getStats() {
-    return { ...this.counters, ...this.format, queuedMs: Math.max(0, this.nextTime - (this.context?.currentTime ?? 0)) * 1000,
+    return { ...this.counters, ...this.format, enabled: this.enabled, queuedMs: Math.max(0, this.nextTime - (this.context?.currentTime ?? 0)) * 1000,
       targetMs: this.target * 1000, jitterMs: this.jitter * 1000, sources: this.sources.size, state: this.disposed ? 'closed' : this.context?.state ?? 'uninitialized' }
+  }
+
+  /** Local playback switch; remote volume remains independent. */
+  setEnabled(enabled: boolean) {
+    if (this.enabled === enabled || this.disposed) return
+    this.enabled = enabled
+    if (!enabled) {
+      this.clear()
+      this.onBlocked(false)
+    }
   }
 
   setVolume(left: number, right: number) {

@@ -1,7 +1,17 @@
 <template>
+  <div class="rdp-window-host">
+    <div v-if="floating" class="rdp-window-placeholder">
+      <p>{{ t('rdp.floatingActive') }}</p>
+      <button @click="restoreWindow">{{ t('android.restore') }}</button>
+      <button @click="focusWindow">{{ t('android.focusFloating') }}</button>
+    </div>
+    <p v-if="windowNotice" class="rdp-window-notice" role="status">{{ windowNotice }}</p>
+    <Teleport :to="windowTarget || 'body'" :disabled="!floating">
   <div
     ref="container"
     class="rdp-tab-content"
+    :class="{ 'rdp-window-page': windowKind === 'page' }"
+    :style="windowStyle"
     tabindex="0"
     :data-remote-keyboard="(keyboardFocused && status === 'connected') || mobileKbOpen ? 'true' : undefined"
     @pointerdown.capture="unlockAudio"
@@ -12,6 +22,10 @@
     @focusout="onFocusOut"
     @focusin="onFocusIn"
   >
+    <template v-if="windowKind === 'page'">
+      <div class="rdp-window-drag" @pointerdown="dragWindow($event)" />
+      <div class="rdp-window-resize" @pointerdown="dragWindow($event, true)" />
+    </template>
     <!-- Connecting state -->
     <div v-if="status === 'connecting'" class="rdp-overlay">
       <el-icon class="is-loading" :size="'2rem'"><Loader /></el-icon>
@@ -48,21 +62,21 @@
         v-show="status === 'connected'"
         ref="canvasEl"
         class="rdp-area"
-        :class="{ 'is-adaptive': isAdaptive(), 'is-unscaled': !scaleCanvas }"
+        :class="{ 'is-adaptive': isAdaptive() && !floating, 'is-unscaled': !scaleCanvas }"
         :style="canvasStyle"
       />
     </div>
 
-    <button v-if="audioBlocked && status === 'connected'" class="rdp-audio-enable" @click="unlockAudio">{{ t('rdp.enableAudio') }}</button>
+    <button v-if="audioEnabled && audioBlocked && status === 'connected'" class="rdp-audio-enable" @click="unlockAudio">{{ t('rdp.enableAudio') }}</button>
 
-    <RdpFloatingKeyboard v-if="floatingKeyboardOpen" :disabled="status !== 'connected'" @send="sendQuickKeys" @release="onFocusOut" @close="floatingKeyboardOpen = false" />
+    <RdpFloatingKeyboard v-if="floatingKeyboardOpen && !floating" :disabled="status !== 'connected'" @send="sendQuickKeys" @release="onFocusOut" @close="floatingKeyboardOpen = false" />
 
-    <RdpFilesPanel v-if="browserFilesEnabled" v-show="filesOpen" :ready="status === 'connected' && fileChannelReady" :connected="status === 'connected'" :tasks="browserFileTasks" :remote="remoteFileOffers" :error="browserFilesError"
+    <RdpFilesPanel v-if="browserFilesEnabled" v-show="filesOpen && !floating" :ready="status === 'connected' && fileChannelReady" :connected="status === 'connected'" :tasks="browserFileTasks" :remote="remoteFileOffers" :error="browserFilesError"
       @close="filesOpen = false" @release="onFocusOut" @select="selectBrowserFiles" @download="downloadBrowserFiles" @cancel="id => browserFiles.cancel(id)" @retry="retryBrowserFile" @clear="browserFiles.clearFinished()" />
 
     <!-- Status bar -->
     <div
-      v-show="!isFullscreen"
+      v-show="!isFullscreen && !floating"
       class="rdp-statusbar"
       :class="{ 'rdp-statusbar-hidden': status !== 'connected' }"
       :aria-hidden="status !== 'connected'"
@@ -97,12 +111,17 @@
       <RdpKeysMenu :disabled="status !== 'connected'" :open="floatingKeyboardOpen" @toggle="toggleFloatingKeyboard" />
       <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
       <RdpFilesButton v-if="browserFilesEnabled" :open="filesOpen" :disabled="status !== 'connected'" :count="browserFileCount" @toggle="filesOpen = !filesOpen" />
+      <button class="rdp-audio-toggle" role="switch" :aria-checked="audioEnabled" :aria-label="t('rdp.audioPlayback')" :title="t(audioEnabled ? 'rdp.disableAudio' : 'rdp.enableAudio')" :disabled="status !== 'connected'" @click="toggleAudio">
+        <component :is="audioEnabled ? Volume2 : VolumeX" :size="16" />
+      </button>
       <span class="rdp-status-spacer" />
+      <button class="rdp-window-btn" :disabled="openingWindow || status !== 'connected'" :title="t('android.floating')" :aria-label="t('android.floating')" @click="openFloatingWindow"><PictureInPicture2 :size="16" /></button>
+      <button class="rdp-window-btn" :disabled="status !== 'connected'" :title="t('android.detachedWindow')" :aria-label="t('android.detachedWindow')" @click="openDetachedWindow"><ExternalLink :size="16" /></button>
       <button class="rdp-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
     </div>
 
     <RemoteDesktopToolbar
-      v-if="isFullscreen"
+      v-if="isFullscreen && !floating"
       v-model:zoom="zoom"
       :allow-fit="activeResolution !== 'adaptive'"
       selects
@@ -129,6 +148,9 @@
       </template>
       <!-- Keep the toolbar order identical to the status bar: resolution, zoom, quality. -->
       <template #after-zoom>
+        <button class="rdp-audio-toggle" role="switch" :aria-checked="audioEnabled" :aria-label="t('rdp.audioPlayback')" :title="t(audioEnabled ? 'rdp.disableAudio' : 'rdp.enableAudio')" :disabled="status !== 'connected'" @click="toggleAudio">
+          <component :is="audioEnabled ? Volume2 : VolumeX" :size="16" />
+        </button>
         <RdpKeysMenu :disabled="status !== 'connected'" :open="floatingKeyboardOpen" @toggle="toggleFloatingKeyboard" />
         <RdpDevicesMenu :microphone="microphoneEnabled" :camera="cameraEnabled" :busy="captureBusy" :disabled="status !== 'connected'" :error="captureError" @toggle="toggleCapture" />
         <RdpFilesButton v-if="browserFilesEnabled" :open="filesOpen" :disabled="status !== 'connected'" :count="browserFileCount" @toggle="filesOpen = !filesOpen" />
@@ -153,6 +175,7 @@
     <!-- Android/iOS: soft keyboard trigger + touch gestures (tap = left
          click, long-press = right click). -->
     <RemoteMobileControls
+      v-if="!floating"
       v-model:open="mobileKbOpen"
       :active="status === 'connected'"
       :target="viewportEl"
@@ -167,11 +190,14 @@
       @special="onMobileSpecial"
     />
   </div>
+    </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
-import { Loader } from '@lucide/vue'
+import { useFloatingWindow } from '../android/useFloatingWindow'
+import { Loader, PictureInPicture2, ExternalLink, Volume2, VolumeX } from '@lucide/vue'
 import { RdpAudioPlayer } from '../utils/rdpAudio'
 import RemoteDesktopToolbar from './RemoteDesktopToolbar.vue'
 import RemoteMobileControls from './RemoteMobileControls.vue'
@@ -257,7 +283,19 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 const displayPixelRatio = ref(window.devicePixelRatio || 1)
 const framebufferSize = ref<RdpDesktopSize | null>(null)
 const viewportSize = ref<RdpDesktopSize>({ width: 0, height: 0 })
+const { kind: windowKind, target: windowTarget, opening: openingWindow, notice: windowNotice,
+  floating, style: windowStyle, open: openWindowPiP, openWindow: openPopup,
+  restore: restoreWindow, focus: focusWindow, drag: dragWindow } = useFloatingWindow(
+  container, () => nextTick(focusDesktop),
+  () => framebufferSize.value ?? { width: 1280, height: 720 }, 'RDP · uniTerm',
+)
+function prepareWindow() { onFocusOut(); floatingKeyboardOpen.value = false; filesOpen.value = false }
+function openFloatingWindow() { prepareWindow(); void openWindowPiP() }
+function openDetachedWindow() { prepareWindow(); openPopup(t('android.popupBlocked')) }
+function ownerDocument() { return container.value?.ownerDocument ?? document }
+function ownerWindow() { return ownerDocument().defaultView ?? window }
 const scaleCanvas = computed(() => {
+  if (floating.value) return true
   if (zoom.value === 'stretch') return true
   if (zoom.value !== 'adaptive') return false
   if (!isAdaptive() || !framebufferSize.value) return true
@@ -266,6 +304,7 @@ const scaleCanvas = computed(() => {
 })
 const canvasStyle = computed<import('vue').CSSProperties | undefined>(() => {
   const fb = framebufferSize.value
+  if (floating.value) return { width: '100%', height: '100%', objectFit: 'contain' }
   if (!fb) return undefined
   if (zoom.value === 'stretch') {
     // Ignore the aspect ratio: fill the pane edge to edge.
@@ -279,6 +318,7 @@ const canvasStyle = computed<import('vue').CSSProperties | undefined>(() => {
   }
 })
 
+const audioEnabled = ref(true)
 const audioBlocked = ref(false)
 const microphoneEnabled = ref(false), cameraEnabled = ref(false), captureBusy = ref(false), captureError = ref('')
 const capture = new RdpCapture(() => {
@@ -301,7 +341,13 @@ async function toggleCapture(kind: CaptureKind) {
   } finally { captureBusy.value = false }
 }
 let audioPlayer: RdpAudioPlayer | null = null
-function unlockAudio() { audioPlayer?.unlock() }
+function unlockAudio() { if (audioEnabled.value) audioPlayer?.unlock() }
+function toggleAudio() {
+  audioEnabled.value = !audioEnabled.value
+  audioPlayer?.setEnabled(audioEnabled.value)
+  audioBlocked.value = false
+  if (audioEnabled.value) audioPlayer?.unlock()
+}
 
 const CONNECT_TIMEOUT = 30_000
 
@@ -530,6 +576,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     if (domain) builder.serverDomain(domain)
     audioPlayer?.dispose()
     const player = new RdpAudioPlayer(blocked => { if (generation === clientGeneration) audioBlocked.value = blocked })
+    player.setEnabled(audioEnabled.value)
     audioPlayer = player
     let nextAudioStats = 0
     builder.extension(new mod.Extension('audio_callback', (kind: string, data: Uint8Array | number, rate?: number, channels?: number, bits?: number) => {
@@ -538,7 +585,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
         if (kind === 'pcm' && data instanceof Uint8Array) player.pcm(data, rate!, channels!, bits!)
         else if (kind === 'volume' && typeof data === 'number') player.setVolume(data, rate!)
         else if (kind === 'close') player.end()
-        // Diagnostic metadata only; no additional volume/mute controls.
+        // Playback diagnostics, including the local sound switch.
         if (canvasEl.value && (performance.now() >= nextAudioStats || kind === 'close')) {
           canvasEl.value.dataset.rdpAudioStats = JSON.stringify(player.getStats())
           nextAudioStats = performance.now() + 1000
@@ -944,7 +991,7 @@ function queueKey(scancode: number, down: boolean, repeat: boolean, ctrl: boolea
 }
 
 function ownsRemoteKeyboard(): boolean {
-  return status.value === 'connected' && document.hasFocus() && document.activeElement === container.value
+  return status.value === 'connected' && ownerDocument().hasFocus() && ownerDocument().activeElement === container.value
 }
 
 function onFocusIn() {
@@ -986,7 +1033,7 @@ function onNativeKey(data: NativeRdpKey) {
 }
 
 function onVisibilityChange() {
-  if (document.hidden) onFocusOut()
+  if (ownerDocument().hidden) onFocusOut()
   else onFocusIn()
 }
 
@@ -1015,7 +1062,7 @@ function canvasCoordsAt(clientX: number, clientY: number, clampOutside = false):
   const canvas = canvasEl.value
   const size = currentDesktopSize()
   if (!canvas || !session || status.value !== 'connected' || !size) return null
-  return rdpPointerPosition(clientX, clientY, canvas.getBoundingClientRect(), size, isAdaptive() || !scaleCanvas.value, clampOutside)
+  return rdpPointerPosition(clientX, clientY, canvas.getBoundingClientRect(), size, (!floating.value && isAdaptive()) || !scaleCanvas.value, clampOutside)
 }
 
 function canvasCoords(e: MouseEvent, clampOutside = false): { x: number; y: number } | null {
@@ -1065,7 +1112,7 @@ function onMouseDown(e: MouseEvent) {
 function onWindowMouseUp(e: MouseEvent) { sendMouseButton(e, false) }
 
 function onWindowMouseMove(e: MouseEvent) {
-  if (pressedMouseButtons.size && e.target instanceof Node && !viewportEl.value?.contains(e.target)) onMouseMove(e)
+  if (pressedMouseButtons.size && e.target != null && !viewportEl.value?.contains(e.target as Node)) onMouseMove(e)
 }
 
 function onMouseMove(e: MouseEvent) {
@@ -1200,7 +1247,7 @@ function focusDesktop() {
 }
 
 function onFullscreenChange() {
-  isFullscreen.value = document.fullscreenElement === container.value
+  isFullscreen.value = ownerDocument().fullscreenElement === container.value
   nextTick(onContainerResize)
 }
 
@@ -1212,8 +1259,8 @@ async function toggleFullscreen() {
   const el = container.value
   if (!el) return
   try {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen()
+    if (ownerDocument().fullscreenElement) {
+      await ownerDocument().exitFullscreen()
     } else {
       await el.requestFullscreen()
     }
@@ -1262,7 +1309,7 @@ function startClipboardPoll() {
   if (clipPollTimer !== null) clearInterval(clipPollTimer)
   clipPollTimer = setInterval(() => {
     // Hidden tabs must not replace the clipboard of another remote session.
-    if (!document.hasFocus() || !container.value?.contains(document.activeElement)) return
+    if (!ownerDocument().hasFocus() || !container.value?.contains(ownerDocument().activeElement)) return
     syncLocalClipboardNow().catch(error => rdpLog(`local clipboard sync failed: ${describeError(error)}`))
   }, 1000)
 }
@@ -1365,9 +1412,9 @@ function scheduleScaleSync(scale: number) {
 }
 
 function onPixelRatioChange() {
-  displayPixelRatio.value = window.devicePixelRatio || 1
+  displayPixelRatio.value = ownerWindow().devicePixelRatio || 1
   pixelRatioQuery?.removeEventListener('change', onPixelRatioChange)
-  pixelRatioQuery = window.matchMedia(`(resolution: ${displayPixelRatio.value}dppx)`)
+  pixelRatioQuery = ownerWindow().matchMedia(`(resolution: ${displayPixelRatio.value}dppx)`)
   pixelRatioQuery.addEventListener('change', onPixelRatioChange)
   onContainerResize()
 }
@@ -1409,7 +1456,7 @@ async function reconnectWithSize(width: number, height: number) {
 
 function requestAdaptiveResize() {
   if (!session || status.value !== 'connected' || reconnecting) return
-  if (!isAdaptive()) return
+  if (!isAdaptive() || floating.value) return
   // The soft keyboard squeezes the viewport via the IME inset padding; do not
   // resize (or reconnect) the remote desktop for that transient size. The
   // ResizeObserver fires again with the restored size once it closes.
@@ -1499,6 +1546,35 @@ let unsubStatus: (() => void) | null = null
 let unsubKeyboard: (() => void) | null = null
 let stopProxyWatch: (() => void) | null = null
 
+let unbindOwnerEvents = () => {}
+function bindOwnerEvents() {
+  unbindOwnerEvents()
+  const win = ownerWindow(), doc = ownerDocument()
+  win.addEventListener('mouseup', onWindowMouseUp)
+  win.addEventListener('mousemove', onWindowMouseMove)
+  win.addEventListener('blur', onFocusOut)
+  win.addEventListener('focus', onFocusIn)
+  doc.addEventListener('visibilitychange', onVisibilityChange)
+  doc.addEventListener('fullscreenchange', onFullscreenChange)
+  unbindOwnerEvents = () => {
+    win.removeEventListener('mouseup', onWindowMouseUp)
+    win.removeEventListener('mousemove', onWindowMouseMove)
+    win.removeEventListener('blur', onFocusOut)
+    win.removeEventListener('focus', onFocusIn)
+    doc.removeEventListener('visibilitychange', onVisibilityChange)
+    doc.removeEventListener('fullscreenchange', onFullscreenChange)
+  }
+}
+watch(windowKind, async () => {
+  onFocusOut()
+  clearResizeProbe()
+  clearScaleSync()
+  await nextTick()
+  bindOwnerEvents()
+  onPixelRatioChange()
+  focusDesktop()
+})
+
 onMounted(() => {
   onPixelRatioChange()
   canvasObserver = new MutationObserver(() => {
@@ -1562,12 +1638,7 @@ onMounted(() => {
 
   window.addEventListener('panel:reconnect', onReconnectEvent)
   window.addEventListener('rdp:fullscreen', onFullscreenEvent)
-  window.addEventListener('mouseup', onWindowMouseUp)
-  window.addEventListener('mousemove', onWindowMouseMove)
-  window.addEventListener('blur', onFocusOut)
-  window.addEventListener('focus', onFocusIn)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-  document.addEventListener('fullscreenchange', onFullscreenChange)
+  bindOwnerEvents()
 
   resizeObserver = new ResizeObserver(onContainerResize)
   resizeObserver.observe(viewportEl.value!)
@@ -1586,12 +1657,7 @@ onBeforeUnmount(() => {
   if (resizeDebounce !== null) clearTimeout(resizeDebounce)
   window.removeEventListener('panel:reconnect', onReconnectEvent)
   window.removeEventListener('rdp:fullscreen', onFullscreenEvent)
-  window.removeEventListener('mouseup', onWindowMouseUp)
-  window.removeEventListener('mousemove', onWindowMouseMove)
-  window.removeEventListener('blur', onFocusOut)
-  window.removeEventListener('focus', onFocusIn)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  unbindOwnerEvents()
   clearConnectTimer()
   teardownClient()
   // CloseSession is handled by TabBar/App on tab close; unmount only tears
@@ -1601,7 +1667,7 @@ onBeforeUnmount(() => {
 onDeactivated(onFocusOut)
 onActivated(() => {
   nextTick(() => {
-    if (status.value === 'connected' && document.hasFocus()) container.value?.focus()
+    if (status.value === 'connected' && ownerDocument().hasFocus()) container.value?.focus()
     onContainerResize()
   })
 })
@@ -1639,6 +1705,21 @@ watch(activeResolution, (mode) => {
 </script>
 
 <style scoped>
+.rdp-window-host { width: 100%; height: 100%; position: relative; }
+.rdp-window-placeholder { height: 100%; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; color: var(--text-primary); }
+.rdp-window-placeholder button { padding: 8px 16px; border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border-default); cursor: pointer; }
+.rdp-window-notice { position: absolute; bottom: 32px; left: 12px; z-index: 20; color: var(--error); }
+.rdp-window-btn { display: flex; padding: 3px; background: transparent; color: var(--text-muted); border: 0; cursor: pointer; }
+.rdp-window-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.rdp-window-page { position: fixed !important; z-index: 2500; box-shadow: 0 8px 32px #0005; }
+.rdp-window-drag { position: absolute; top: 0; left: 0; right: 0; height: 8px; z-index: 30; cursor: move; }
+.rdp-window-resize { position: absolute; bottom: 0; right: 0; width: 12px; height: 12px; z-index: 30; cursor: nwse-resize; }
+
+.rdp-audio-toggle { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+.rdp-audio-toggle[aria-checked="true"] { color: var(--el-color-primary); }
+.rdp-audio-toggle:hover { background: var(--bg-hover); }
+.rdp-audio-toggle:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+.rdp-audio-toggle:disabled { opacity: .5; cursor: not-allowed; }
 .rdp-audio-enable {
   position: absolute; top: 12px; right: 12px; z-index: 5;
   padding: 8px 12px; border: 1px solid var(--el-border-color);
