@@ -11,7 +11,7 @@ const emit = defineEmits<{ toggle: [] }>()
 const { t } = useI18n()
 </script>
 <style scoped>
-.rdp-keys-trigger { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--el-border-color); border-radius: 5px; cursor: pointer; padding: 3px 7px; font: inherit; white-space: nowrap; }
-.rdp-keys-trigger.active { color: var(--el-color-primary); border-color: var(--el-color-primary); }
+.rdp-keys-trigger { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 5px; cursor: pointer; padding: 3px 7px; font: inherit; white-space: nowrap; }
+.rdp-keys-trigger.active { color: var(--accent); border-color: var(--accent); }
 .rdp-keys-trigger:disabled { opacity: .5; cursor: default; }
 </style>

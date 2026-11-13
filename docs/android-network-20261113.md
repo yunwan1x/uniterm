@@ -1,5 +1,7 @@
 # uniTerm Android 网络连接实现与验收
 
+> 后续变更：Android 后端已迁移为内嵌 Go ADB 库，移除外部 adb 与 android-tools。以下为初版验收记录；当前实现与复测方式见 tools/android/README.md。
+
 日期：2026-11-13。基于现有会话管理、认证网关和 session-proxy 接入 Android，使用网络 ADB + scrcpy 3.3.4；不包含 USB 连接。
 
 ## 已实现

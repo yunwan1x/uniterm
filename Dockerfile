@@ -7,13 +7,14 @@
 # =============================================================================
 
 # Stage 1: Go source + generate the frontend bindings
-FROM --platform=$BUILDPLATFORM golang:1.26.2-alpine AS bindings-generator
+FROM --platform=$BUILDPLATFORM golang:1.26.3-alpine AS bindings-generator
 # proxy.golang.org is unreachable from some networks; goproxy.cn serves the same modules.
 ARG GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 RUN for i in 1 2 3; do apk add --no-cache git ca-certificates && break; [ "$i" = 3 ] && exit 1; sleep 5; done
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY third_party/adb-go ./third_party/adb-go
 RUN for i in 1 2 3; do go mod download && break; [ "$i" = 3 ] && exit 1; sleep 5; done
 COPY . .
 # Keep in sync with the wails version in go.mod
@@ -60,7 +61,6 @@ FROM alpine:3.21
 ARG EXTRA_PACKAGES=""
 RUN for i in 1 2 3; do apk add --no-cache \
     ca-certificates \
-    android-tools \
     tzdata \
     wget \
     $EXTRA_PACKAGES \
@@ -68,6 +68,8 @@ RUN for i in 1 2 3; do apk add --no-cache \
     && mkdir -p /data/gateway /data/users
 
 WORKDIR /app
+COPY third_party/adb-go/LICENSE /app/licenses/adb-go-LICENSE
+COPY third_party/adb-go/UNITERM.md /app/licenses/adb-go-NOTICE.md
 COPY --from=backend-builder /out/uniterm-server /app/uniterm-server
 COPY --from=backend-builder /out/uniterm-gateway /app/uniterm-gateway
 COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist

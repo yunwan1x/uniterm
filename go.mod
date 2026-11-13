@@ -1,6 +1,6 @@
 module github.com/ys-ll/uniterm
 
-go 1.26.2
+go 1.26.3
 
 // Some RDP servers (e.g. Windows Server 2008) present self-signed
 // certificates with a negative serial number; restore the pre-Go 1.23
@@ -21,6 +21,7 @@ require (
 	github.com/jcmturner/gofork v1.7.6
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/jlaffaye/ftp v0.2.1
+	github.com/juanlianyangyang/adb-go v1.0.6
 	github.com/kevinburke/ssh_config v1.4.0
 	github.com/lib/pq v1.12.3
 	github.com/mattn/go-ieproxy v0.0.12
@@ -57,6 +58,7 @@ require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.3.0 // indirect
+	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff // indirect
@@ -84,6 +86,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/grandcat/zeroconf v1.0.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
@@ -96,6 +99,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
+	github.com/miekg/dns v1.1.27 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
@@ -130,3 +134,5 @@ replace github.com/rhnvrm/simples3 => github.com/ys-ll/simples3 v0.0.0-202609300
 replace golang.org/x/crypto => github.com/ys-ll/crypto v0.57.1-0.20260922023551-18e0be45963e
 
 replace github.com/wailsapp/wails/v3 => github.com/ys-ll/wails/v3 v3.0.0-20261112023043-1143f7a41423
+
+replace github.com/juanlianyangyang/adb-go => ./third_party/adb-go

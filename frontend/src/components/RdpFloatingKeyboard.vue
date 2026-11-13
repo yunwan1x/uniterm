@@ -1,5 +1,6 @@
 <template>
-  <div ref="bounds" class="floating-keyboard-bounds">
+  <Teleport :to="overlayTarget">
+  <div v-show="active" ref="bounds" class="floating-keyboard-bounds">
     <section ref="panel" class="floating-keyboard" :class="{ expanded, dragging }" :style="{ left: `${position.x}px`, top: `${position.y}px` }"
       :aria-label="t('rdp.floatingKeyboard')" :aria-disabled="disabled" @pointerdown.stop="emit('release')" @mousedown.stop @wheel.stop @contextmenu.prevent @keydown.stop="onLocalKey" @keyup.stop @focusin.stop @focusout.stop>
       <header class="keyboard-header" @pointerdown="startHeaderDrag" @pointermove="moveDrag" @pointerup="stopDrag" @pointercancel="stopDrag" @lostpointercapture="stopDrag">
@@ -36,9 +37,10 @@
       </div>
     </section>
   </div>
+  </Teleport>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, shallowRef, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick, watch } from 'vue'
 import { Keyboard, GripVertical, ChevronUp, ChevronDown, X, Lock } from '@lucide/vue'
 import { useI18n } from '../i18n'
 import { MODIFIERS, KEYBOARD_ROWS, FLOATING_SHORTCUTS, toggleModifier, consumeKey, clampKeyboard, type Modifier, type ModifierState } from '../utils/floatingKeyboard'
@@ -46,6 +48,15 @@ const props = defineProps<{ disabled?: boolean }>()
 const emit = defineEmits<{ send: [codes: string[]]; release: []; close: [] }>()
 const { t } = useI18n()
 const bounds = ref<HTMLElement>(), panel = ref<HTMLElement>()
+const overlayTarget = shallowRef<Element>(document.body)
+const active = ref(true)
+// The browser only displays descendants of the fullscreen element in fullscreen.
+function syncOverlayTarget() {
+  stopDrag()
+  overlayTarget.value = document.fullscreenElement || document.body
+  nextTick(place)
+}
+function onViewportResize() { stopDrag(); nextTick(place) }
 const expanded = ref(false), dragging = ref(false), modifiers = ref<ModifierState>({})
 const position = ref({ x: 0, y: 0 })
 const compactKeys = [{ label: 'Esc', code: 'Escape' }, { label: 'Tab', code: 'Tab' }, { label: 'Ctrl', code: 'ControlLeft' }, { label: 'Alt', code: 'AltLeft' }, { label: 'Shift', code: 'ShiftLeft' }, { label: 'Win', code: 'MetaLeft' }]
@@ -115,31 +126,34 @@ onMounted(() => {
   observer = new ResizeObserver(() => { if (!bounds.value?.clientWidth) onBlur(); else if (!dragging.value) place() })
   if (bounds.value) observer.observe(bounds.value)
   if (panel.value) observer.observe(panel.value)
+  syncOverlayTarget(); window.addEventListener('resize', onViewportResize); document.addEventListener('fullscreenchange', syncOverlayTarget)
   place(); window.addEventListener('blur', onBlur); document.addEventListener('visibilitychange', visibility)
 })
-onBeforeUnmount(() => { observer?.disconnect(); stopDrag(); reset(); window.removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', visibility) })
+onActivated(() => { active.value = true; syncOverlayTarget() })
+onDeactivated(() => { active.value = false; onBlur() })
+onBeforeUnmount(() => { window.removeEventListener('resize', onViewportResize); document.removeEventListener('fullscreenchange', syncOverlayTarget); observer?.disconnect(); stopDrag(); reset(); window.removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', visibility) })
 </script>
 <style scoped>
-.floating-keyboard-bounds { position: absolute; inset: 0 0 38px; pointer-events: none; z-index: 25; overflow: hidden; }
-.floating-keyboard { position: absolute; pointer-events: auto; width: max-content; max-width: calc(100% - 16px); box-sizing: border-box; color: var(--text-primary, #e7eaf0); background: var(--bg-secondary, #23262c); border: 1px solid var(--el-border-color, #484d58); border-radius: 14px; box-shadow: 0 12px 40px #0005, 0 2px 8px #0003; user-select: none; }
+.floating-keyboard-bounds { position: fixed; inset: 0; pointer-events: none; z-index: 1000; overflow: hidden; }
+.floating-keyboard { position: absolute; pointer-events: auto; display: flex; flex-direction: column; max-height: calc(100% - 16px); overflow: hidden; width: max-content; max-width: calc(100% - 16px); box-sizing: border-box; color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 14px; box-shadow: var(--shadow-lg); user-select: none; }
 .floating-keyboard.expanded { width: 880px; }
-.keyboard-header { touch-action: none; display: flex; align-items: center; gap: 7px; padding: 8px; min-width: 0; }
+.keyboard-header { flex-shrink: 0; touch-action: none; display: flex; align-items: center; gap: 7px; padding: 8px; min-width: 0; }
 .keyboard-title { flex: 1; font-size: 13px; font-weight: 600; }
 .keyboard-icon { flex-shrink: 0; color: var(--text-secondary); }
 .keyboard-drag, .keyboard-action { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 30px; border: 0; border-radius: 6px; color: var(--text-secondary); background: transparent; cursor: pointer; }
 .keyboard-drag { cursor: grab; touch-action: none; }
 .dragging .keyboard-drag { cursor: grabbing; }
-.keyboard-action:hover, .keyboard-drag:hover { background: var(--el-fill-color); color: var(--text-primary); }
+.keyboard-action:hover, .keyboard-drag:hover { background: var(--bg-surface); color: var(--text-primary); }
 .compact-keys { display: flex; align-items: center; gap: 5px; overflow-x: auto; min-width: 0; scrollbar-width: thin; }
-.keycap { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 32px; height: 32px; padding: 0 9px; color: inherit; background: var(--el-fill-color, #343941); border: 1px solid var(--el-border-color, #484d58); border-radius: 7px; line-height: 1.2; font-family: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; box-shadow: 0 1px 1px #0002; touch-action: manipulation; }
-.keycap:hover:not(:disabled) { border-color: var(--el-color-primary, #4c9ffe); }
+.keycap { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 32px; height: 32px; padding: 0 9px; color: inherit; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 7px; line-height: 1.2; font-family: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; box-shadow: var(--shadow-sm); touch-action: manipulation; }
+.keycap:hover:not(:disabled) { border-color: var(--accent); }
 .keycap:active:not(:disabled) { transform: translateY(1px); }
-.keycap.selected { color: var(--el-color-primary, #4c9ffe); background: var(--el-color-primary-light-9, #20354c); border-color: var(--el-color-primary, #4c9ffe); }
-.keycap.locked { background: var(--el-color-primary, #4c9ffe); color: white; }
+.keycap.selected { color: var(--accent); background: var(--accent-subtle); border-color: var(--accent); }
+.keycap.locked { background: var(--accent); color: var(--on-accent); }
 .keycap:disabled { opacity: .4; cursor: default; }
-button:focus-visible { outline: 2px solid var(--el-color-primary, #4c9ffe); outline-offset: 2px; }
-.keyboard-divider { height: 20px; border-left: 1px solid var(--el-border-color); margin: 0 4px; }
-.keyboard-body { padding: 0 12px 10px; max-height: min(380px, 65vh); overflow: auto; scrollbar-width: thin; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.keyboard-divider { height: 20px; border-left: 1px solid var(--border-subtle); margin: 0 4px; }
+.keyboard-body { min-height: 0; padding: 0 12px 10px; max-height: min(380px, 65vh); overflow: auto; scrollbar-width: thin; }
 .keyboard-shortcuts { display: flex; gap: 6px; padding: 4px 0 12px; overflow-x: auto; }
 .shortcut { flex-shrink: 0; }
 .keyboard-layout { min-width: 650px; }

@@ -2,14 +2,14 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"runtime"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +44,8 @@ func TestAndroidRedroidLive(t *testing.T) {
 	if os.Getenv("UNITERM_ANDROID_LIVE") == "" {
 		t.Skip("explicit local redroid fixture required")
 	}
-	defer CloseAndroidADB()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // Entire test must work without an adb executable.
 	s := NewAndroidSession("android-live")
 	if e := s.Connect(ConnectionConfig{Host: "127.0.0.1", Port: 15555}); e != nil {
 		t.Fatal(e)
@@ -121,38 +122,111 @@ func TestAndroidUnicodePaste(t *testing.T) {
 	}
 }
 
-func TestAndroidPairingCodeIsTransient(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX fake adb")
+func TestAndroidPairingValidation(t *testing.T) {
+	if e := PairAndroid("127.0.0.1", 37123, "invalid"); e == nil {
+		t.Fatal("accepted bad code")
 	}
-	CloseAndroidADB()
-	defer CloseAndroidADB()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "adb")
-	record := filepath.Join(dir, "pair-input")
-	script := `#!/bin/sh
-case "$3" in
- start-server|kill-server) exit 0;;
- pair) printf '%s\n' "$@" > "$PAIR_RECORD"; read code; printf '%s' "$code" >> "$PAIR_RECORD"; echo 'Successfully paired';;
-esac
-`
-	if e := os.WriteFile(bin, []byte(script), 0700); e != nil {
+	if e := PairAndroid("", 37123, "123456"); e == nil {
+		t.Fatal("accepted invalid host")
+	}
+}
+
+func TestAndroidRedroidMediaAndIsolation(t *testing.T) {
+	if os.Getenv("UNITERM_ANDROID_LIVE") == "" {
+		t.Skip("explicit local redroid fixture required")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	first := NewAndroidSession("first")
+	if e := first.Connect(ConnectionConfig{Host: "127.0.0.1", Port: 15555}); e != nil {
 		t.Fatal(e)
 	}
-	t.Setenv("UNITERM_ADB_BIN", bin)
-	t.Setenv("PAIR_RECORD", record)
-	if e := PairAndroid("127.0.0.1", 37123, "123456"); e != nil {
+	defer first.Disconnect()
+	second := NewAndroidSession("second")
+	if e := second.Connect(ConnectionConfig{Host: "127.0.0.1", Port: 15555}); e != nil {
 		t.Fatal(e)
 	}
-	b, e := os.ReadFile(record)
+	defer second.Disconnect()
+	if first.socket == second.socket {
+		t.Fatal("sessions share socket")
+	}
+	first.Disconnect()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	out, e := second.exec(ctx, "printf independent")
+	if e != nil || string(out) != "independent" {
+		t.Fatal("closing one session broke the other", e, string(out))
+	}
+	// Existing fixture clip is required only by this optional media test.
+	out, e = second.exec(ctx, "test -f /sdcard/Download/uniterm-bbb-clip.mp4 && printf exists")
+	if e != nil || string(out) != "exists" {
+		t.Fatal("fixture movie missing", e)
+	}
+	second.exec(ctx, "am force-stop com.android.gallery3d")
+	second.exec(ctx, "am start -a android.intent.action.VIEW -d file:///sdcard/Download/uniterm-bbb-clip.mp4 -t video/mp4")
+	ws, _, e := websocket.DefaultDialer.Dial(second.ProxyAddr(), nil)
 	if e != nil {
 		t.Fatal(e)
 	}
-	lines := strings.Split(string(b), "\n")
-	if len(lines) != 5 || lines[2] != "pair" || lines[3] != "127.0.0.1:37123" || lines[4] != "123456" {
-		t.Fatal("pair invocation did not use stdin for code")
+	defer ws.Close()
+	ws.SetReadDeadline(time.Now().Add(15 * time.Second))
+	video, audio, nonzero := 0, 0, 0
+	start := time.Now()
+	for time.Since(start) < 5*time.Second {
+		kind, b, e := ws.ReadMessage()
+		if e != nil {
+			t.Fatal(e)
+		}
+		if kind == websocket.TextMessage {
+			if bytes.Contains(b, []byte(`"error"`)) {
+				t.Fatal(string(b))
+			}
+			continue
+		}
+		if len(b) < 13 {
+			t.Fatal("short media")
+		}
+		if b[0] == 1 {
+			video++
+		} else if b[0] == 2 {
+			audio++
+			for _, v := range b[13:] {
+				if v != 0 {
+					nonzero++
+					break
+				}
+			}
+		}
 	}
-	if e := PairAndroid("127.0.0.1", 37123, "invalid"); e == nil {
-		t.Fatal("accepted bad code")
+	if video < 30 || audio < 30 || nonzero == 0 {
+		t.Fatalf("missing media video=%d audio=%d nonzero=%d", video, audio, nonzero)
+	}
+	ws.WriteJSON(map[string]any{"type": "key", "key": 3})
+	time.Sleep(300 * time.Millisecond)
+	out, e = second.exec(ctx, "dumpsys activity activities")
+	if e != nil || !regexp.MustCompile(`mResumedActivity:.*com\.android\.launcher3/`).Match(out) {
+		t.Fatal("Home control not applied", e)
+	}
+	t.Logf("no adb executable: independent sessions, %d video packets, %d audio packets, %d nonzero audio packets, Home control", video, audio, nonzero)
+}
+
+func TestAndroidVideoOptions(t *testing.T) {
+	for _, source := range []string{"", "display", "front", "back"} {
+		actual, options, err := androidVideoOptions(source)
+		if err != nil || !strings.Contains(options, "audio_source=output") {
+			t.Fatalf("%q: %s %v", source, options, err)
+		}
+		if source == "front" || source == "back" {
+			if actual != source || !strings.Contains(options, "video_source=camera camera_facing="+source) {
+				t.Fatal(options)
+			}
+		} else if actual != "display" || strings.Contains(options, "camera_facing") {
+			t.Fatal(options)
+		}
+	}
+	for _, source := range []string{"front;id", "back camera_id=0", "external", "camera", "$(id)"} {
+		if _, _, err := androidVideoOptions(source); err == nil {
+			t.Fatalf("accepted %q", source)
+		}
 	}
 }

@@ -958,7 +958,6 @@ func (a *App) shutdown() {
 	}
 	if a.sessionManager != nil {
 		a.sessionManager.CloseAll()
-		session.CloseAndroidADB()
 	}
 	a.netscanManager.StopAll()
 	// Stop the built-in local file servers (HTTP/TFTP/SSH/FTP). This runs on a

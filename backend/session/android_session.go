@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	_ "embed"
@@ -12,8 +13,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,68 +20,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	adb "github.com/juanlianyangyang/adb-go/adb"
 )
 
 //go:embed androidassets/scrcpy-server-v3.3.4.jar
 var androidServer []byte
 
-// A private ADB daemon per worker keeps devices and keys out of the host's global daemon.
-var androidADB struct {
-	sync.Mutex
-	port string
-}
-
-func androidADBEnv() []string {
-	env := []string{}
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "ADB_SERVER_SOCKET=") || strings.HasPrefix(entry, "ADB_VENDOR_KEYS=") || strings.HasPrefix(entry, "ANDROID_USER_HOME=") || strings.HasPrefix(entry, "ANDROID_SDK_HOME=") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	home, _ := os.UserHomeDir()
-	return append(env, "ANDROID_USER_HOME="+filepath.Join(home, ".android"))
-}
-
-func adbCommand(ctx context.Context, args ...string) (*exec.Cmd, error) {
-	androidADB.Lock()
-	defer androidADB.Unlock()
-	bin := os.Getenv("UNITERM_ADB_BIN")
-	if bin == "" {
-		bin = "adb"
-	}
-	if _, err := exec.LookPath(bin); err != nil {
-		return nil, fmt.Errorf("Android requires adb (android-tools): %w", err)
-	}
-	if androidADB.port == "" {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return nil, err
-		}
-		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		ln.Close()
-		cmd := exec.CommandContext(ctx, bin, "-P", port, "start-server")
-		cmd.Env = androidADBEnv()
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("start private adb: %s: %w", out, err)
-		}
-		androidADB.port = port
-	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"-P", androidADB.port}, args...)...)
-	cmd.Env = androidADBEnv()
-	return cmd, nil
-}
-func adbRun(ctx context.Context, args ...string) ([]byte, error) {
-	c, e := adbCommand(ctx, args...)
-	if e != nil {
-		return nil, e
-	}
-	b, e := c.CombinedOutput()
-	if e != nil {
-		return nil, fmt.Errorf("adb: %s: %w", strings.TrimSpace(string(b)), e)
-	}
-	return b, nil
-}
 func androidAddress(host string, port int) (string, error) {
 	if host == "" || strings.ContainsAny(host, " \t\r\n/\\") || strings.HasPrefix(host, "-") || port < 1 || port > 65535 {
 		return "", fmt.Errorf("invalid Android host or port")
@@ -99,13 +42,11 @@ func PairAndroid(host string, port int, code string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c, e := adbCommand(ctx, "pair", address)
+	key, e := androidPrivateKey()
 	if e != nil {
 		return e
 	}
-	c.Stdin = strings.NewReader(code + "\n")
-	out, e := c.CombinedOutput()
-	if e != nil || !strings.Contains(string(out), "Successfully paired") {
+	if e = adb.Pair(ctx, address, code, key, "uniterm"); e != nil {
 		return fmt.Errorf("wireless pairing failed; check pairing port, code and device reachability")
 	}
 	return nil
@@ -113,17 +54,20 @@ func PairAndroid(host string, port int, code string) error {
 
 type AndroidSession struct {
 	baseSession
-	ctx                                          context.Context
-	cancel                                       context.CancelFunc
-	proxyAddr, token, target, forward, remoteJar string
-	listener                                     net.Listener
-	process                                      *exec.Cmd
-	mu                                           sync.Mutex
-	controlMu                                    sync.Mutex
-	sockets                                      []net.Conn
-	ws                                           *websocket.Conn
-	serving                                      bool
-	once                                         sync.Once
+	ctx                                         context.Context
+	cancel                                      context.CancelFunc
+	proxyAddr, token, target, socket, remoteJar string
+	listener                                    net.Listener
+	process                                     io.ReadWriteCloser
+	client                                      *adb.Client
+	stopClient                                  func() bool
+	mu                                          sync.Mutex
+	controlMu                                   sync.Mutex
+	sockets                                     []io.ReadWriteCloser
+	ws                                          *websocket.Conn
+	serving                                     bool
+	videoSource                                 string
+	once                                        sync.Once
 }
 
 func NewAndroidSession(id string) *AndroidSession {
@@ -134,6 +78,11 @@ func (s *AndroidSession) IsConnected() bool     { return s.Status() == StatusCon
 func (s *AndroidSession) Resize(int, int) error { return nil }
 func (s *AndroidSession) Write([]byte) error    { return nil }
 func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
+	source, options, err := androidVideoOptions(cfg.AndroidVideoSource)
+	if err != nil {
+		return err
+	}
+	s.videoSource = source
 	s.setStatus(StatusConnecting)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	defer func() {
@@ -152,68 +101,49 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 45*time.Second)
 	defer cancel()
-	var out []byte
-	for attempt := 0; attempt < 8; attempt++ {
-		out, err = adbRun(ctx, "connect", s.target)
-		if err == nil && strings.Contains(string(out), "connected to") {
-			_, err = adbRun(ctx, "-s", s.target, "get-state")
-			if err == nil {
-				break
-			}
-			if strings.Contains(err.Error(), "unauthorized") {
-				return fmt.Errorf("authorize this device or pair wireless debugging first: %w", err)
-			}
-		} else if err == nil {
-			err = fmt.Errorf("ADB connect: %s", strings.TrimSpace(string(out)))
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		// A restarted device can leave a stale offline transport in adb.
-		// Only remove that failed transport, never an online device's connection.
-		adbRun(ctx, "disconnect", s.target)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(400 * time.Millisecond):
-		}
-	}
+	key, err := androidPrivateKey()
 	if err != nil {
-		return fmt.Errorf("Android device is offline or unreachable: %w", err)
+		return err
 	}
+	s.client, err = adb.Dial(ctx, s.target, key, "uniterm")
+	if err != nil {
+		return fmt.Errorf("Android connection failed; authorize the device or pair wireless debugging first: %w", err)
+	}
+	s.stopClient = context.AfterFunc(s.ctx, func() { s.client.Close() })
 	var b [16]byte
 	if _, err = rand.Read(b[:]); err != nil {
 		return err
 	}
 	s.token = hex.EncodeToString(b[:])
 	scid := fmt.Sprintf("%08x", binary.BigEndian.Uint32(b[:4])&0x7fffffff)
-	f, err := os.CreateTemp("", "uniterm-scrcpy-*.jar")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(androidServer); err != nil {
-		f.Close()
-		return err
-	}
-	f.Close()
 	s.remoteJar = "/data/local/tmp/uniterm-" + s.token + ".jar"
-	if _, err = adbRun(ctx, "-s", s.target, "push", f.Name(), s.remoteJar); err != nil {
+	if err = s.push(ctx, s.remoteJar, bytes.NewReader(androidServer)); err != nil {
 		return err
 	}
-	out, err = adbRun(ctx, "-s", s.target, "forward", "tcp:0", "localabstract:scrcpy_"+scid)
+	if source != "display" {
+		sdk, e := s.exec(ctx, "getprop ro.build.version.sdk")
+		if e != nil {
+			return e
+		}
+		level, _ := strconv.Atoi(strings.TrimSpace(string(sdk)))
+		if level < 31 {
+			return fmt.Errorf("camera capture requires Android 12 or newer")
+		}
+		cameras, e := s.exec(ctx, "CLASSPATH="+s.remoteJar+" app_process / com.genymobile.scrcpy.Server 3.3.4 list_cameras=true cleanup=false")
+		if e != nil {
+			return e
+		}
+		if !strings.Contains(string(cameras), "("+source+",") {
+			return fmt.Errorf("no accessible %s camera; select Screen to return", source)
+		}
+	}
+	s.socket = "localabstract:scrcpy_" + scid
+	command := "CLASSPATH=" + s.remoteJar + " app_process / com.genymobile.scrcpy.Server 3.3.4 scid=" + scid + " tunnel_forward=true audio=true audio_codec=raw video_codec=h264 video_codec_options=profile=1,level=2048 max_size=1280 max_fps=30 video_bit_rate=4000000 send_device_meta=false send_dummy_byte=true clipboard_autosync=false" + options
+	s.process, err = androidOpen(s.ctx, s.client, "shell:"+command)
 	if err != nil {
 		return err
 	}
-	s.forward = strings.TrimSpace(string(out))
-	s.process, err = adbCommand(s.ctx, "-s", s.target, "shell", "CLASSPATH="+s.remoteJar, "app_process", "/", "com.genymobile.scrcpy.Server", "3.3.4", "scid="+scid, "tunnel_forward=true", "audio=true", "audio_codec=raw", "video_codec=h264", "video_codec_options=profile=1,level=2048", "max_size=1280", "max_fps=30", "video_bit_rate=4000000", "send_device_meta=false", "send_dummy_byte=true", "clipboard_autosync=false")
-	if err != nil {
-		return err
-	}
-	if err = s.process.Start(); err != nil {
-		return err
-	}
-	go func() { s.process.Wait() }()
+	go io.Copy(io.Discard, s.process)
 	s.listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -228,8 +158,25 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 }
 func (s *AndroidSession) Disconnect() error {
 	s.once.Do(func() {
+		if s.client != nil {
+			// Clean a jar uploaded before startup failed, and bound cleanup even if the
+			// peer stops consuming data. scrcpy also cleans its own jar on normal exit.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			stop := context.AfterFunc(ctx, func() { s.client.Close() })
+			if s.remoteJar != "" {
+				s.exec(ctx, "rm -f "+s.remoteJar)
+			}
+			stop()
+			cancel()
+		}
 		if s.cancel != nil {
 			s.cancel()
+		}
+		if s.client != nil {
+			s.client.Close()
+		}
+		if s.stopClient != nil {
+			s.stopClient()
 		}
 		unregisterSessionProxyHandler(s.token)
 		s.mu.Lock()
@@ -243,25 +190,17 @@ func (s *AndroidSession) Disconnect() error {
 			c.Close()
 		}
 		s.mu.Unlock()
-		if s.forward != "" || s.remoteJar != "" {
-			ctx, c := context.WithTimeout(context.Background(), 3*time.Second)
-			defer c()
-			if s.forward != "" {
-				adbRun(ctx, "-s", s.target, "forward", "--remove", "tcp:"+s.forward)
-			}
-			if s.remoteJar != "" {
-				adbRun(ctx, "-s", s.target, "shell", "rm", "-f", s.remoteJar)
-			}
-		}
 		s.setStatus(StatusDisconnected)
 	})
 	return nil
 }
-func (s *AndroidSession) dial() (net.Conn, error) {
-	var conn net.Conn
+func (s *AndroidSession) dial() (io.ReadWriteCloser, error) {
+	var conn io.ReadWriteCloser
 	var err error
 	for i := 0; i < 60; i++ {
-		conn, err = net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", s.forward), time.Second)
+		ctx, cancel := context.WithTimeout(s.ctx, time.Second)
+		conn, err = s.client.RawOpen(ctx, s.socket)
+		cancel()
 		if err == nil {
 			break
 		}
@@ -331,17 +270,15 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		data, _ := json.Marshal(map[string]string{"error": e.Error()})
 		send(websocket.TextMessage, data)
 	}
-	var video net.Conn
+	var video io.ReadWriteCloser
 	for attempt := 0; attempt < 100; attempt++ {
 		video, err = s.dial()
 		if err != nil {
 			break
 		}
-		video.SetReadDeadline(time.Now().Add(time.Second))
 		dummy := make([]byte, 1)
-		_, err = io.ReadFull(video, dummy)
+		err = androidReadFull(s.ctx, video, dummy, time.Second)
 		if err == nil {
-			video.SetReadDeadline(time.Time{})
 			break
 		}
 		video.Close()
@@ -366,13 +303,11 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	header := make([]byte, 12)
-	video.SetReadDeadline(time.Now().Add(20 * time.Second))
-	if _, err = io.ReadFull(video, header); err != nil {
+	if err = androidReadFull(s.ctx, video, header, 20*time.Second); err != nil {
 		fail(err)
 		return
 	}
-	video.SetReadDeadline(time.Time{})
-	meta, _ := json.Marshal(map[string]any{"width": binary.BigEndian.Uint32(header[4:8]), "height": binary.BigEndian.Uint32(header[8:12]), "codec": "h264"})
+	meta, _ := json.Marshal(map[string]any{"width": binary.BigEndian.Uint32(header[4:8]), "height": binary.BigEndian.Uint32(header[8:12]), "codec": "h264", "videoSource": s.videoSource})
 	send(websocket.TextMessage, meta)
 	go func() {
 		if err := s.media(video, 1, send); err != nil {
@@ -392,6 +327,9 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return
 		}
+		if s.videoSource != "display" {
+			continue
+		} // Camera preview never injects display input.
 		packet, e := androidControl(data)
 		if e != nil {
 			fail(e)
@@ -405,7 +343,7 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-func (s *AndroidSession) media(c net.Conn, channel byte, send func(int, []byte) error) error {
+func (s *AndroidSession) media(c io.Reader, channel byte, send func(int, []byte) error) error {
 	for {
 		header := make([]byte, 12)
 		if _, e := io.ReadFull(c, header); e != nil {
@@ -511,6 +449,8 @@ func androidControl(data []byte) ([]byte, error) {
 func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
 	defer cancel()
+	stopRequest := context.AfterFunc(r.Context(), cancel)
+	defer stopRequest()
 	path := r.URL.Query().Get("path")
 	if r.URL.Query().Get("op") == "shell" {
 		if r.Method != "POST" {
@@ -524,25 +464,14 @@ func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, stop := context.WithTimeout(ctx, 15*time.Second)
 		defer stop()
-		c, e := adbCommand(ctx, "-s", s.target, "shell", string(body))
+		stream, e := androidOpen(ctx, s.client, "shell:"+string(body))
 		if e != nil {
-			http.Error(w, e.Error(), 500)
+			http.Error(w, e.Error(), 502)
 			return
 		}
-		out, e := c.StdoutPipe()
-		if e != nil {
-			http.Error(w, e.Error(), 500)
-			return
-		}
-		c.Stderr = c.Stdout
-		if e = c.Start(); e != nil {
-			http.Error(w, e.Error(), 500)
-			return
-		}
+		defer stream.Close()
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		io.Copy(w, io.LimitReader(out, 1024*1024))
-		stop()
-		c.Wait()
+		io.Copy(w, io.LimitReader(stream, 1024*1024))
 		return
 	}
 	if !strings.HasPrefix(path, "/sdcard/") || strings.ContainsAny(path, "\x00\r\n") || strings.Contains(path, "..") {
@@ -566,8 +495,12 @@ func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, e.Error(), 413)
 			return
 		}
-		f.Close()
-		if _, e = adbRun(ctx, "-s", s.target, "push", f.Name(), path); e != nil {
+		_, e = f.Seek(0, io.SeekStart)
+		if e != nil {
+			http.Error(w, e.Error(), 500)
+			return
+		}
+		if e = s.push(ctx, path, f); e != nil {
 			http.Error(w, e.Error(), 502)
 			return
 		}
@@ -577,7 +510,7 @@ func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "GET required", 405)
 			return
 		}
-		sizeText, e := adbRun(ctx, "-s", s.target, "shell", "stat", "-c", "%s", "'"+strings.ReplaceAll(path, "'", "'\\''")+"'")
+		sizeText, e := s.exec(ctx, "stat -c %s "+androidQuote(path))
 		size, parseErr := strconv.ParseInt(strings.TrimSpace(string(sizeText)), 10, 64)
 		if e != nil || parseErr != nil {
 			http.Error(w, "remote file not found or unreadable", 404)
@@ -587,44 +520,30 @@ func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "maximum file size is 256 MiB", 413)
 			return
 		}
+		stream, e := androidOpen(ctx, s.client, "exec:cat "+androidQuote(path))
+		if e != nil {
+			http.Error(w, e.Error(), 502)
+			return
+		}
+		defer stream.Close()
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		c, e := adbCommand(ctx, "-s", s.target, "exec-out", "cat", path)
-		if e != nil {
-			http.Error(w, e.Error(), 500)
-			return
-		}
-		out, e := c.StdoutPipe()
-		if e != nil {
-			http.Error(w, e.Error(), 500)
-			return
-		}
-		if e = c.Start(); e != nil {
-			http.Error(w, e.Error(), 500)
-			return
-		}
 		w.Header().Set("Content-Type", "application/octet-stream")
-		io.CopyN(w, out, size)
-		cancel()
-		c.Wait()
+		io.CopyN(w, stream, size)
 	default:
 		http.Error(w, "unknown operation", 400)
 	}
 }
 
-func CloseAndroidADB() {
-	androidADB.Lock()
-	defer androidADB.Unlock()
-	if androidADB.port == "" {
-		return
+func androidQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+
+// Values are allowlisted before constructing the remote shell command.
+func androidVideoOptions(source string) (string, string, error) {
+	switch source {
+	case "", "display":
+		return "display", " video_source=display audio_source=output", nil
+	case "front", "back":
+		return source, " video_source=camera camera_facing=" + source + " camera_fps=30 audio_source=output", nil
+	default:
+		return "", "", fmt.Errorf("invalid Android video source")
 	}
-	bin := os.Getenv("UNITERM_ADB_BIN")
-	if bin == "" {
-		bin = "adb"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-P", androidADB.port, "kill-server")
-	cmd.Env = androidADBEnv()
-	cmd.Run()
-	androidADB.port = ""
 }

@@ -531,13 +531,18 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     audioPlayer?.dispose()
     const player = new RdpAudioPlayer(blocked => { if (generation === clientGeneration) audioBlocked.value = blocked })
     audioPlayer = player
+    let nextAudioStats = 0
     builder.extension(new mod.Extension('audio_callback', (kind: string, data: Uint8Array | number, rate?: number, channels?: number, bits?: number) => {
       if (generation !== clientGeneration) return
       try {
         if (kind === 'pcm' && data instanceof Uint8Array) player.pcm(data, rate!, channels!, bits!)
         else if (kind === 'volume' && typeof data === 'number') player.setVolume(data, rate!)
-        // RDPSND Close means the stream ended; let already scheduled samples drain.
-        // Disconnect/reconnect disposes the player and stops all sound.
+        else if (kind === 'close') player.end()
+        // Diagnostic metadata only; no additional volume/mute controls.
+        if (canvasEl.value && (performance.now() >= nextAudioStats || kind === 'close')) {
+          canvasEl.value.dataset.rdpAudioStats = JSON.stringify(player.getStats())
+          nextAudioStats = performance.now() + 1000
+        }
       } catch (error) { rdpLog(`audio playback: ${describeError(error)}`) }
     }))
     builder.extension(new mod.Extension('microphone_enabled', capture.enabled('microphone')))

@@ -58,31 +58,31 @@ function dropped(e: DragEvent) {
 function bytes(value: number) { if (!value) return '0 B'; const i = Math.min(3, Math.floor(Math.log(value) / Math.log(1024))); return `${(value / 1024 ** i).toFixed(i ? 1 : 0)} ${['B', 'KB', 'MB', 'GB'][i]}` }
 </script>
 <style scoped>
-.rdp-files-panel { position: absolute; z-index: 30; bottom: 44px; right: 12px; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 72px); display: flex; flex-direction: column; background: var(--bg-secondary, #20252c); color: var(--text-primary); border: 1px solid var(--el-border-color); border-radius: 12px; box-shadow: 0 8px 30px #0006; font-size: 13px; }
+.rdp-files-panel { position: absolute; z-index: 30; bottom: 44px; right: 12px; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 72px); display: flex; flex-direction: column; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 12px; box-shadow: var(--shadow-lg); font-size: 13px; }
 header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px 8px; font-size: 15px; font-weight: 600; }
 header span, nav button, .download-selected { display: flex; align-items: center; justify-content: center; gap: 7px; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; border-radius: 5px; padding: 5px; }
 button:disabled { opacity: .45; cursor: default; }
-button:focus-visible { outline: 2px solid var(--el-color-primary); }
+button:focus-visible { outline: 2px solid var(--accent); }
 nav { display: flex; gap: 4px; padding: 6px 12px 10px; }
-nav button { flex: 1; padding: 9px 6px; background: var(--bg-primary); border: 1px solid var(--el-border-color); }
-nav button.selected, .download-selected { background: var(--el-color-primary); color: white; }
+nav button { flex: 1; padding: 9px 6px; background: var(--bg-base); border: 1px solid var(--border-subtle); }
+nav button.selected, .download-selected { background: var(--accent); color: var(--on-accent); }
 nav b { font-size: 11px; }
 .files-body { overflow: auto; min-height: 0; padding: 0 16px 12px; }
 .file-input { display: none; }
-.file-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 90px; border: 1px dashed var(--el-border-color); margin-top: 4px; }
-.file-drop.dragging, .file-drop:not(:disabled):hover { border-color: var(--el-color-primary); color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.file-hint { padding: 9px; background: var(--el-color-primary-light-9); color: var(--el-color-primary); border-radius: 6px; line-height: 1.6; }
+.file-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 90px; border: 1px dashed var(--border-subtle); margin-top: 4px; }
+.file-drop.dragging, .file-drop:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+.file-hint { padding: 9px; background: var(--accent-subtle); color: var(--accent); border-radius: 6px; line-height: 1.6; }
 .file-note, footer { color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
-footer { padding: 10px 16px; border-top: 1px solid var(--el-border-color); }
+footer { padding: 10px 16px; border-top: 1px solid var(--border-subtle); }
 .file-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 22px 8px; color: var(--text-secondary); }
-.remote-file, .file-task { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--el-border-color); }
-.remote-file .file-name { flex: 1; }.remote-file input { accent-color: var(--el-color-primary); }.unsupported { opacity: .6; }
+.remote-file, .file-task { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
+.remote-file .file-name { flex: 1; }.remote-file input { accent-color: var(--accent); }.unsupported { opacity: .6; }
 .file-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }.task-main { min-width: 0; flex: 1; }
 .task-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; font-size: 11px; color: var(--text-secondary); }
-progress { display: block; width: 100%; height: 5px; margin-top: 7px; accent-color: var(--el-color-primary); }
-.completed { color: var(--el-color-success); }.failed, .file-error { color: var(--el-color-warning); }.file-error { line-height: 1.5; }
-.download-selected { width: 100%; margin-top: 12px; padding: 9px; }.retry { color: var(--el-color-primary); border: 1px solid var(--el-color-primary); font-size: 11px; }
+progress { display: block; width: 100%; height: 5px; margin-top: 7px; accent-color: var(--accent); }
+.completed { color: var(--success); }.failed, .file-error { color: var(--warning); }.file-error { line-height: 1.5; }
+.download-selected { width: 100%; margin-top: 12px; padding: 9px; }.retry { color: var(--accent); border: 1px solid var(--accent); font-size: 11px; }
 .task-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; color: var(--text-secondary); font-size: 12px; }
 @media (max-height: 480px) { .rdp-files-panel { bottom: 36px; max-height: calc(100% - 44px); } .file-drop { min-height: 55px; } }
 </style>

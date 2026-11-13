@@ -25,6 +25,7 @@ export interface SSHAlgoConfig {
 }
 
 export interface ConnectionConfig {
+  androidVideoSource?: 'display' | 'front' | 'back'
   id: string
   name: string
   remark?: string

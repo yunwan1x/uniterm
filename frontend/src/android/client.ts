@@ -8,6 +8,7 @@ import {
   type ScrcpyMediaStreamPacket,
 } from '@yume-chan/scrcpy'
 import { toWebSocketURL } from '../utils/webSocketUrl'
+import { PcmAudioPlayer } from '../utils/pcmAudio'
 export const androidClients = new Map<string, AndroidClient>()
 export class AndroidClient {
   canvas = document.createElement('canvas')
@@ -15,13 +16,14 @@ export class AndroidClient {
   width = 720
   height = 1280
   frames = 0
+  videoSource: 'display' | 'front' | 'back' = 'display'
   mode = ''
   error = ''
   connected = false
   changed = () => {}
   private decoder: TinyH264Decoder | WebCodecsVideoDecoder
-  private audio: AudioContext | null = null
-  private nextAudio = 0
+  private audio: PcmAudioPlayer | null = null
+  private nextAudioStats = 0
   private pending = 0
   private chain = Promise.resolve()
   private disposed = false
@@ -53,6 +55,7 @@ export class AndroidClient {
           this.changed()
           return
         }
+        this.videoSource = m.videoSource ?? 'display'
         this.width = m.width
         this.height = m.height
         this.connected = true
@@ -116,27 +119,26 @@ export class AndroidClient {
       this.ws.send(JSON.stringify(message))
   }
   enableAudio() {
-    if (!this.audio) this.audio = new AudioContext({ sampleRate: 48000 })
-    void this.audio.resume()
+    if (this.disposed) return
+    // Retain Android's gesture-driven activation; never queue sound from before
+    // the user enabled playback. Each desktop owns an independent player.
+    if (!this.audio) this.audio = new PcmAudioPlayer(() => {},
+      () => new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' }))
+    this.audio.unlock()
   }
   private playAudio(data: Uint8Array) {
-    const ctx = this.audio
-    if (!ctx || ctx.state !== 'running' || data.length < 4) return
-    const count = Math.floor(data.length / 4),
-      buf = ctx.createBuffer(2, count, 48000),
-      v = new DataView(data.buffer, data.byteOffset, data.byteLength)
-    for (let ch = 0; ch < 2; ch++) {
-      const samples = buf.getChannelData(ch)
-      for (let i = 0; i < count; i++)
-        samples[i] = v.getInt16(i * 4 + ch * 2, true) / 32768
+    if (!this.audio || data.length < 4 || data.length % 4 !== 0) return
+    try {
+      // scrcpy audio_codec=raw supplies signed LE PCM, 48kHz stereo, 16-bit.
+      this.audio.pcm(data, 48000, 2, 16)
+      if (performance.now() >= this.nextAudioStats) {
+        this.canvas.dataset.androidAudioStats = JSON.stringify(this.audio.getStats())
+        this.nextAudioStats = performance.now() + 1000
+      }
+    } catch (error) {
+      // Audio/device failures must not interrupt video or input handling.
+      this.canvas.dataset.androidAudioError = String(error)
     }
-    if (this.nextAudio > ctx.currentTime + 0.25) return
-    const source = ctx.createBufferSource()
-    source.buffer = buf
-    source.connect(ctx.destination)
-    this.nextAudio = Math.max(ctx.currentTime + 0.015, this.nextAudio)
-    source.start(this.nextAudio)
-    this.nextAudio += buf.duration
   }
   httpURL(op: string, path: string) {
     const url = new URL(toWebSocketURL(this.url))
@@ -150,7 +152,8 @@ export class AndroidClient {
     this.connected = false
     this.ws.close()
     this.decoder.dispose()
-    void this.audio?.close()
+    this.audio?.dispose()
+    if (this.audio) this.canvas.dataset.androidAudioStats = JSON.stringify(this.audio.getStats())
     this.changed()
   }
 }

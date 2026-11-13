@@ -1,10 +1,11 @@
 # Network Android / redroid verification
 
-Install a current Android platform-tools `adb` on the test host. Docker runtime
-images include `android-tools`; native builds use `adb` from PATH or
-`UNITERM_ADB_BIN`. A private loopback ADB daemon and HOME/.android keys belong to
-each uniTerm user worker, not the host's shared adb server. Pairing codes are sent
-through stdin and are not saved as connection passwords.
+Android sessions use the embedded Go ADB client and scrcpy. Neither the runtime
+image nor native builds require an external `adb`, Python, or an ADB server.
+Existing HOME/.android/adbkey identities are reused; each user worker has its
+own key. Pairing codes stay in memory and are excluded from library logs.
+`UNITERM_ADB_BIN` is no longer a runtime setting. External adb is optional only
+for older host-side test helpers that explicitly invoke it.
 
 For an isolated Linux redroid fixture (requires binder kernel support):
 
@@ -13,14 +14,17 @@ docker run -d --name uniterm-redroid-test --privileged \
   -p 127.0.0.1:15555:5555 redroid/redroid:12.0.0-latest \
   androidboot.redroid_width=720 androidboot.redroid_height=1280 \
   androidboot.redroid_gpu_mode=guest androidboot.use_memfd=1
-UNITERM_ADB_BIN=/path/to/platform-tools/adb UNITERM_ANDROID_LIVE=1 \
-  CGO_ENABLED=0 go test ./backend/session -run TestAndroid -v
+UNITERM_ANDROID_LIVE=1 \
+  CGO_ENABLED=0 go test -tags "server production" ./backend/session -run TestAndroid -v
 ```
 
 The live test is opt-in and connects only to the local fixture on 15555. It checks
 immediate startup, actual H.264 packets, a control packet, binary file round trip,
 invalid/missing download paths, and unregistering the proxy on disconnect.
-Other tests check control serialization and that pairing codes stay off argv.
+The live test clears PATH to verify that no adb binary is used. Other tests cover
+control serialization, key persistence/isolation, pairing validation and stream
+cancellation. The media/isolation test additionally needs the existing
+/sdcard/Download/uniterm-bbb-clip.mp4 fixture.
 
 UI checks: create Android under Remote Desktop, connect to 127.0.0.1:15555,
 click/drag the screen, Home/Back/Recent, rotate an activity that allows rotation,

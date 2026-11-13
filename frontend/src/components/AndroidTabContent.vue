@@ -41,7 +41,7 @@
           <button @click="reconnect">{{ t('android.reconnect') }}</button>
         </div>
         <div v-if="!connected && !error" class="android-error">
-          {{ t('android.connecting') }}
+          {{ switching ? t('android.switchingSource') : t('android.connecting') }}
         </div>
         <aside v-if="shellOpen" class="android-panel" @keydown.stop>
           <strong>ADB Shell</strong
@@ -107,28 +107,33 @@
               >{{ connected ? '●' : '○' }} Android · {{ width }} ×
               {{ height }} · {{ mode }}</span
             >
-            <button :disabled="!connected" @click="key(4)">
+            <select class="android-source" :aria-label="t('android.videoSource')" :value="source" :disabled="switching || !props.config" @change="switchSource">
+              <option value="display">{{ t('android.sourceDisplay') }}</option>
+              <option value="front">{{ t('android.sourceFront') }}</option>
+              <option value="back">{{ t('android.sourceBack') }}</option>
+            </select>
+            <button :disabled="!connected || source !== 'display'" @click="key(4)">
               {{ t('android.back') }}</button><button
-              :disabled="!connected"
+              :disabled="!connected || source !== 'display'"
               @click="key(3)"
             >
               {{ t('android.home') }}</button
-            ><button :disabled="!connected" @click="key(187)">
+            ><button :disabled="!connected || source !== 'display'" @click="key(187)">
               {{ t('android.recent') }}
             </button>
-            <button :disabled="!connected" @click="key(24)">
+            <button :disabled="!connected || source !== 'display'" @click="key(24)">
               ＋{{ t('android.volume') }}</button
-            ><button :disabled="!connected" @click="key(25)">
+            ><button :disabled="!connected || source !== 'display'" @click="key(25)">
               －{{ t('android.volume') }}</button
-            ><button :disabled="!connected" @click="key(26)">
+            ><button :disabled="!connected || source !== 'display'" @click="key(26)">
               {{ t('android.power') }}
             </button>
             <button
-              :disabled="!connected"
+              :disabled="!connected || source !== 'display'"
               @click="client?.send({ type: 'rotate' })"
             >
               {{ t('android.rotate') }}</button><button
-              :disabled="!connected"
+              :disabled="!connected || source !== 'display'"
               @click="togglePane('text')"
             >
               {{ t('android.text') }}</button
@@ -203,6 +208,8 @@ const root = ref<HTMLElement>(),
   mode = ref(''),
   width = ref(720),
   height = ref(1280)
+const source = ref<'display' | 'front' | 'back'>(props.config?.androidVideoSource || 'display')
+const switching = ref(false)
 const shellOpen = ref(false),
   command = ref(''),
   shellOutput = ref(''),
@@ -248,6 +255,7 @@ let client: AndroidClient | undefined,
 function update() {
   if (!client) return
   connected.value = client.connected
+  if (client.connected) source.value = client.videoSource
   error.value = client.error
   mode.value = client.mode
   width.value = client.width
@@ -258,7 +266,7 @@ async function connect(fresh = false) {
     let url = fresh ? '' : panels.getProxyAddr(props.panelId)
     if (!url) {
       if (!props.config) return
-      const info = await CreateSession('android', props.config)
+      const info = await CreateSession('android', { ...props.config, androidVideoSource: source.value })
       if (!mounted || !panels.getPanel(props.panelId)) {
         await CloseSession(info.id)
         return
@@ -283,10 +291,36 @@ async function connect(fresh = false) {
   }
 }
 async function reconnect() {
-  client?.dispose()
-  if (sessionId) await CloseSession(sessionId)
+  if (switching.value) return
+  switching.value = true
+  down = false
+  connected.value = false
   error.value = ''
-  await connect(true)
+  try {
+    if (client) {
+      androidClients.delete(client.url)
+      client.changed = () => {}
+      client.dispose()
+      client.canvas.remove()
+      client = undefined
+    }
+    if (sessionId) {
+      await CloseSession(sessionId)
+      sessionId = undefined
+    }
+    await connect(true)
+  } catch (e) {
+    error.value = String(e)
+  } finally {
+    switching.value = false
+  }
+}
+async function switchSource(e: Event) {
+  const value = (e.target as HTMLSelectElement).value
+  if (!['display', 'front', 'back'].includes(value) || switching.value) return
+  source.value = value as typeof source.value
+  textOpen.value = false
+  await reconnect()
 }
 function sendText() {
   client?.send({ type: 'paste', text: text.value })
@@ -304,11 +338,14 @@ function togglePane(pane: string) {
   shellOpen.value = pane === 'shell' && open
 }
 function key(key: number) {
+  if (source.value !== 'display') return
   client?.enableAudio()
   client?.send({ type: 'key', key })
 }
 function touch(e: PointerEvent, action: number) {
   if (!client || !connected.value) return
+  client.enableAudio()
+  if (source.value !== 'display') return
   const canvas = client.canvas,
     r = canvas.getBoundingClientRect()
   if (!r.width || !r.height) return
@@ -344,6 +381,7 @@ function touch(e: PointerEvent, action: number) {
   if (action === 1) down = false
 }
 function wheel(e: WheelEvent) {
+  if (source.value !== 'display') return
   if (!client) return
   const r = client.canvas.getBoundingClientRect()
   client.send({
@@ -372,10 +410,12 @@ function move(e: PointerEvent) {
   if (down) touch(e, 2)
 }
 function paste(e: ClipboardEvent) {
+  if (source.value !== 'display') return
   const text = e.clipboardData?.getData('text/plain')
   if (text) client?.send({ type: 'paste', text })
 }
 function keyboard(e: KeyboardEvent) {
+  if (source.value !== 'display') return
   const map: Record<string, number> = {
     Enter: 66,
     Backspace: 67,
@@ -616,7 +656,12 @@ onBeforeUnmount(() => {
   background: var(--bg-secondary);
   font-size: 12px;
 }
-.android-tab button {
+.android-source {
+  font: inherit;
+  max-width: 160px;
+}
+.android-tab button,
+.android-source {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border: 1px solid var(--border-color);

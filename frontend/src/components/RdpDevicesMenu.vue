@@ -19,9 +19,9 @@ const emit = defineEmits<{ toggle: [kind: CaptureKind] }>()
 const { t } = useI18n()
 </script>
 <style scoped>
-.rdp-devices-trigger, .rdp-devices button { color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--el-border-color); border-radius: 4px; padding: 2px 6px; font: inherit; white-space: nowrap; cursor: pointer; }
+.rdp-devices-trigger, .rdp-devices button { color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 2px 6px; font: inherit; white-space: nowrap; cursor: pointer; }
 .rdp-devices { display: grid; gap: 8px; }
 .rdp-devices p { margin: 0; font-size: 12px; color: var(--text-secondary); }
-.rdp-devices button[aria-pressed=true], .device-dot { color: var(--el-color-success); }
+.rdp-devices button[aria-pressed=true], .device-dot { color: var(--success); }
 .rdp-devices button:disabled { opacity: .5; }
 </style>

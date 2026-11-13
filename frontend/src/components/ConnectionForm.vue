@@ -105,10 +105,10 @@
               </div>
             </el-form-item>
             <template v-if="form.type === 'android'">
-              <p>{{t('android.pairHint')}}</p>
+              <p class="field-hint android-pair-hint">{{ t('android.pairHint') }}</p>
               <el-form-item :label="t('android.pairPort')"><el-input-number v-model="pairPort" :min="1" :max="65535" /></el-form-item>
               <el-form-item :label="t('android.pairCode')"><el-input v-model="pairCode" maxlength="6" type="password" show-password /></el-form-item>
-              <el-button :loading="pairBusy" @click="pairAndroid">{{t('android.pair')}}</el-button><p role="status">{{pairStatus}}</p>
+              <el-button :loading="pairBusy" @click="pairAndroid">{{t('android.pair')}}</el-button><p v-if="pairStatus" class="field-hint android-pair-status" role="status">{{ pairStatus }}</p>
             </template>
             <el-form-item v-if="(form.authType !== 'identity' || isSSHAlgoType) && form.type !== 'vnc' && form.type !== 'spice' && !(form.type === 'database' && form.dbType === 'rqlite') && !isSqliteDb && form.type !== 'android' && form.type !== 'local' && form.type !== 'wsl' && form.type !== 'serial' && form.type !== 'tcp' && form.type !== 'k8s' && form.type !== 'container' && !isEsApiKey" :label="form.authType === 'identity' ? t('conn.identityUserOverride') : (form.type === 's3' ? 'Access Key' : t('conn.user'))">
               <el-input v-model="form.user" :placeholder="form.authType === 'identity' ? t('conn.identityUserOverrideHint') : (form.type === 's3' ? 'Access Key ID' : t('conn.userPlaceholder'))" />
@@ -2253,6 +2253,15 @@ function onConnect() {
   color: var(--text-muted);
   font-size: 0.75rem;
   line-height: 1.4;
+}
+
+.android-pair-hint {
+  margin: 0 0 0.75rem;
+}
+
+.android-pair-status {
+  margin: 0.5rem 0 0;
+  overflow-wrap: anywhere;
 }
 
 /* Hint that follows a switch on the same line: occupy the remaining width
