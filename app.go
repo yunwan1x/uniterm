@@ -543,32 +543,9 @@ func (a *App) initCredentials(dataDir string, upgrade bool) {
 	// re-encrypted.
 	if serverMode {
 		pw := os.Getenv("UNITERM_MASTER_PASSWORD")
-		meta, _ := credentials.ReadMeta(dataDir)
-		switch {
-		case meta == nil:
-			if pw != "" {
-				if err := cred.Setup(credentials.ModeMasterPassword, pw); err != nil {
-					log.Writef("[server] credential auto-setup failed: %v", err)
-				}
-			}
-		case meta.Mode == credentials.ModeMasterPassword:
-			if pw != "" {
-				// AutoUnlock first: it loads meta (a fresh Store has no mode
-				// loaded) and recovers an in-process keychain cache if any;
-				// Unlock then verifies the login-password-derived key.
-				_ = cred.AutoUnlock()
-				if !cred.Unlocked() {
-					if err := cred.Unlock(pw); err != nil {
-						log.Writef("[server] credential auto-unlock failed (locked until browser unlock): %v", err)
-					}
-				}
-			}
-		default:
-			// Pre-existing keychain-mode server store: the plaintext key file
-			// contradicts the login-password-as-master model. Force the
-			// browser setup dialog by leaving NeedsSetup/locked state.
-			log.Writef("[server] legacy keychain-mode store found; browser setup required")
-		}
+		if err := cred.InitServer(pw); err != nil {
+            log.Writef("[server] credential initialization failed (locked until browser unlock): %v", err)
+        }
 		a.credentialStore = cred
 		a.wirePasswordStore(cred, false)
 		return
