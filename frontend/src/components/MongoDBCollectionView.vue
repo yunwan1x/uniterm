@@ -66,11 +66,13 @@
           <button class="btn btn-default btn-sm result-toolbar-add" @click="openNewDocument">
             <Plus :size="'0.875rem'" /> {{ t('mongodb.newDocument') }}
           </button>
+
+          <TableColumnPicker :table-key="'MongoDBCollectionView' + ':' + JSON.stringify(columns)" :columns="[...(columns).map((col, columnIndex) => ({key: String(col), label: col, required: columnIndex === 0})), {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
         </div>
 
         <div v-if="filteredTableData.length > 0" class="result-grid">
           <div class="result-table-wrap">
-            <TableColumnPicker :table-key="'MongoDBCollectionView' + ':' + JSON.stringify(columns)" :columns="[...(columns).map((col, columnIndex) => ({key: String(col), label: col, required: columnIndex === 0})), {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
             <el-table :ref="bindColumnTable('table0')"
               :data="filteredTableData"
               border
@@ -143,8 +145,10 @@
         <button class="btn btn-default btn-sm" @click="openNewIndexDialog">
           <Plus :size="'0.875rem'" /> {{ t('db.addIndex') }}
         </button>
+
+        <TableColumnPicker :table-key="'MongoDBCollectionView:indexes'" :columns="[{key: 'name', label: t('db.colName'), required: true}, {key: 'Fields', label: 'Fields', required: false}, {key: 'type', label: t('db.colType'), required: false}, {key: 'unique', label: 'Unique', required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
       </div>
-      <TableColumnPicker :table-key="'MongoDBCollectionView:indexes'" :columns="[{key: 'name', label: t('db.colName'), required: true}, {key: 'Fields', label: 'Fields', required: false}, {key: 'type', label: t('db.colType'), required: false}, {key: 'unique', label: 'Unique', required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+
       <el-table :ref="bindColumnTable('table1')" :data="indexes" border size="small" style="width:100%" :empty-text="t('db.noData')">
         <el-table-column prop="name" :label="t('db.colName')" show-overflow-tooltip />
         <el-table-column v-if="columnIsVisible('MongoDBCollectionView:indexes', 'Fields')" label="Fields">

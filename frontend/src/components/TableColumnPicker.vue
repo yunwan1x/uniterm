@@ -2,9 +2,8 @@
   <div class="table-column-toolbar" @click.stop @keydown.stop @mousedown.stop>
     <el-popover v-model:visible="open" trigger="click" placement="bottom-end" :width="280" @after-leave="search = ''">
       <template #reference>
-        <el-button size="small" :aria-label="t('tableColumns.show')" :aria-expanded="open">
-          <Columns3 :size="14" /><span>{{ t('tableColumns.show') }}</span>
-          <span v-if="hiddenCount" class="column-count">{{ shownCount }}/{{ columns.length }}</span>
+        <el-button size="small" class="table-column-icon" :title="t('tableColumns.show')" :aria-label="t('tableColumns.show')" :aria-expanded="open">
+          <Columns3 :size="16" aria-hidden="true" />
         </el-button>
       </template>
       <div class="column-picker" @keydown.esc.stop.prevent="open = false">
@@ -33,15 +32,17 @@ const { t } = useI18n()
 const open = ref(false)
 const search = ref('')
 const filtered = computed(() => props.columns.filter(c => c.label.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase())))
-const hiddenCount = computed(() => props.columns.filter(c => !c.required && !columnIsVisible(props.tableKey, c.key)).length)
-const shownCount = computed(() => props.columns.length - hiddenCount.value)
 watch(() => [props.tableKey, ...hiddenColumns(props.tableKey)], () => emit('change'))
 watch(() => props.tableKey, () => { open.value = false; search.value = '' })
 </script>
 <style>
-.table-column-toolbar { display: flex; justify-content: flex-end; align-items: center; height: 2.25rem; flex-shrink: 0; gap: .4rem; }
+.table-column-toolbar { display: inline-flex; align-items: center; flex: 0 0 auto; vertical-align: middle; }
+.table-column-icon.el-button { width: 1.75rem; height: 1.75rem; padding: 0; color: var(--text-secondary); background: transparent; border-color: var(--border-default); }
+.table-column-icon.el-button:hover { color: var(--el-color-primary); background: var(--bg-hover); }
+.table-controls-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+.table-controls-row > h2, .table-controls-row > p { margin: 0; }
 .table-column-toolbar .el-button > span { gap: .35rem; }
-.column-count, .column-picker-note, .column-picker small { color: var(--el-text-color-secondary); font-size: 12px; }
+.column-picker-note, .column-picker small { color: var(--el-text-color-secondary); font-size: 12px; }
 .column-picker { display: flex; flex-direction: column; gap: .6rem; }
 .column-picker-heading { display: flex; justify-content: space-between; align-items: center; }
 .column-picker-list { display: flex; flex-direction: column; max-height: min(320px, 50vh); overflow-y: auto; }

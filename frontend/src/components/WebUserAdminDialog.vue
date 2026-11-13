@@ -21,9 +21,11 @@
         @keyup.enter="create"
       />
       <el-button type="primary" :loading="creating" @click="create">{{ t('webUsers.add') }}</el-button>
+
+      <TableColumnPicker :table-key="'WebUserAdminDialog:users'" :columns="[{key: 'username', label: t('webUsers.username'), required: true}, {key: 'webUsers.role', label: t('webUsers.role'), required: false}, {key: 'webUsers.createdAt', label: t('webUsers.createdAt'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
     </div>
 
-    <TableColumnPicker :table-key="'WebUserAdminDialog:users'" :columns="[{key: 'username', label: t('webUsers.username'), required: true}, {key: 'webUsers.role', label: t('webUsers.role'), required: false}, {key: 'webUsers.createdAt', label: t('webUsers.createdAt'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
     <el-table :ref="bindColumnTable('table0')" v-loading="loading" :data="users" size="small" class="web-users-table">
       <el-table-column prop="username" :label="t('webUsers.username')" min-width="140" />
       <el-table-column v-if="columnIsVisible('WebUserAdminDialog:users', 'webUsers.role')" :label="t('webUsers.role')" width="110">

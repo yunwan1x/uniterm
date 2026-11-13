@@ -72,7 +72,8 @@
 
     <!-- 进度 -->
     <div v-if="batchStore.isExecuting || batchStore.sessions.length > 0" class="section">
-      <div class="section-title">
+      <div class="table-controls-row">
+        <div class="section-title">
         {{ t('batch.results') }}
         <span v-if="batchStore.isExecuting" class="progress-text">
           {{ t('batch.progress', { done: batchStore.completedCount(), total: batchStore.sessions.length }) }}
@@ -81,7 +82,9 @@
           {{ t('batch.completed', { success: batchStore.countByStatus('success'), failed: batchStore.countByStatus('failed') }) }}
         </span>
       </div>
-      <TableColumnPicker :table-key="'BatchExecuteDialog:batchStore.sessions'" :columns="[{key: 'hostName', label: t('batch.host'), required: true}, {key: 'batch.status', label: t('batch.status'), required: false}, {key: 'batch.duration', label: t('batch.duration'), required: false}, {key: 'batch.output', label: t('batch.output'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+        <TableColumnPicker :table-key="'BatchExecuteDialog:batchStore.sessions'" :columns="[{key: 'hostName', label: t('batch.host'), required: true}, {key: 'batch.status', label: t('batch.status'), required: false}, {key: 'batch.duration', label: t('batch.duration'), required: false}, {key: 'batch.output', label: t('batch.output'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+      </div>
+
       <el-table :ref="bindColumnTable('table0')" :data="batchStore.sessions" border stripe size="small" class="result-table">
         <el-table-column :label="t('batch.host')" prop="hostName" width="160">
           <template #default="{ row }">

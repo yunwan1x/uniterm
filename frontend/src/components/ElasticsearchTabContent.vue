@@ -192,8 +192,10 @@
                 <button class="btn btn-default btn-sm" @click="onClusterNewIndex">
                   <Plus :size="'0.875rem'" /> {{ t('es.newIndex') }}
                 </button>
+
+                <TableColumnPicker :table-key="'ElasticsearchTabContent:filteredTableIndices'" :columns="[{key: 'name', label: t('es.indexName'), required: true}, {key: 'health', label: t('es.health'), required: false}, {key: 'status', label: t('es.status'), required: false}, {key: 'es.docsCount', label: t('es.docsCount'), required: false}, {key: 'storeSize', label: t('es.storeSize'), required: false}, {key: 'es.shards', label: t('es.shards'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
               </div>
-              <TableColumnPicker :table-key="'ElasticsearchTabContent:filteredTableIndices'" :columns="[{key: 'name', label: t('es.indexName'), required: true}, {key: 'health', label: t('es.health'), required: false}, {key: 'status', label: t('es.status'), required: false}, {key: 'es.docsCount', label: t('es.docsCount'), required: false}, {key: 'storeSize', label: t('es.storeSize'), required: false}, {key: 'es.shards', label: t('es.shards'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
               <el-table :ref="bindColumnTable('table0')"
                 :data="filteredTableIndices"
                 border

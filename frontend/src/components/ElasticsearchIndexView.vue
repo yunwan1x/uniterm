@@ -70,11 +70,13 @@
           <button class="btn btn-default btn-sm result-toolbar-add" @click="openNewDocument">
             <Plus :size="'0.875rem'" /> {{ t('es.newDocument') }}
           </button>
+
+          <TableColumnPicker :table-key="'ElasticsearchIndexView' + ':' + JSON.stringify(columns)" :columns="[...(columns).map((col, columnIndex) => ({key: String(col), label: col, required: columnIndex === 0})), {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
         </div>
 
         <div v-if="columns.length > 0" class="result-grid">
           <div class="result-table-wrap">
-            <TableColumnPicker :table-key="'ElasticsearchIndexView' + ':' + JSON.stringify(columns)" :columns="[...(columns).map((col, columnIndex) => ({key: String(col), label: col, required: columnIndex === 0})), {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
             <el-table :ref="bindColumnTable('table0')"
               :data="filteredTableData"
               border

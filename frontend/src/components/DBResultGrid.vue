@@ -5,14 +5,18 @@
     tabindex="0"
     @keydown="onGridKeydown"
   >
+    <Teleport :to="columnPickerTarget || 'body'" :disabled="!columnPickerTarget">
+      <div :class="{ 'db-column-picker-fallback': !columnPickerTarget }">
     <TableColumnPicker :table-key="'db:result:' + JSON.stringify(columns.map(c => c.name))" :columns="[...(columns).map((col, columnIndex) => ({key: String(col.name), label: colTitle(col) || col.name, required: columnIndex === 0})), ...((canEdit) ? [{key: 'actions-1', label: actionsLabel || t('container.colActions'), required: false}] : [])]" @change="onColumnVisibilityChange" />
+      </div>
+    </Teleport>
     <el-table
       :key="tableKey"
       ref="tableRef"
       :data="rows"
       border
       size="small"
-      height="calc(100% - 2.25rem)"
+      :height="columnPickerTarget ? '100%' : 'calc(100% - 2rem)'"
       style="width: 100%"
       class="db-result-table"
       :empty-text="emptyText"
@@ -143,6 +147,7 @@ import MenuItem from './MenuItem.vue'
 const { t } = useI18n()
 
 const props = defineProps<{
+  columnPickerTarget?: HTMLElement | null
   rows: Record<string, any>[]
   columns: QueryResultColumn[]
   canEdit: boolean
@@ -516,6 +521,7 @@ defineExpose({
 </script>
 
 <style scoped>
+.db-column-picker-fallback { display: flex; justify-content: flex-end; align-items: center; height: 2rem; }
 .db-result-grid {
   flex: 1;
   min-height: 0;

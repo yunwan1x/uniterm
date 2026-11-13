@@ -99,7 +99,15 @@
             >
               <PanelLeft :size="'0.875rem'" />
             </button>
-            <div class="meta-row"><span class="meta-label">{{ t('redis.keyName') }}</span><span class="meta-value">{{ selectedKey }}</span></div>
+            <div class="meta-row"><span class="meta-label">{{ t('redis.keyName') }}</span><span class="meta-value">{{ selectedKey }}</span>
+              <TableColumnPicker v-if="selectedKeyInfo?.type === 'hash'" :table-key="'RedisTabContent:hashEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'field', label: t('redis.field'), required: true}, {key: 'value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
+              <TableColumnPicker v-if="selectedKeyInfo?.type === 'list'" :table-key="'RedisTabContent:listEntries'" :columns="[{key: 'common.actions', label: t('common.actions'), required: true}, {key: '#', label: '#', required: true}, {key: 'redis.value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+
+              <TableColumnPicker v-if="selectedKeyInfo?.type === 'set'" :table-key="'RedisTabContent:setEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table2'])" />
+
+              <TableColumnPicker v-if="selectedKeyInfo?.type === 'zset'" :table-key="'RedisTabContent:zsetEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'redis.score', label: t('redis.score'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table3'])" />
+            </div>
             <div class="meta-row"><span class="meta-label">{{ t('redis.type') }}</span><span class="meta-value">{{ selectedKeyInfo?.type || '-' }}</span></div>
             <div class="meta-row">
               <span class="meta-label">{{ t('redis.ttl') }}</span>
@@ -119,7 +127,7 @@
 
             <!-- Hash Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'hash'">
-              <TableColumnPicker :table-key="'RedisTabContent:hashEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'field', label: t('redis.field'), required: true}, {key: 'value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
               <el-table :ref="bindColumnTable('table0')" :data="hashEntries" border size="small">
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
                 <el-table-column prop="field" :label="t('redis.field')">
@@ -143,7 +151,7 @@
 
             <!-- List Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'list'">
-              <TableColumnPicker :table-key="'RedisTabContent:listEntries'" :columns="[{key: 'common.actions', label: t('common.actions'), required: true}, {key: '#', label: '#', required: true}, {key: 'redis.value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+
               <el-table :ref="bindColumnTable('table1')" :data="listEntries" border size="small">
                 <el-table-column :width="uiPx(26)" class-name="drag-col">
                   <template #default="{ $index }">
@@ -167,7 +175,7 @@
 
             <!-- Set Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'set'">
-              <TableColumnPicker :table-key="'RedisTabContent:setEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table2'])" />
+
               <el-table :ref="bindColumnTable('table2')" :data="setEntries" border size="small">
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
                 <el-table-column :label="t('redis.member')">
@@ -186,7 +194,7 @@
 
             <!-- ZSet Editor -->
             <template v-else-if="selectedKeyInfo?.type === 'zset'">
-              <TableColumnPicker :table-key="'RedisTabContent:zsetEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'redis.score', label: t('redis.score'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table3'])" />
+
               <el-table :ref="bindColumnTable('table3')" :data="zsetEntries" border size="small">
                 <el-table-column type="index" label="#" :width="uiPx(40)" />
                 <el-table-column :label="t('redis.member')">
@@ -247,6 +255,14 @@
             <el-radio-button value="set">Set</el-radio-button>
             <el-radio-button value="zset">ZSet</el-radio-button>
           </el-radio-group>
+
+          <TableColumnPicker v-if="newKeyType === 'hash'" :table-key="'RedisTabContent:newHashEntries'" :columns="[{key: 'field', label: t('redis.field'), required: true}, {key: 'value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table4'])" />
+
+          <TableColumnPicker v-if="newKeyType === 'list'" :table-key="'RedisTabContent:newListEntries'" :columns="[{key: 'common.actions', label: t('common.actions'), required: true}, {key: '#', label: '#', required: true}, {key: 'redis.value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table5'])" />
+
+          <TableColumnPicker v-if="newKeyType === 'set'" :table-key="'RedisTabContent:newSetEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table6'])" />
+
+          <TableColumnPicker v-if="newKeyType === 'zset'" :table-key="'RedisTabContent:newZSetEntries'" :columns="[{key: 'member', label: t('redis.member'), required: true}, {key: 'score', label: t('redis.score'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table7'])" />
         </el-form-item>
         <!-- String: value -->
         <el-form-item v-if="newKeyType === 'string'" :label="t('redis.entryValue')">
@@ -255,7 +271,7 @@
         <!-- Hash: field/value table -->
         <template v-if="newKeyType === 'hash'">
           <el-form-item :label="t('redis.entryValue')">
-            <TableColumnPicker :table-key="'RedisTabContent:newHashEntries'" :columns="[{key: 'field', label: t('redis.field'), required: true}, {key: 'value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table4'])" />
+
             <el-table :ref="bindColumnTable('table4')" :data="newHashEntries" border size="small">
               <el-table-column prop="field" :label="t('redis.field')">
                 <template #default="{ $index }"><el-input v-model="newHashEntries[$index].field" size="small" type="textarea" :rows="1" autosize /></template>
@@ -273,7 +289,7 @@
         <!-- List: value table -->
         <template v-if="newKeyType === 'list'">
           <el-form-item :label="t('redis.entryValue')">
-            <TableColumnPicker :table-key="'RedisTabContent:newListEntries'" :columns="[{key: 'common.actions', label: t('common.actions'), required: true}, {key: '#', label: '#', required: true}, {key: 'redis.value', label: t('redis.value'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table5'])" />
+
             <el-table :ref="bindColumnTable('table5')" :data="newListEntries" border size="small">
               <el-table-column :width="uiPx(26)" class-name="drag-col">
                 <template #default="{ $index }">
@@ -294,7 +310,7 @@
         <!-- Set: member table -->
         <template v-if="newKeyType === 'set'">
           <el-form-item :label="t('redis.entryValue')">
-            <TableColumnPicker :table-key="'RedisTabContent:newSetEntries'" :columns="[{key: '#', label: '#', required: true}, {key: 'redis.member', label: t('redis.member'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table6'])" />
+
             <el-table :ref="bindColumnTable('table6')" :data="newSetEntries" border size="small">
               <el-table-column type="index" label="#" :width="uiPx(40)" />
               <el-table-column :label="t('redis.member')">
@@ -310,7 +326,7 @@
         <!-- ZSet: member/score table -->
         <template v-if="newKeyType === 'zset'">
           <el-form-item :label="t('redis.entryValue')">
-            <TableColumnPicker :table-key="'RedisTabContent:newZSetEntries'" :columns="[{key: 'member', label: t('redis.member'), required: true}, {key: 'score', label: t('redis.score'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table7'])" />
+
             <el-table :ref="bindColumnTable('table7')" :data="newZSetEntries" border size="small">
               <el-table-column prop="member" :label="t('redis.member')">
                 <template #default="{ $index }"><el-input v-model="newZSetEntries[$index].member" size="small" type="textarea" :rows="1" autosize /></template>

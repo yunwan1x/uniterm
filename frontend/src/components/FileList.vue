@@ -58,6 +58,8 @@
       <button v-if="!flatToolbar" class="filter-icon-btn" @click.stop="moreMenuRef?.toggle($event.currentTarget as HTMLElement)" :title="t('sftp.more')">
         <el-icon><MoreHorizontal :size="'0.875rem'" /></el-icon>
       </button>
+
+      <TableColumnPicker :table-key="'files'" :columns="[{key: 'name', label: t('sftp.name'), required: true}, {key: 'type', label: t('sftp.type'), required: false}, {key: 'modTime', label: t('sftp.modified'), required: false}, {key: 'size', label: t('sftp.size'), required: false}, {key: 'sftp.permission', label: t('sftp.permission'), required: false}, {key: 'sftp.owner', label: t('sftp.owner'), required: false}, {key: 'sftp.group', label: t('sftp.group'), required: false}]" @change="refreshColumnLayout(tableRef)" />
     </div>
     <PathBreadcrumb
       v-if="breadcrumbMode"
@@ -82,7 +84,7 @@
           <el-button @click="pasteLoading ? emit('cancelPaste') : emit('cancelLoad')">{{ t('sftp.cancel') }}</el-button>
         </div>
       </div>
-      <TableColumnPicker :table-key="'files'" :columns="[{key: 'name', label: t('sftp.name'), required: true}, {key: 'type', label: t('sftp.type'), required: false}, {key: 'modTime', label: t('sftp.modified'), required: false}, {key: 'size', label: t('sftp.size'), required: false}, {key: 'sftp.permission', label: t('sftp.permission'), required: false}, {key: 'sftp.owner', label: t('sftp.owner'), required: false}, {key: 'sftp.group', label: t('sftp.group'), required: false}]" @change="refreshColumnLayout(tableRef)" />
+
       <el-table
         ref="tableRef"
         :key="locale"

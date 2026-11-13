@@ -26,16 +26,18 @@
       <el-button size="small" @click="loginOpen = true">{{ t('container.login') }}</el-button>
       <el-button size="small" @click="onPrune">{{ t('container.prune') }}</el-button>
       <el-button size="small" :icon="RefreshCw" @click="store.refresh(tab.id); store.loadImages(tab.id)" />
+
+      <TableColumnPicker :table-key="'ImagesView:filteredImages'" :columns="[{key: 'container.colRepository', label: t('container.colRepository'), required: true}, {key: 'container.colTag', label: t('container.colTag'), required: false}, {key: 'container.colId', label: t('container.colId'), required: false}, {key: 'container.colSize', label: t('container.colSize'), required: false}, {key: 'container.colCreated', label: t('container.colCreated'), required: false}, {key: 'container.colRelated', label: t('container.colRelated'), required: false}, {key: 'container.colActions', label: t('container.colActions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
     </div>
 
     <div class="container-table-wrap">
       <div class="table-flex">
-      <TableColumnPicker :table-key="'ImagesView:filteredImages'" :columns="[{key: 'container.colRepository', label: t('container.colRepository'), required: true}, {key: 'container.colTag', label: t('container.colTag'), required: false}, {key: 'container.colId', label: t('container.colId'), required: false}, {key: 'container.colSize', label: t('container.colSize'), required: false}, {key: 'container.colCreated', label: t('container.colCreated'), required: false}, {key: 'container.colRelated', label: t('container.colRelated'), required: false}, {key: 'container.colActions', label: t('container.colActions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
       <el-table :ref="bindColumnTable('table0')"
         v-loading="!session?.images.length && !!session?.imagesLoading"
         :data="filteredImages"
         size="small"
-        height="calc(100% - 2.25rem)"
+        height="100%"
         class="k8s-list-table"
         border
         @row-click="openDetail"

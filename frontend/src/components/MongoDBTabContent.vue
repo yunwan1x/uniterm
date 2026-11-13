@@ -156,8 +156,10 @@
                 <button class="btn btn-default btn-sm" @click="onObjectsNewCollection(tab.dbName)">
                   <Plus :size="'0.875rem'" /> {{ t('mongodb.newCollection') }}
                 </button>
+
+                <TableColumnPicker :table-key="'MongoDBTabContent:filteredObjects(tab.dbName)'" :columns="[{key: 'mongodb.collection', label: t('mongodb.collection'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
               </div>
-              <TableColumnPicker :table-key="'MongoDBTabContent:filteredObjects(tab.dbName)'" :columns="[{key: 'mongodb.collection', label: t('mongodb.collection'), required: true}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
               <el-table :ref="bindColumnTable('table0')"
                 :data="filteredObjects(tab.dbName)"
                 border

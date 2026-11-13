@@ -94,9 +94,11 @@
             <el-button v-else type="danger" class="go-btn" @click="stopIPScan">
               {{ t('netscan.common.stop') }}
             </el-button>
+
+            <TableColumnPicker :table-key="'NetworkScanTabContent:ipHosts'" :columns="[{key: 'ip', label: t('netscan.ipScan.columns.ip'), required: true}, {key: 'mac', label: t('netscan.ipScan.columns.mac'), required: false}, {key: 'hostname', label: t('netscan.ipScan.columns.hostname'), required: false}, ...(serviceColumns).map(sp => ({key: String(sp.port), label: `${sp.port} (${sp.name})`, required: false})), {key: 'netscan.ipScan.deepScan', label: t('netscan.ipScan.deepScan'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
           </div>
           <div class="table-wrap">
-            <TableColumnPicker :table-key="'NetworkScanTabContent:ipHosts'" :columns="[{key: 'ip', label: t('netscan.ipScan.columns.ip'), required: true}, {key: 'mac', label: t('netscan.ipScan.columns.mac'), required: false}, {key: 'hostname', label: t('netscan.ipScan.columns.hostname'), required: false}, ...(serviceColumns).map(sp => ({key: String(sp.port), label: `${sp.port} (${sp.name})`, required: false})), {key: 'netscan.ipScan.deepScan', label: t('netscan.ipScan.deepScan'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
             <el-table :ref="bindColumnTable('table0')"
               :data="ipHosts"
               size="small"
@@ -228,9 +230,11 @@
             <el-button v-else type="danger" class="go-btn" @click="stopPortScan">
               {{ t('netscan.common.stop') }}
             </el-button>
+
+            <TableColumnPicker :table-key="'NetworkScanTabContent:portResults'" :columns="[{key: 'host', label: t('netscan.portScan.columns.host'), required: true}, {key: 'port', label: t('netscan.portScan.columns.port'), required: false}, {key: 'service', label: t('netscan.portScan.columns.service'), required: false}, {key: 'netscan.portScan.columns.state', label: t('netscan.portScan.columns.state'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
           </div>
           <div class="table-wrap">
-            <TableColumnPicker :table-key="'NetworkScanTabContent:portResults'" :columns="[{key: 'host', label: t('netscan.portScan.columns.host'), required: true}, {key: 'port', label: t('netscan.portScan.columns.port'), required: false}, {key: 'service', label: t('netscan.portScan.columns.service'), required: false}, {key: 'netscan.portScan.columns.state', label: t('netscan.portScan.columns.state'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+
             <el-table :ref="bindColumnTable('table1')"
               :data="portResults"
               size="small"

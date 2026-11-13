@@ -17,18 +17,22 @@
       <span class="k8s-list-title">
         {{ titleLabel }} ({{ displayCount }})
       </span>
+
+      <TableColumnPicker v-if="frame.kind === 'custom'" :table-key="columnPreferenceKey" :columns="[{key: 'Name', label: 'Name', required: true}, ...(frame.crd.printerColumns).map(pc => ({key: String(pc.name), label: pc.name, required: false})), {key: 'ownerReferences', label: 'Owner', required: false}, {key: 'Age', label: 'Age', required: false}, {key: 'k8s.actions', label: t('k8s.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
+      <TableColumnPicker v-if="frame.kind !== 'custom'" :table-key="columnPreferenceKey" :columns="[...(desc?.columns || []).map((col, columnIndex) => ({key: String(col.header), label: col.header, required: columnIndex === 0})), {key: 'ownerReferences', label: 'Owner', required: false}, ...((actionColWidth) ? [{key: 'k8s.actions', label: t('k8s.actions'), required: false}] : [])]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
     </div>
 
     <div v-if="listError" class="k8s-list-err">{{ listErrorText }}</div>
 
     <!-- CRD 实例列表：动态列 -->
     <template v-if="frame.kind === 'custom'">
-    <TableColumnPicker :table-key="columnPreferenceKey" :columns="[{key: 'Name', label: 'Name', required: true}, ...(frame.crd.printerColumns).map(pc => ({key: String(pc.name), label: pc.name, required: false})), {key: 'ownerReferences', label: 'Owner', required: false}, {key: 'Age', label: 'Age', required: false}, {key: 'k8s.actions', label: t('k8s.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
     <el-table :ref="bindColumnTable('table0')"
 
       :data="crdFiltered"
       size="small"
-      height="calc(100% - 2.5rem - 2.25rem)"
+      height="calc(100% - 2.5rem)"
       class="k8s-list-table"
       border
       v-loading="isLoading"
@@ -57,12 +61,12 @@
 
     <!-- 常规资源列表 -->
     <template v-else>
-    <TableColumnPicker :table-key="columnPreferenceKey" :columns="[...(desc?.columns || []).map((col, columnIndex) => ({key: String(col.header), label: col.header, required: columnIndex === 0})), {key: 'ownerReferences', label: 'Owner', required: false}, ...((actionColWidth) ? [{key: 'k8s.actions', label: t('k8s.actions'), required: false}] : [])]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+
     <el-table :ref="bindColumnTable('table1')"
 
       :data="filtered"
       size="small"
-      height="calc(100% - 2.5rem - 2.25rem)"
+      height="calc(100% - 2.5rem)"
       class="k8s-list-table"
       border
       v-loading="isLoading"

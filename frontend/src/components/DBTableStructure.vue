@@ -15,8 +15,10 @@
           <button class="btn btn-default btn-sm" @click="startAddColumn">
             <Plus :size="'0.875rem'" /> {{ t('db.addColumn') }}
           </button>
+
+          <TableColumnPicker :table-key="'DBTableStructure:schema?.columns || []'" :columns="[{key: 'name', label: t('db.colName'), required: true}, {key: 'type', label: t('db.colType'), required: false}, {key: 'db.colNullable', label: t('db.colNullable'), required: false}, {key: 'defaultVal', label: t('db.colDefault'), required: false}, {key: 'db.colPrimary', label: t('db.colPrimary'), required: false}, {key: 'db.colAutoIncrement', label: t('db.colAutoIncrement'), required: false}, ...((caps?.['supportsComment']) ? [{key: 'comment', label: t('db.colComment'), required: false}] : []), {key: 'db.actions', label: t('db.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
         </div>
-        <TableColumnPicker :table-key="'DBTableStructure:schema?.columns || []'" :columns="[{key: 'name', label: t('db.colName'), required: true}, {key: 'type', label: t('db.colType'), required: false}, {key: 'db.colNullable', label: t('db.colNullable'), required: false}, {key: 'defaultVal', label: t('db.colDefault'), required: false}, {key: 'db.colPrimary', label: t('db.colPrimary'), required: false}, {key: 'db.colAutoIncrement', label: t('db.colAutoIncrement'), required: false}, ...((caps?.['supportsComment']) ? [{key: 'comment', label: t('db.colComment'), required: false}] : []), {key: 'db.actions', label: t('db.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
         <el-table :ref="bindColumnTable('table0')" :data="schema?.columns || []" border size="small" style="width:100%">
           <el-table-column prop="name" :label="t('db.colName')" />
           <el-table-column v-if="columnIsVisible('DBTableStructure:schema?.columns || []', 'type')" prop="type" :label="t('db.colType')" />
@@ -58,8 +60,10 @@
           <button class="btn btn-default btn-sm" @click="startAddIndex">
             <Plus :size="'0.875rem'" /> {{ t('db.addIndex') }}
           </button>
+
+          <TableColumnPicker :table-key="'DBTableStructure:schema?.indexes || []'" :columns="[{key: 'name', label: t('db.idxName'), required: true}, {key: 'db.idxColumns', label: t('db.idxColumns'), required: false}, {key: 'db.idxType', label: t('db.idxType'), required: false}, {key: 'db.actions', label: t('db.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
         </div>
-        <TableColumnPicker :table-key="'DBTableStructure:schema?.indexes || []'" :columns="[{key: 'name', label: t('db.idxName'), required: true}, {key: 'db.idxColumns', label: t('db.idxColumns'), required: false}, {key: 'db.idxType', label: t('db.idxType'), required: false}, {key: 'db.actions', label: t('db.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table1'])" />
+
         <el-table :ref="bindColumnTable('table1')" :data="schema?.indexes || []" border size="small" style="width:100%">
           <el-table-column prop="name" :label="t('db.idxName')" />
           <el-table-column v-if="columnIsVisible('DBTableStructure:schema?.indexes || []', 'db.idxColumns')" :label="t('db.idxColumns')">

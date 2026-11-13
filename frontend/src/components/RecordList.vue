@@ -14,9 +14,11 @@
         {{ t('record.deleteAll') }}
       </el-button>
       <span class="record-count">{{ recordings.length }} {{ t('record.list') }}</span>
+
+      <TableColumnPicker :table-key="'RecordList:recordings'" :columns="[{key: 'record.connection', label: t('record.connection'), required: true}, {key: 'record.startTime', label: t('record.startTime'), required: false}, {key: 'record.duration', label: t('record.duration'), required: false}, {key: 'record.size', label: t('record.size'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
     </div>
 
-    <TableColumnPicker :table-key="'RecordList:recordings'" :columns="[{key: 'record.connection', label: t('record.connection'), required: true}, {key: 'record.startTime', label: t('record.startTime'), required: false}, {key: 'record.duration', label: t('record.duration'), required: false}, {key: 'record.size', label: t('record.size'), required: false}, {key: 'common.actions', label: t('common.actions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
     <el-table :ref="bindColumnTable('table0')"
       :data="recordings"
       v-loading="loading"

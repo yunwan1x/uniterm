@@ -38,15 +38,17 @@
       <div class="toolbar-spacer" />
       <el-button size="small" @click="createOpen = true">{{ t('container.create') }}</el-button>
       <el-button size="small" :icon="RefreshCw" @click="store.refresh(tab.id)" />
+
+      <TableColumnPicker :table-key="'ContainersView:filteredContainers'" :columns="[{key: 'container.colName', label: t('container.colName'), required: true}, {key: 'container.colImage', label: t('container.colImage'), required: false}, {key: 'container.colId', label: t('container.colId'), required: false}, {key: 'container.colState', label: t('container.colState'), required: false}, {key: 'container.colPorts', label: t('container.colPorts'), required: false}, {key: 'container.colCreated', label: t('container.colCreated'), required: false}, {key: 'container.colActions', label: t('container.colActions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
     </div>
 
     <div class="container-table-wrap">
-      <TableColumnPicker :table-key="'ContainersView:filteredContainers'" :columns="[{key: 'container.colName', label: t('container.colName'), required: true}, {key: 'container.colImage', label: t('container.colImage'), required: false}, {key: 'container.colId', label: t('container.colId'), required: false}, {key: 'container.colState', label: t('container.colState'), required: false}, {key: 'container.colPorts', label: t('container.colPorts'), required: false}, {key: 'container.colCreated', label: t('container.colCreated'), required: false}, {key: 'container.colActions', label: t('container.colActions'), required: false}]" @change="refreshColumnLayout(columnTableRefs['table0'])" />
+
       <el-table :ref="bindColumnTable('table0')"
         v-loading="!session?.containers.length && !!session?.refreshing"
         :data="filteredContainers"
         size="small"
-        height="calc(100% - 2.5rem - 2.25rem)"
+        height="calc(100% - 2.5rem)"
         class="k8s-list-table"
         border
         @row-click="openDetail"

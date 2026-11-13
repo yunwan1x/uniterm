@@ -81,7 +81,7 @@
         <span v-if="lastDurationMs != null" class="result-duration"> · {{ lastDurationMs }}ms</span>
       </div>
 
-      <div v-if="queryResult" class="result-toolbar">
+      <div v-if="queryResult" ref="resultColumnPickerTarget" class="result-toolbar">
         <button v-if="tableName" class="btn btn-default btn-sm" @click="onToggleBrowseControls">
           <ListFilter :size="14" /> {{ t('db.filterSort') }}<span v-if="browseMode && (appliedFilters.length || appliedSorts.length)"> ({{ appliedFilters.length + appliedSorts.length }})</span>
         </button>
@@ -173,6 +173,7 @@
 
       <div v-if="queryResult" class="result-grid">
         <DBResultGrid
+          :column-picker-target="resultColumnPickerTarget"
           ref="resultGridRef"
           :key="`grid-${canEditRows ? 1 : 0}-${queryResult.columns.map(c => c.name).join('|')}`"
           :rows="displayRows"
@@ -256,9 +257,12 @@
             </select>
           </div>
         </div>
-        <p class="csv-hint">{{ t('db.csvPreviewCount', { count: csvPreview?.rows?.length || 0 }) }}</p>
-        <div class="csv-sample">
+        <div class="table-controls-row">
+          <p class="csv-hint">{{ t('db.csvPreviewCount', { count: csvPreview?.rows?.length || 0 }) }}</p>
           <TableColumnPicker :table-key="'csv-preview:' + JSON.stringify(csvPreview?.headers || [])" :columns="(csvPreview?.headers || []).map((header, i) => ({key: String(i), label: header, required: i === 0}))" />
+        </div>
+        <div class="csv-sample">
+
 <table>
             <thead><tr><th v-for="(header, i) in (csvPreview?.headers || []).filter((_, j) => j === 0 || columnIsVisible('csv-preview:' + JSON.stringify(csvPreview?.headers || []), String(j)))" :key="i">{{ header }}</th></tr></thead>
             <tbody><tr v-for="(row, i) in csvPreview?.rows || []" :key="i"><td v-for="(cell, j) in row.filter((_, k) => k === 0 || columnIsVisible('csv-preview:' + JSON.stringify(csvPreview?.headers || []), String(k)))" :key="j">{{ cell }}</td></tr></tbody>
@@ -967,6 +971,7 @@ async function onSortChange(payload: { field: string; order: 'asc' | 'desc' | nu
   sortOrder.value = payload.order === 'asc' ? 'ascending' : payload.order === 'desc' ? 'descending' : null
 }
 
+const resultColumnPickerTarget = ref<HTMLElement | null>(null)
 const resultGridRef = ref<InstanceType<typeof DBResultGrid> | null>(null)
 
 /** Number of unsaved inline cell edits staged in the result grid. */
