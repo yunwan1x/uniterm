@@ -19,6 +19,7 @@ type PiPWindowAPI = {
 export function useFloatingWindow(
   root: Ref<HTMLElement | undefined>,
   onRestore?: () => void,
+  getVideoSize?: () => { width: number; height: number },
 ) {
   const kind = ref<'inline' | 'page' | 'native'>('inline')
   const target = shallowRef<HTMLElement | null>(null)
@@ -90,7 +91,7 @@ export function useFloatingWindow(
     destination.documentElement.style.cssText +=
       ';height:100%;background:var(--bg-base);color:var(--text-primary);'
     destination.body.style.cssText =
-      'margin:0;height:100%;overflow:hidden;background:var(--bg-base);color:var(--text-primary);'
+      'margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg-base);color:var(--text-primary);'
     destination.title = 'Android · uniTerm'
   }
   function returned() {
@@ -121,9 +122,16 @@ export function useFloatingWindow(
         window as Window & { documentPictureInPicture?: PiPWindowAPI }
       ).documentPictureInPicture
       if (window.isSecureContext && api) {
+        // Keep the initial content area at the actual stream aspect ratio.
+        // The toolbar overlays video, so it needs no extra layout width.
+        const video = getVideoSize?.() ?? root.value?.querySelector('canvas')
+        const videoWidth = video?.width || 720
+        const videoHeight = video?.height || 1280
+        const landscape = videoWidth > videoHeight
+        const scale = Math.min((landscape ? 690 : 360) / videoWidth, (landscape ? 360 : 690) / videoHeight)
         const child = await api.requestWindow({
-          width: 360,
-          height: 690,
+          width: Math.max(1, Math.round(videoWidth * scale)),
+          height: Math.max(1, Math.round(videoHeight * scale)),
           disallowReturnToOpener: true,
         })
         if (destroyed || request !== generation) {
@@ -165,8 +173,19 @@ export function useFloatingWindow(
     const move = (event: PointerEvent) => {
       if (event.pointerId !== e.pointerId) return
       if (resize) {
-        if (resize !== 'bottom') geometry.value.width = Math.min(window.innerWidth - start.x, Math.max(260, start.width + event.clientX - x))
-        if (resize !== 'right') geometry.value.height = Math.min(window.innerHeight - start.y, Math.max(240, start.height + event.clientY - y))
+        // At the viewport edge there is no more pointer travel available.
+        // Expand toward the opposite edge instead of keeping the old anchor.
+        // Derive every update from start so dragging back restores the anchor.
+        if (resize !== 'bottom') {
+          const reachesEdge = event.clientX >= window.innerWidth - 2 && event.clientX > x
+          geometry.value.width = reachesEdge ? window.innerWidth : Math.min(window.innerWidth, Math.max(260, start.width + event.clientX - x))
+          geometry.value.x = Math.min(start.x, window.innerWidth - geometry.value.width)
+        }
+        if (resize !== 'right') {
+          const reachesEdge = event.clientY >= window.innerHeight - 2 && event.clientY > y
+          geometry.value.height = reachesEdge ? window.innerHeight : Math.min(window.innerHeight, Math.max(240, start.height + event.clientY - y))
+          geometry.value.y = Math.min(start.y, window.innerHeight - geometry.value.height)
+        }
       } else {
         geometry.value.x = start.x + event.clientX - x
         geometry.value.y = start.y + event.clientY - y

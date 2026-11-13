@@ -4,8 +4,9 @@ vi.mock('@yume-chan/scrcpy-decoder-webcodecs',()=>({WebCodecsVideoDecoder:class 
 vi.mock('@yume-chan/scrcpy',()=>({ScrcpyVideoCodecId:{H264:1}}))
 import {AndroidClient,androidClients} from './client'
 class Socket {static OPEN=1;readyState=1;binaryType='';onclose=()=>{};onmessage=(_e:any)=>{};onerror=()=>{};send=vi.fn();close=vi.fn()}
-function make(){vi.stubGlobal('document',{createElement:()=>({dataset:{}})});vi.stubGlobal('WebSocket',Socket);return new AndroidClient('ws://localhost/test')}
-afterEach(()=>{androidClients.clear();vi.unstubAllGlobals()})
+const created:AndroidClient[]=[]
+function make(){vi.stubGlobal('document',{createElement:()=>({dataset:{}})});vi.stubGlobal('WebSocket',Socket);const c=new AndroidClient('ws://localhost/test');created.push(c);return c}
+afterEach(()=>{created.splice(0).forEach(c=>c.dispose());androidClients.clear();vi.useRealTimers();vi.unstubAllGlobals()})
 describe('Android browser lifecycle',()=>{
  it('uses software decoding without WebCodecs and exposes disconnect instead of spinning forever',()=>{const c=make();expect(c.mode).toBe('H.264 software');(c.ws as any).onmessage({data:JSON.stringify({width:720,height:1280})});expect(c.connected).toBe(true);androidClients.set(c.url,c);(c.ws as any).onclose();expect(c.connected).toBe(false);expect(c.error).toMatch(/closed/);expect(androidClients.has(c.url)).toBe(false)})
  it('bounds video backlog and closes on overload',()=>{const c=make();(c.ws as any).onmessage({data:new ArrayBuffer(9*1024*1024)});expect(c.error).toMatch(/cannot keep up/);expect(c.ws.close).toHaveBeenCalled()})
@@ -80,3 +81,28 @@ describe('Android camera metadata', () => {
   expect(client.videoSource).toBe('display')
  })
 })
+
+ describe('Android connection failures',()=>{
+  it('reports a silent startup and closes the socket instead of waiting forever',()=>{
+   vi.useFakeTimers();const c=make();c.changed=vi.fn();
+   vi.advanceTimersByTime(45000);
+   expect(c.error).toMatch(/timed out/);expect(c.connected).toBe(false);expect(c.ws.close).toHaveBeenCalled();expect(c.changed).toHaveBeenCalled();
+  })
+  it('does not treat metadata alone as a working video stream',()=>{
+   vi.useFakeTimers();const c=make();(c.ws as any).onmessage({data:JSON.stringify({width:720,height:1280})});
+   vi.advanceTimersByTime(45000);expect(c.error).toMatch(/no video/);expect(c.connected).toBe(false);
+  })
+  it('clears startup timeout once video data is accepted',async()=>{
+   vi.useFakeTimers();const c=make();const packet=new Uint8Array(14);packet[0]=1;
+   (c.ws as any).onmessage({data:packet.buffer});await vi.advanceTimersByTimeAsync(45000);
+   expect(c.error).toBe('');expect(c.ws.close).not.toHaveBeenCalled();
+  })
+  it('reports malformed metadata and preserves server errors across late events',()=>{
+   const c=make();(c.ws as any).onmessage({data:'not json'});expect(c.error).toMatch(/Invalid response/);
+   const d=make();(d.ws as any).onmessage({data:JSON.stringify({error:{message:'Device authorization rejected'}})});
+   (d.ws as any).onerror();(d.ws as any).onclose();expect(d.error).toBe('Device authorization rejected');expect(d.connected).toBe(false);
+  })
+  it('does not turn an intentional dispose into a connection error',()=>{
+   vi.useFakeTimers();const c=make();c.dispose();(c.ws as any).onclose();vi.advanceTimersByTime(45000);expect(c.error).toBe('');
+  })
+ })

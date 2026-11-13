@@ -2496,5 +2496,8 @@
   "android.actualVideo": "Received video",
   "android.windowDisplay": "Window display",
   "android.fitWindow": "Fit window",
-  "android.actualPixels": "Actual pixels"
+  "android.actualPixels": "Actual pixels",
+  "android.toggleToolbar": "Show / hide toolbar",
+  "android.connectionFailed": "Android connection failed",
+  "android.missingConfig": "Connection settings are missing. Close this tab and open the Android connection again."
 }

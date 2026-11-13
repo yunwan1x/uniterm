@@ -40,6 +40,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('Android floating window lifecycle', () => {
+  it.each([[416,912,315,690],[912,416,690,315],[720,720,360,360]])('opens %sx%s video at matching %sx%s window dimensions',async(w,h,width,height)=>{
+    const child=childWindow(),requestWindow=vi.fn().mockResolvedValue(child)
+    Object.assign(window,{documentPictureInPicture:{requestWindow}})
+    const root=ref({querySelector:()=>({width:w,height:h})} as unknown as HTMLElement)
+    const view=useFloatingWindow(root);await view.open()
+    expect(requestWindow).toHaveBeenCalledWith({width,height,disallowReturnToOpener:true})
+    expect(child.document.body.style.cssText).toContain('padding:0;')
+  })
+
+  it('uses received video dimensions before the first canvas frame is drawn',async()=>{
+    const requestWindow=vi.fn().mockResolvedValue(childWindow())
+    Object.assign(window,{documentPictureInPicture:{requestWindow}})
+    const root=ref({querySelector:()=>({width:300,height:150})} as unknown as HTMLElement)
+    await useFloatingWindow(root,undefined,()=>({width:416,height:912})).open()
+    expect(requestWindow).toHaveBeenCalledWith({width:315,height:690,disallowReturnToOpener:true})
+  })
   it('uses local floating window when native API is absent and clamps to viewport', async () => {
     const view = useFloatingWindow(ref())
     await view.open()
@@ -123,7 +139,7 @@ describe('Android floating viewport geometry', () => {
  function pointer(type: string,x:number,y:number) {
   return Object.assign(new Event(type),{clientX:x,clientY:y,pointerId:1,button:0}) as PointerEvent
  }
- it('can reach the bottom edge, fill the viewport and resize without moving its anchor',async()=>{
+ it('can move to the bottom edge and expand across the full viewport',async()=>{
   const view=useFloatingWindow(ref());await view.open()
   view.drag(pointer('pointerdown',850,70))
   window.dispatchEvent(pointer('pointermove',850,1000))
@@ -132,13 +148,28 @@ describe('Android floating viewport geometry', () => {
   await view.maximize()
   expect(view.style.value).toMatchObject({left:'0px',top:'0px',width:'1200px',height:'900px'})
   await view.restore();await view.open()
-  const before=view.style.value
   view.drag(pointer('pointerdown',1176,704),true)
   window.dispatchEvent(pointer('pointermove',2000,2000))
   window.dispatchEvent(pointer('pointerup',2000,2000))
-  expect(view.style.value.left).toBe(before.left)
-  expect(view.style.value.top).toBe(before.top)
-  expect(view.style.value.height).toBe('836px')
+  expect(view.style.value).toMatchObject({left:'0px',top:'0px',width:'1200px',height:'900px'})
+ })
+ it('fills height at the reachable bottom edge and restores the anchor when dragged back',async()=>{
+  const view=useFloatingWindow(ref());await view.open()
+  const before={...view.style.value}
+  view.drag(pointer('pointerdown',1000,704),'bottom')
+  window.dispatchEvent(pointer('pointermove',1000,899))
+  expect(view.style.value).toMatchObject({top:'0px',height:'900px',left:before.left,width:before.width})
+  window.dispatchEvent(pointer('pointermove',1000,754))
+  expect(view.style.value).toMatchObject({top:before.top,height:'690px'})
+  window.dispatchEvent(pointer('pointerup',1000,754))
+ })
+ it('fills width at the reachable right edge without changing height',async()=>{
+  const view=useFloatingWindow(ref());await view.open()
+  const before={...view.style.value}
+  view.drag(pointer('pointerdown',1176,400),'right')
+  window.dispatchEvent(pointer('pointermove',1199,400))
+  expect(view.style.value).toMatchObject({left:'0px',width:'1200px',top:before.top,height:before.height})
+  window.dispatchEvent(pointer('pointerup',1199,400))
  })
  it('bottom and right edges resize only their own axis', async()=>{
   const view=useFloatingWindow(ref());await view.open()

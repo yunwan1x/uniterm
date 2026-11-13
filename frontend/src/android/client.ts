@@ -8,6 +8,7 @@ import {
   type ScrcpyMediaStreamPacket,
 } from '@yume-chan/scrcpy'
 import { toWebSocketURL } from '../utils/webSocketUrl'
+import { androidErrorMessage } from './errors'
 import { PcmAudioPlayer } from '../utils/pcmAudio'
 export const androidClients = new Map<string, AndroidClient>()
 export class AndroidClient {
@@ -27,6 +28,7 @@ export class AndroidClient {
   private pending = 0
   private chain = Promise.resolve()
   private disposed = false
+  private startupTimer: ReturnType<typeof setTimeout> | undefined
   constructor(public url: string) {
     if (WebCodecsVideoDecoder.isSupported) {
       this.decoder = new WebCodecsVideoDecoder({
@@ -46,13 +48,21 @@ export class AndroidClient {
     const writer = this.decoder.writable.getWriter()
     this.ws = new WebSocket(toWebSocketURL(url))
     this.ws.binaryType = 'arraybuffer'
+    this.startupTimer = setTimeout(() => this.fail('Android connection timed out: no video received. Check wireless debugging, device authorization and network reachability.'), 45000)
     this.ws.onmessage = (e) => {
       if (this.disposed) return
       if (typeof e.data === 'string') {
-        const m = JSON.parse(e.data)
-        if (m.error) {
-          this.error = m.error
-          this.changed()
+        let m
+        try { m = JSON.parse(e.data) } catch {
+          this.fail('Invalid response from Android session server')
+          return
+        }
+        if (m?.error) {
+          this.fail(androidErrorMessage(m.error))
+          return
+        }
+        if (!m || !Number.isInteger(m.width) || !Number.isInteger(m.height) || m.width <= 0 || m.height <= 0) {
+          this.fail('Invalid Android video metadata')
           return
         }
         this.videoSource = m.videoSource ?? 'display'
@@ -90,29 +100,34 @@ export class AndroidClient {
         .then(async () => {
           if (!this.disposed) {
             await writer.write(packet)
+            if (packet.type === 'data') clearTimeout(this.startupTimer)
             this.frames = this.decoder.framesRendered
             this.changed()
           }
         })
         .catch((e) => {
-          this.error = String(e)
-          this.dispose()
+          this.fail(androidErrorMessage(e))
         })
         .finally(() => {
           this.pending -= data.length
         })
     }
     this.ws.onerror = () => {
-      this.error = 'Android connection failed'
-      this.changed()
+      if (!this.disposed) this.fail('Android stream connection failed. Check server connectivity and reconnect.')
     }
-    this.ws.onclose = () => {
-      if (!this.error) this.error = 'Android connection closed; reconnect'
+    this.ws.onclose = (event) => {
+      if (this.disposed) return
+      if (!this.error) this.error = `Android connection closed${event?.code ? ` (${event.code})` : ''}${event?.reason ? `: ${event.reason}` : '; reconnect'}`
       this.connected = false
       this.dispose()
       androidClients.delete(url)
       this.changed()
     }
+  }
+  private fail(message: string) {
+    if (this.disposed) return
+    this.error = message
+    this.dispose()
   }
   send(message: object) {
     if (this.ws.readyState === WebSocket.OPEN)
@@ -149,6 +164,8 @@ export class AndroidClient {
   dispose() {
     if (this.disposed) return
     this.disposed = true
+    clearTimeout(this.startupTimer)
+    if (androidClients.get(this.url) === this) androidClients.delete(this.url)
     this.connected = false
     this.ws.close()
     this.decoder.dispose()

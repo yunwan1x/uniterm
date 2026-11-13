@@ -2469,5 +2469,8 @@
   "android.actualVideo": "接收畫面",
   "android.windowDisplay": "視窗顯示",
   "android.fitWindow": "適應視窗",
-  "android.actualPixels": "實際像素"
+  "android.actualPixels": "實際像素",
+  "android.toggleToolbar": "展開 / 收起工具列",
+  "android.connectionFailed": "Android 連線失敗",
+  "android.missingConfig": "連線設定缺失，請關閉此分頁後重新開啟 Android 連線。"
 }

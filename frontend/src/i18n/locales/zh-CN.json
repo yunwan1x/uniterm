@@ -2496,5 +2496,8 @@
   "android.actualVideo": "接收画面",
   "android.windowDisplay": "窗口显示",
   "android.fitWindow": "适应窗口",
-  "android.actualPixels": "实际像素"
+  "android.actualPixels": "实际像素",
+  "android.toggleToolbar": "展开 / 收起工具栏",
+  "android.connectionFailed": "Android 连接失败",
+  "android.missingConfig": "连接配置缺失，请关闭此标签页后重新打开 Android 连接。"
 }
