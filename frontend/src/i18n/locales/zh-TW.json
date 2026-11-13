@@ -2472,5 +2472,8 @@
   "android.actualPixels": "實際像素",
   "android.toggleToolbar": "展開 / 收起工具列",
   "android.connectionFailed": "Android 連線失敗",
-  "android.missingConfig": "連線設定缺失，請關閉此分頁後重新開啟 Android 連線。"
+  "android.missingConfig": "連線設定缺失，請關閉此分頁後重新開啟 Android 連線。",
+  "android.detachedWindow": "獨立視窗",
+  "android.popupBlocked": "彈出視窗遭瀏覽器封鎖，請允許本站彈出視窗後重試。",
+  "android.maximizeWindow": "填滿螢幕"
 }

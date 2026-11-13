@@ -2499,5 +2499,8 @@
   "android.actualPixels": "实际像素",
   "android.toggleToolbar": "展开 / 收起工具栏",
   "android.connectionFailed": "Android 连接失败",
-  "android.missingConfig": "连接配置缺失，请关闭此标签页后重新打开 Android 连接。"
+  "android.missingConfig": "连接配置缺失，请关闭此标签页后重新打开 Android 连接。",
+  "android.detachedWindow": "独立窗口",
+  "android.popupBlocked": "弹出窗口被浏览器拦截，请允许本站弹出窗口后重试。",
+  "android.maximizeWindow": "铺满屏幕"
 }

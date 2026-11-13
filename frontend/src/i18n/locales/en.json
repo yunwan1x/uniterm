@@ -2499,5 +2499,8 @@
   "android.actualPixels": "Actual pixels",
   "android.toggleToolbar": "Show / hide toolbar",
   "android.connectionFailed": "Android connection failed",
-  "android.missingConfig": "Connection settings are missing. Close this tab and open the Android connection again."
+  "android.missingConfig": "Connection settings are missing. Close this tab and open the Android connection again.",
+  "android.detachedWindow": "Independent window",
+  "android.popupBlocked": "Popup blocked. Allow popups for this site, then try again.",
+  "android.maximizeWindow": "Fill screen"
 }

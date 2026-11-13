@@ -12,7 +12,8 @@
         :class="{
           'android-floating': floating,
           'android-floating-page': floatKind === 'page',
-          'android-floating-native': floatKind === 'native',
+          'android-floating-window': floatKind === 'window',
+          'android-floating-native': floatKind === 'native' || floatKind === 'window',
           'android-toolbar-open': toolbarVisible,
         }"
         :style="floatingStyle"
@@ -31,6 +32,7 @@
           ref="screen"
           class="android-screen"
           :class="{ 'android-pixel-view': displayMode === 'pixels' }"
+          :style="{ '--android-video-aspect': width / height }"
           tabindex="0"
           @pointerdown="touch($event, 0)"
           @pointermove="move"
@@ -156,15 +158,17 @@
         <p v-if="windowNotice" class="android-window-notice" role="status">
           {{ windowNotice }}
         </p>
-        <div v-if="floatKind === 'native' && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
-          @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar" />
-        <button v-if="floatKind === 'native'" class="android-toolbar-handle"
+        <div v-if="(floatKind === 'native' || floatKind === 'window') && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
+          @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
+          @pointerdown.prevent="toolbarPinned = true; showToolbar()" />
+        <button v-if="floatKind === 'native' || floatKind === 'window'" class="android-toolbar-handle"
           :aria-label="t('android.toggleToolbar')" :title="t('android.toggleToolbar')"
           :aria-expanded="toolbarVisible" aria-controls="android-pip-toolbar"
           @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
+          @focus="showToolbar" @blur="scheduleHideToolbar"
           @click="toolbarPinned = !toolbarPinned; toolbarHovered = toolbarPinned"
         >{{ toolbarVisible ? '›' : '‹' }}</button>
-        <footer :id="floatKind === 'native' ? 'android-pip-toolbar' : undefined" aria-label="Android status"
+        <footer :id="floatKind === 'native' || floatKind === 'window' ? 'android-pip-toolbar' : undefined" aria-label="Android status"
           @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
           @focusin="showToolbar" @focusout="scheduleHideToolbar"
         >
@@ -200,10 +204,11 @@
                 t('android.floating')
               }}</span>
             </button>
-            <button v-else :title="t('android.restore')" @click="restore">
+            <button v-if="!floating" :disabled="opening || !connected" :title="t('android.detachedWindow')" :aria-label="t('android.detachedWindow')" @click="openWindow(t('android.popupBlocked'))"><ExternalLink :size="17" /></button>
+            <button v-if="floating" :title="t('android.restore')" @click="restore">
               <PanelTop :size="15" /><span>{{ t('android.restore') }}</span>
             </button>
-            <button v-if="floating" :title="t('android.maximize')" :aria-label="t('android.maximize')" @click="maximize"><Maximize :size="17" /></button>
+            <button v-if="floating" :title="t(floatKind === 'window' ? 'android.maximizeWindow' : 'android.maximize')" :aria-label="t(floatKind === 'window' ? 'android.maximizeWindow' : 'android.maximize')" @click="maximize"><Maximize :size="17" /></button>
             <button
               v-if="floatKind !== 'native'"
               :title="t('android.fullscreen')"
@@ -227,7 +232,7 @@
 </template>
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { PictureInPicture2, PanelTop, Maximize, X, Smartphone, SlidersHorizontal, Scan, Camera, ArrowLeft, House, PanelsTopLeft, Volume2, Volume1, Power, RotateCw, Keyboard, Folder, Terminal, GripVertical } from '@lucide/vue'
+import { PictureInPicture2, PanelTop, Maximize, X, Smartphone, SlidersHorizontal, Scan, Camera, ArrowLeft, House, PanelsTopLeft, Volume2, Volume1, Power, RotateCw, Keyboard, Folder, Terminal, GripVertical, ExternalLink } from '@lucide/vue'
 import { useFloatingWindow } from '../android/useFloatingWindow'
 import { androidDevicePresets } from '../android/devicePresets'
 import { androidErrorMessage } from '../android/errors'
@@ -307,6 +312,7 @@ const {
   floating,
   style: floatingStyle,
   open: openFloating,
+  openWindow,
   restore,
   focus: focusFloating,
   drag: dragFloating,
@@ -902,9 +908,10 @@ onBeforeUnmount(() => {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%);
   z-index: 6; width: 22px; height: 48px; padding: 0;
   border-radius: 7px 0 0 7px; background: var(--bg-elevated);
-  color: var(--text-primary); opacity: .75;
+  color: var(--text-primary); opacity: 0; pointer-events: none;
 }
-.android-floating-native.android-toolbar-open .android-toolbar-handle { right: 44px; }
+.android-floating-native.android-toolbar-open .android-toolbar-handle { right: 44px; opacity: .75; pointer-events: auto; }
+.android-floating-native .android-toolbar-handle:focus-visible { opacity: 1; pointer-events: auto; }
 .android-floating-native .android-panel { z-index: 7; right: 8px; width: calc(100% - 16px); }
 .android-floating-native .android-window-notice { right: 0; }
 @media (prefers-reduced-motion: reduce) { .android-floating-native footer { transition: none; } }
@@ -914,4 +921,11 @@ onBeforeUnmount(() => {
 .android-floating .android-status-scroll > button, .android-floating .android-window-actions > button { width: 32px; min-width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .android-floating .android-window-actions { flex-direction: column; gap: 3px; }
 .android-floating .android-connection-dot { font-size: 10px; line-height: 16px; }
+/* Allow a low-resolution stream to fill a larger independent window without
+   changing its aspect ratio or the canvas rectangle used for touch mapping. */
+.android-floating-window .android-screen { container-type: size; }
+.android-floating-window .android-screen:not(.android-pixel-view) :deep(canvas) {
+  width: min(100cqw, calc(100cqh * var(--android-video-aspect)));
+  height: auto;
+}
 </style>

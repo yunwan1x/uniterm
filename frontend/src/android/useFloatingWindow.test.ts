@@ -192,3 +192,44 @@ describe('Android floating viewport geometry', () => {
   expect(view.style.value).toMatchObject({width:'1200px',height:'900px'})
  })
 })
+
+describe('Android independent window', () => {
+  it('opens a same-origin popup synchronously with video aspect ratio', () => {
+    const child=childWindow(),open=vi.fn().mockReturnValue(child)
+    Object.assign(window,{open})
+    const view=useFloatingWindow(ref(),undefined,()=>({width:416,height:912}))
+    view.openWindow()
+    expect(open).toHaveBeenCalledWith('about:blank','_blank','popup=yes,width=315,height=690,resizable=yes,scrollbars=no')
+    expect(view.kind.value).toBe('window');expect(view.target.value).toBe(child.document.body)
+    expect(child.focus).toHaveBeenCalled();expect(child.document.body.style.cssText).toContain('padding:0;')
+  })
+  it('keeps the inline session visible and explains popup blocking',()=>{
+    Object.assign(window,{open:vi.fn().mockReturnValue(null)})
+    const view=useFloatingWindow(ref());view.openWindow('Allow this site')
+    expect(view.kind.value).toBe('inline');expect(view.notice.value).toBe('Allow this site')
+  })
+  it('returns the same view on popup close and does not open a second child',async()=>{
+    const child=childWindow(),open=vi.fn().mockReturnValue(child),restored=vi.fn()
+    Object.assign(window,{open})
+    const view=useFloatingWindow(ref(),restored);view.openWindow();view.openWindow()
+    expect(open).toHaveBeenCalledTimes(1)
+    child.dispatchEvent(new Event('pagehide'))
+    expect(view.kind.value).toBe('inline');expect(restored).toHaveBeenCalledOnce()
+  })
+  it('expands the popup to the work area without switching to page mode',async()=>{
+    const child=Object.assign(childWindow(),{screen:{availLeft:100,availTop:20,availWidth:1400,availHeight:980},moveTo:vi.fn(),resizeTo:vi.fn()})
+    Object.assign(window,{open:vi.fn().mockReturnValue(child)})
+    const view=useFloatingWindow(ref());view.openWindow();await view.maximize()
+    expect(child.moveTo).toHaveBeenCalledWith(100,20);expect(child.resizeTo).toHaveBeenCalledWith(1400,980);expect(view.kind.value).toBe('window')
+  })
+  it('uses the child document when leaving fullscreen',async()=>{
+    const owner={fullscreenElement:{},exitFullscreen:vi.fn().mockResolvedValue(undefined)}
+    const view=useFloatingWindow(ref({ownerDocument:owner} as unknown as HTMLElement));await view.fullscreen()
+    expect(owner.exitFullscreen).toHaveBeenCalledOnce()
+  })
+  it('closes child windows when the opener leaves',()=>{
+    const child=childWindow();Object.assign(window,{open:vi.fn().mockReturnValue(child)})
+    const view=useFloatingWindow(ref());view.openWindow();window.dispatchEvent(new Event('pagehide'))
+    expect(child.close).toHaveBeenCalledOnce()
+  })
+})

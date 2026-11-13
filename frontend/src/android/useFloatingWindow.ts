@@ -21,7 +21,7 @@ export function useFloatingWindow(
   onRestore?: () => void,
   getVideoSize?: () => { width: number; height: number },
 ) {
-  const kind = ref<'inline' | 'page' | 'native'>('inline')
+  const kind = ref<'inline' | 'page' | 'native' | 'window'>('inline')
   const target = shallowRef<HTMLElement | null>(null)
   const opening = ref(false)
   const notice = ref('')
@@ -112,6 +112,39 @@ export function useFloatingWindow(
     await nextTick()
     previous?.close()
   }
+  function initialSize() {
+    const video = getVideoSize?.() ?? root.value?.querySelector('canvas')
+    const videoWidth = video?.width || 720, videoHeight = video?.height || 1280
+    const landscape = videoWidth > videoHeight
+    const scale = Math.min((landscape ? 690 : 360) / videoWidth, (landscape ? 360 : 690) / videoHeight)
+    return { width: Math.max(1, Math.round(videoWidth * scale)), height: Math.max(1, Math.round(videoHeight * scale)) }
+  }
+  function attach(child: Window, mode: 'native' | 'window') {
+    pip = child
+    copyStyles(child.document)
+    child.addEventListener('pagehide', () => {
+      if (pip === child) returned()
+    }, { once: true })
+    target.value = child.document.body
+    kind.value = mode
+  }
+  function openWindow(blockedMessage = 'Popup blocked. Allow popups for this site and try again.') {
+    if (opening.value || floating.value) return
+    notice.value = ''
+    // Keep window.open synchronous with the click to preserve user activation.
+    const { width, height } = initialSize()
+    let child: Window | null = null
+    try {
+      child = window.open('about:blank', '_blank', `popup=yes,width=${width},height=${height},resizable=yes,scrollbars=no`)
+      if (!child) { notice.value = blockedMessage; return }
+      attach(child, 'window')
+      child.focus()
+    } catch (error) {
+      if (pip === child) returned()
+      child?.close()
+      notice.value = String(error)
+    }
+  }
   async function open() {
     if (opening.value || floating.value) return
     opening.value = true
@@ -122,33 +155,12 @@ export function useFloatingWindow(
         window as Window & { documentPictureInPicture?: PiPWindowAPI }
       ).documentPictureInPicture
       if (window.isSecureContext && api) {
-        // Keep the initial content area at the actual stream aspect ratio.
-        // The toolbar overlays video, so it needs no extra layout width.
-        const video = getVideoSize?.() ?? root.value?.querySelector('canvas')
-        const videoWidth = video?.width || 720
-        const videoHeight = video?.height || 1280
-        const landscape = videoWidth > videoHeight
-        const scale = Math.min((landscape ? 690 : 360) / videoWidth, (landscape ? 360 : 690) / videoHeight)
-        const child = await api.requestWindow({
-          width: Math.max(1, Math.round(videoWidth * scale)),
-          height: Math.max(1, Math.round(videoHeight * scale)),
-          disallowReturnToOpener: true,
-        })
+        const child = await api.requestWindow({ ...initialSize(), disallowReturnToOpener: true })
         if (destroyed || request !== generation) {
           child.close()
           return
         }
-        pip = child
-        copyStyles(child.document)
-        child.addEventListener(
-          'pagehide',
-          () => {
-            if (pip === child) returned()
-          },
-          { once: true },
-        )
-        target.value = child.document.body
-        kind.value = 'native'
+        attach(child, 'native')
       } else pageFallback()
     } catch {
       // Permission/browser-policy denial must still leave a usable local window.
@@ -205,6 +217,14 @@ export function useFloatingWindow(
     window.addEventListener('blur', end)
   }
   async function maximize() {
+    if (kind.value === 'window' && pip) {
+      try {
+        const screen = pip.screen as Screen & { availLeft?: number; availTop?: number }
+        pip.moveTo(screen.availLeft ?? 0, screen.availTop ?? 0)
+        pip.resizeTo(screen.availWidth, screen.availHeight)
+      } catch (error) { notice.value = String(error) }
+      return
+    }
     // Native PiP sizing is browser-controlled. Move the same view into the
     // opener for an unrestricted viewport-sized window, without reconnecting.
     if (pip) { window.focus(); await restore(); pageFallback() }
@@ -215,17 +235,21 @@ export function useFloatingWindow(
   async function fullscreen() {
     notice.value = ''
     try {
-      if (document.fullscreenElement) await document.exitFullscreen()
+      const owner = root.value?.ownerDocument ?? document
+      if (owner.fullscreenElement) await owner.exitFullscreen()
       else await root.value?.requestFullscreen()
     } catch (error) {
       notice.value = String(error)
     }
   }
+  const closeChild = () => pip?.close()
+  window.addEventListener('pagehide', closeChild)
   window.addEventListener('resize', clamp)
   onBeforeUnmount(() => {
     destroyed = true
     cancelDrag()
     window.removeEventListener('resize', clamp)
+    window.removeEventListener('pagehide', closeChild)
     const previous = pip
     returned()
     previous?.close()
@@ -238,6 +262,7 @@ export function useFloatingWindow(
     floating,
     style,
     open,
+    openWindow,
     restore,
     focus,
     drag,
