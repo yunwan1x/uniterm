@@ -155,7 +155,7 @@ export function useFloatingWindow(
     if (pip) pip.focus()
     else root.value?.querySelector<HTMLElement>('.android-screen')?.focus()
   }
-  function drag(e: PointerEvent, resize = false) {
+  function drag(e: PointerEvent, resize: boolean | 'right' | 'bottom' = false) {
     if (kind.value !== 'page' || e.button !== 0) return
     e.preventDefault()
     cancelDrag()
@@ -165,8 +165,8 @@ export function useFloatingWindow(
     const move = (event: PointerEvent) => {
       if (event.pointerId !== e.pointerId) return
       if (resize) {
-        geometry.value.width = Math.min(window.innerWidth - start.x, Math.max(260, start.width + event.clientX - x))
-        geometry.value.height = Math.min(window.innerHeight - start.y, Math.max(240, start.height + event.clientY - y))
+        if (resize !== 'bottom') geometry.value.width = Math.min(window.innerWidth - start.x, Math.max(260, start.width + event.clientX - x))
+        if (resize !== 'right') geometry.value.height = Math.min(window.innerHeight - start.y, Math.max(240, start.height + event.clientY - y))
       } else {
         geometry.value.x = start.x + event.clientX - x
         geometry.value.y = start.y + event.clientY - y

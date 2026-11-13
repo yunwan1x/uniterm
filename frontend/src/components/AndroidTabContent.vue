@@ -23,9 +23,12 @@
         >
           ◢
         </button>
+        <div v-if="floatKind === 'page'" class="android-resize-edge android-resize-right" @pointerdown.stop="dragFloating($event, 'right')" />
+        <div v-if="floatKind === 'page'" class="android-resize-edge android-resize-bottom" @pointerdown.stop="dragFloating($event, 'bottom')" />
         <div
           ref="screen"
           class="android-screen"
+          :class="{ 'android-pixel-view': displayMode === 'pixels' }"
           tabindex="0"
           @pointerdown="touch($event, 0)"
           @pointermove="move"
@@ -43,6 +46,22 @@
         <div v-if="!connected && !error" class="android-error">
           {{ switching ? t('android.switchingSource') : t('android.connecting') }}
         </div>
+        <aside v-if="qualityOpen" class="android-panel" @keydown.stop>
+          <strong>{{ t('android.videoQuality') }}</strong>
+          <button class="close" @click="qualityOpen = false">×</button>
+          <label>{{ t('android.videoLimit') }}
+            <select v-model="qualitySize">
+              <option value="auto">{{ t('android.autoQuality') }}</option>
+              <option v-for="size in [1280, 1920, 2560]" :key="size" :value="String(size)">{{ size }} px</option>
+              <option value="0">{{ t('android.nativeQuality') }}</option>
+            </select>
+          </label>
+          <label>{{ t('android.frameRate') }}<select v-model.number="qualityFps"><option v-for="fps in [15, 30, 60]" :key="fps" :value="fps">{{ fps }} FPS</option></select></label>
+          <label>{{ t('android.bitrate') }}<select v-model.number="qualityBitrate"><option v-for="rate in [2, 4, 8, 12, 20]" :key="rate" :value="rate">{{ rate }} Mbps</option></select></label>
+          <p>{{ t('android.qualityHint') }}</p>
+          <button :disabled="switching || !props.config" @click="applyQuality">{{ t('android.applyQuality') }}</button>
+          <p>{{ t('android.actualVideo') }}: {{ width }} × {{ height }}</p>
+        </aside>
         <aside v-if="resolutionOpen" class="android-panel" @keydown.stop>
           <strong>{{ t('android.resolution') }}</strong>
           <button class="close" @click="resolutionOpen = false">×</button>
@@ -130,6 +149,11 @@
           <div class="android-status-scroll">
             <span class="android-connection-dot" :class="{ connected }" :title="connected ? t('android.connected') : t('android.connecting')">●</span>
             <button :disabled="!connected || source !== 'display'" :title="t('android.resolution')" @click="togglePane('resolution')">{{ width }} × {{ height }}</button>
+            <button :title="t('android.videoQuality')" @click="togglePane('quality')">{{ t('android.videoQuality') }}</button>
+            <select v-model="displayMode" :aria-label="t('android.windowDisplay')">
+              <option value="fit">{{ t('android.fitWindow') }}</option>
+              <option value="pixels">{{ t('android.actualPixels') }}</option>
+            </select>
             <select class="android-source" :aria-label="t('android.videoSource')" :value="source" :disabled="switching || !props.config" @change="switchSource">
               <option value="display">{{ t('android.sourceDisplay') }}</option>
               <option value="front">{{ t('android.sourceFront') }}</option>
@@ -235,6 +259,26 @@ const root = ref<HTMLElement>(),
   height = ref(1280)
 const source = ref<'display' | 'front' | 'back'>(props.config?.androidVideoSource || 'display')
 const switching = ref(false)
+const qualityOpen = ref(false), qualitySize = ref('auto'), qualityFps = ref(30), qualityBitrate = ref(4), displayMode = ref('fit')
+const qualityStorageKey = `android-quality:${props.config?.host || ''}:${props.config?.port || 5555}`
+try {
+  const saved = JSON.parse(localStorage.getItem(qualityStorageKey) || 'null')
+  if (saved && ['auto', '0', '1280', '1920', '2560'].includes(saved.size) && [15,30,60].includes(saved.fps) && [2,4,8,12,20].includes(saved.bitrate)) {
+    qualitySize.value = saved.size; qualityFps.value = saved.fps; qualityBitrate.value = saved.bitrate
+  }
+} catch { /* unavailable storage must not block a connection */ }
+function videoQuality() {
+  const rect = screen.value?.getBoundingClientRect()
+  const view = screen.value?.ownerDocument.defaultView || window
+  const longest = Math.max(rect?.width || 720, rect?.height || 1280) * view.devicePixelRatio
+  const maxSize = qualitySize.value === 'auto' ? Math.min(2560, Math.max(640, Math.ceil(longest / 16) * 16)) : Number(qualitySize.value)
+  return { maxSize, maxFps: qualityFps.value, bitrate: qualityBitrate.value * 1000000 }
+}
+async function applyQuality() {
+  try { localStorage.setItem(qualityStorageKey, JSON.stringify({ size: qualitySize.value, fps: qualityFps.value, bitrate: qualityBitrate.value })) } catch { /* optional persistence */ }
+  qualityOpen.value = false
+  await reconnect()
+}
 const shellOpen = ref(false),
   command = ref(''),
   shellOutput = ref(''),
@@ -293,7 +337,7 @@ async function connect(fresh = false) {
     let url = fresh ? '' : panels.getProxyAddr(props.panelId)
     if (!url) {
       if (!props.config) return
-      const info = await CreateSession('android', { ...props.config, androidVideoSource: source.value })
+      const info = await CreateSession('android', { ...props.config, androidVideoSource: source.value, androidVideoQuality: videoQuality() })
       if (!mounted || !panels.getPanel(props.panelId)) {
         await CloseSession(info.id)
         return
@@ -356,11 +400,12 @@ function sendText() {
 }
 function togglePane(pane: string) {
   const open =
-    pane === 'resolution' ? !resolutionOpen.value : pane === 'text'
+    pane === 'quality' ? !qualityOpen.value : pane === 'resolution' ? !resolutionOpen.value : pane === 'text'
       ? !textOpen.value
       : pane === 'files'
         ? !files.value
         : !shellOpen.value
+  qualityOpen.value = pane === 'quality' && open
   resolutionOpen.value = pane === 'resolution' && open
   textOpen.value = pane === 'text' && open
   files.value = pane === 'files' && open
@@ -748,6 +793,9 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   box-shadow: 0 8px 25px #0008;
 }
+.android-resize-edge { position: absolute; z-index: 20; touch-action: none; }
+.android-resize-right { right: 0; top: 0; bottom: 14px; width: 6px; cursor: ew-resize; }
+.android-resize-bottom { bottom: 0; left: 0; right: 14px; height: 6px; cursor: ns-resize; }
 .android-panel label {
   display: block;
   margin: 12px 0;
@@ -790,4 +838,9 @@ onBeforeUnmount(() => {
 .android-floating .android-window-actions { flex-wrap: wrap; justify-content: center; margin: 0; }
 .android-floating .android-panel { right: 120px; bottom: 8px; width: min(360px, calc(100% - 140px)); box-sizing: border-box; max-height: calc(100% - 16px); overflow: auto; }
 .android-floating .android-window-notice { position: absolute; left: 0; bottom: 0; right: 112px; }
+.android-screen.android-pixel-view { overflow: auto; display: block; touch-action: none; }
+.android-screen.android-pixel-view :deep(canvas) { max-width: none; max-height: none; flex-shrink: 0; }
+.android-panel label select { width: 100%; }
+.android-floating .android-status-scroll > select { width: 100%; min-width: 0; }
+.android-status-scroll > select { background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 4px; font-size: 12px; }
 </style>

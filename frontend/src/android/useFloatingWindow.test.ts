@@ -140,6 +140,19 @@ describe('Android floating viewport geometry', () => {
   expect(view.style.value.top).toBe(before.top)
   expect(view.style.value.height).toBe('836px')
  })
+ it('bottom and right edges resize only their own axis', async()=>{
+  const view=useFloatingWindow(ref());await view.open()
+  const before={...view.style.value}
+  view.drag(pointer('pointerdown',500,500),'bottom')
+  window.dispatchEvent(pointer('pointermove',700,550));window.dispatchEvent(pointer('pointerup',700,550))
+  expect(view.style.value.width).toBe(before.width)
+  expect(parseFloat(view.style.value.height!)).toBe(parseFloat(before.height!)+50)
+  const height=view.style.value.height
+  view.drag(pointer('pointerdown',500,500),'right')
+  window.dispatchEvent(pointer('pointermove',450,600));window.dispatchEvent(pointer('pointerup',450,600))
+  expect(view.style.value.height).toBe(height)
+  expect(parseFloat(view.style.value.width!)).toBe(parseFloat(before.width!)-50)
+ })
  it('moves native PiP into a full viewport without creating a new session',async()=>{
   const child=childWindow();Object.assign(window,{focus:vi.fn(),documentPictureInPicture:{requestWindow:vi.fn().mockResolvedValue(child)}})
   const view=useFloatingWindow(ref());await view.open();await view.maximize()

@@ -185,7 +185,8 @@ const SPECS: Record<string, ConnectSpec> = {
     title: c => c.name || (c.s3Bucket ? `s3://${c.s3Bucket}` : c.host),
   },
   rdp: { initSession: true },
-  android: { sessionFirst: true, needsCredentials: false, initSession: true, title: c => c.name || c.host },
+  // Mount first so Android can measure the viewport and load per-device video quality.
+  android: { componentSession: true, needsCredentials: false, title: c => c.name || c.host },
   vnc: { sessionFirst: true, initSession: true, title: c => c.name || c.host },
   spice: { sessionFirst: true, initSession: true, title: c => c.name || c.host },
   // The X11DesktopTabContent owns CreateSession + X11DesktopConnect; it runs

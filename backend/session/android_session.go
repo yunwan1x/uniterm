@@ -83,6 +83,10 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 	if err != nil {
 		return err
 	}
+	quality, err := androidQualityOptions(cfg.AndroidVideoQuality)
+	if err != nil {
+		return err
+	}
 	s.videoSource = source
 	s.setStatus(StatusConnecting)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -139,7 +143,7 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 		}
 	}
 	s.socket = "localabstract:scrcpy_" + scid
-	command := "CLASSPATH=" + s.remoteJar + " app_process / com.genymobile.scrcpy.Server 3.3.4 scid=" + scid + " tunnel_forward=true audio=true audio_codec=raw video_codec=h264 video_codec_options=profile=1,level=2048 max_size=1280 max_fps=30 video_bit_rate=4000000 send_device_meta=false send_dummy_byte=true clipboard_autosync=false" + options
+	command := "CLASSPATH=" + s.remoteJar + " app_process / com.genymobile.scrcpy.Server 3.3.4 scid=" + scid + " tunnel_forward=true audio=true audio_codec=raw video_codec=h264 video_codec_options=profile=1,level=2048 send_device_meta=false send_dummy_byte=true clipboard_autosync=false" + options + quality
 	s.process, err = androidOpen(s.ctx, s.client, "shell:"+command)
 	if err != nil {
 		return err

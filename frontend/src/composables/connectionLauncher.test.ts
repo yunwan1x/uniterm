@@ -76,6 +76,12 @@ describe('launchConnection persistence', () => {
 })
 
 describe('launchConnection routing', () => {
+  it('lets the Android view create its session after measuring the viewport', async () => {
+    await launchConnection(baseConfig('android'), { persist: false })
+    expect(createSessionMock).not.toHaveBeenCalled()
+    expect(useTabStore().tabs.slice(-1)[0]?.type).toBe('android')
+  })
+
   it('binds SPICE to the local backend proxy and passes through SSH tunnel credentials', async () => {
     const proxyAddr = 'ws://127.0.0.1:12345/spice-session-token'
     createSessionMock.mockResolvedValue({ id: 'spice-session', proxyAddr })

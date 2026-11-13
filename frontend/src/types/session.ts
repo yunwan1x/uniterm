@@ -25,6 +25,7 @@ export interface SSHAlgoConfig {
 }
 
 export interface ConnectionConfig {
+  androidVideoQuality?: { maxSize: number; maxFps: number; bitrate: number }
   androidVideoSource?: 'display' | 'front' | 'back'
   id: string
   name: string
