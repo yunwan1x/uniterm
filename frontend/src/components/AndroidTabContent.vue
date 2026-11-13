@@ -43,6 +43,31 @@
         <div v-if="!connected && !error" class="android-error">
           {{ switching ? t('android.switchingSource') : t('android.connecting') }}
         </div>
+        <aside v-if="resolutionOpen" class="android-panel" @keydown.stop>
+          <strong>{{ t('android.resolution') }}</strong>
+          <button class="close" @click="resolutionOpen = false">×</button>
+          <label>{{ t('android.devicePreset') }}
+            <select v-model="resolutionPreset" @change="selectResolutionPreset">
+              <optgroup v-for="group in ['phone', 'tablet']" :key="group" :label="t('android.presetGroup.' + group)">
+                <option v-for="device in androidDevicePresets.filter(d => d.group === group)" :key="device.id" :value="device.id">{{ device.name }} · {{ device.width }} × {{ device.height }} · {{ device.dpi }} DPI</option>
+              </optgroup>
+              <option value="custom">{{ t('android.customResolution') }}</option>
+            </select>
+          </label>
+          <div v-if="resolutionPreset === 'custom'" class="android-resolution-fields">
+            <input v-model.number="resolutionWidth" type="number" min="320" max="4096" :aria-label="t('android.resolutionWidth')" @input="resolutionPreset = 'custom'" />
+            ×
+            <input v-model.number="resolutionHeight" type="number" min="320" max="4096" :aria-label="t('android.resolutionHeight')" @input="resolutionPreset = 'custom'" />
+          </div>
+          <label>{{ t('android.displayDensity') }}
+            <input v-model.number="resolutionDpi" type="number" min="120" max="960" :aria-label="t('android.displayDensity')" />
+          </label>
+          <button :disabled="resolutionBusy || !connected" @click="applyResolution(false)">{{ t('android.applyResolution') }}</button>
+          <button :disabled="resolutionBusy || !connected" @click="applyResolution(true)">{{ t('android.resetResolution') }}</button>
+          <p>{{ t('android.devicePresetHint') }}</p>
+          <p>{{ t('android.resolutionHint') }}</p>
+          <p role="status">{{ resolutionStatus }}</p>
+        </aside>
         <aside v-if="shellOpen" class="android-panel" @keydown.stop>
           <strong>ADB Shell</strong
           ><button class="close" @click="shellOpen = false">×</button
@@ -103,10 +128,8 @@
             ⠿
           </button>
           <div class="android-status-scroll">
-            <span
-              >{{ connected ? '●' : '○' }} Android · {{ width }} ×
-              {{ height }} · {{ mode }}</span
-            >
+            <span class="android-connection-dot" :class="{ connected }" :title="connected ? t('android.connected') : t('android.connecting')">●</span>
+            <button :disabled="!connected || source !== 'display'" :title="t('android.resolution')" @click="togglePane('resolution')">{{ width }} × {{ height }}</button>
             <select class="android-source" :aria-label="t('android.videoSource')" :value="source" :disabled="switching || !props.config" @change="switchSource">
               <option value="display">{{ t('android.sourceDisplay') }}</option>
               <option value="front">{{ t('android.sourceFront') }}</option>
@@ -157,6 +180,7 @@
             <button v-else :title="t('android.restore')" @click="restore">
               <PanelTop :size="15" /><span>{{ t('android.restore') }}</span>
             </button>
+            <button v-if="floating" :title="t('android.maximize')" :aria-label="t('android.maximize')" @click="maximize">□</button>
             <button
               v-if="floatKind !== 'native'"
               :title="t('android.fullscreen')"
@@ -182,6 +206,7 @@
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { PictureInPicture2, PanelTop, Maximize, X } from '@lucide/vue'
 import { useFloatingWindow } from '../android/useFloatingWindow'
+import { androidDevicePresets } from '../android/devicePresets'
 import { AndroidClient, androidClients } from '../android/client'
 import { usePanelStore } from '../stores/panelStore'
 import { useTabStore } from '../stores/tabStore'
@@ -214,6 +239,7 @@ const shellOpen = ref(false),
   command = ref(''),
   shellOutput = ref(''),
   shellBusy = ref(false)
+const resolutionOpen = ref(false), resolutionPreset = ref<string>(androidDevicePresets[0].id), resolutionWidth = ref<number>(androidDevicePresets[0].width), resolutionHeight = ref<number>(androidDevicePresets[0].height), resolutionDpi = ref<number>(androidDevicePresets[0].dpi), resolutionBusy = ref(false), resolutionStatus = ref('')
 const files = ref(false),
   textOpen = ref(false),
   text = ref(''),
@@ -232,6 +258,7 @@ const {
   focus: focusFloating,
   drag: dragFloating,
   fullscreen,
+  maximize,
 } = useFloatingWindow(root, () => {
   const panel = panels.getPanel(props.panelId)
   if (panel?.tabId && tabs.tabs.some((tab) => tab.id === panel.tabId))
@@ -320,6 +347,7 @@ async function switchSource(e: Event) {
   if (!['display', 'front', 'back'].includes(value) || switching.value) return
   source.value = value as typeof source.value
   textOpen.value = false
+  resolutionOpen.value = false
   await reconnect()
 }
 function sendText() {
@@ -328,14 +356,44 @@ function sendText() {
 }
 function togglePane(pane: string) {
   const open =
-    pane === 'text'
+    pane === 'resolution' ? !resolutionOpen.value : pane === 'text'
       ? !textOpen.value
       : pane === 'files'
         ? !files.value
         : !shellOpen.value
+  resolutionOpen.value = pane === 'resolution' && open
   textOpen.value = pane === 'text' && open
   files.value = pane === 'files' && open
   shellOpen.value = pane === 'shell' && open
+}
+function selectResolutionPreset() {
+  if (resolutionPreset.value === 'custom') return
+  const preset = androidDevicePresets.find(device => device.id === resolutionPreset.value)
+  if (!preset) return
+  resolutionWidth.value = preset.width
+  resolutionHeight.value = preset.height
+  resolutionDpi.value = preset.dpi
+}
+async function applyResolution(reset: boolean) {
+  if (!client || source.value !== 'display' || resolutionBusy.value) return
+  const w = resolutionWidth.value, h = resolutionHeight.value
+  if (!reset && (!Number.isInteger(w) || !Number.isInteger(h) || w < 320 || h < 320 || w > 4096 || h > 4096)) {
+    resolutionStatus.value = t('android.invalidResolution'); return
+  }
+  if (!reset && (!Number.isInteger(resolutionDpi.value) || resolutionDpi.value < 120 || resolutionDpi.value > 960)) {
+    resolutionStatus.value = t('android.invalidDensity'); return
+  }
+  resolutionBusy.value = true
+  resolutionStatus.value = ''
+  try {
+    const result = await fetch(client.httpURL('resolution', ''), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ width: w, height: h, dpi: resolutionDpi.value, reset }),
+    })
+    if (!result.ok) throw Error(await result.text())
+    resolutionStatus.value = t('android.done')
+  } catch (e) { resolutionStatus.value = String(e) }
+  finally { resolutionBusy.value = false }
 }
 function key(key: number) {
   if (source.value !== 'display') return
@@ -536,8 +594,8 @@ onBeforeUnmount(() => {
 .android-placeholder button {
   padding: 8px 16px;
   color: var(--text-primary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -576,7 +634,7 @@ onBeforeUnmount(() => {
 .android-floating-page {
   position: fixed !important;
   z-index: 2000;
-  border: 1px solid var(--border-color, #555);
+  border: 1px solid var(--border-subtle);
   border-radius: 9px;
   overflow: hidden;
   box-shadow: 0 12px 48px #0009;
@@ -601,15 +659,13 @@ onBeforeUnmount(() => {
 .android-floating-page footer {
   padding-right: 18px;
 }
-.android-floating .android-status-scroll > span {
-  display: none;
-}
+
 .android-window-notice {
   font-size: 12px;
   margin: 0;
   padding: 4px 8px;
-  background: #663c16;
-  color: white;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
 }
 .android-tab:fullscreen {
   width: 100vw !important;
@@ -622,6 +678,7 @@ onBeforeUnmount(() => {
 
 .android-tab {
   height: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -653,7 +710,7 @@ onBeforeUnmount(() => {
   flex-wrap: nowrap;
   min-width: 0;
   padding: 7px;
-  background: var(--bg-secondary);
+  background: var(--bg-surface);
   font-size: 12px;
 }
 .android-source {
@@ -662,9 +719,9 @@ onBeforeUnmount(() => {
 }
 .android-tab button,
 .android-source {
-  background: var(--bg-tertiary);
+  background: var(--bg-elevated);
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-subtle);
   border-radius: 5px;
   padding: 5px 8px;
   cursor: pointer;
@@ -676,7 +733,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 20px;
   left: 20px;
-  background: var(--bg-secondary);
+  background: var(--bg-surface);
   padding: 15px;
   max-width: 80%;
 }
@@ -686,8 +743,8 @@ onBeforeUnmount(() => {
   right: 12px;
   width: min(360px, 90%);
   padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
   box-shadow: 0 8px 25px #0008;
 }
@@ -696,12 +753,13 @@ onBeforeUnmount(() => {
   margin: 12px 0;
 }
 .android-panel input,
-.android-panel textarea {
+.android-panel textarea,
+.android-panel select {
   width: 100%;
   box-sizing: border-box;
-  background: var(--bg-primary);
+  background: var(--bg-base);
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-subtle);
   padding: 7px;
 }
 .android-panel p {
@@ -718,4 +776,18 @@ onBeforeUnmount(() => {
   overflow: auto;
   user-select: text;
 }
+.android-tab button:hover:not(:disabled) { background: var(--bg-hover); }
+.android-tab button:focus-visible, .android-source:focus-visible { outline: 2px solid var(--accent); }
+.android-connection-dot { color: var(--text-muted); }
+.android-connection-dot.connected { color: var(--success); }
+.android-resolution-fields { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.android-resolution-fields input { min-width: 0; }
+.android-floating { display: grid; grid-template-columns: minmax(0, 1fr) 112px; grid-template-rows: minmax(0, 1fr); }
+.android-floating .android-screen { min-width: 0; grid-column: 1; grid-row: 1; }
+.android-floating footer { grid-column: 2; grid-row: 1; min-height: 0; padding: 6px; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border-subtle); }
+.android-floating .android-status-scroll { flex-direction: column; width: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; align-items: stretch; }
+.android-floating .android-source { width: 100%; min-width: 0; font-size: 11px; }
+.android-floating .android-window-actions { flex-wrap: wrap; justify-content: center; margin: 0; }
+.android-floating .android-panel { right: 120px; bottom: 8px; width: min(360px, calc(100% - 140px)); box-sizing: border-box; max-height: calc(100% - 16px); overflow: auto; }
+.android-floating .android-window-notice { position: absolute; left: 0; bottom: 0; right: 112px; }
 </style>

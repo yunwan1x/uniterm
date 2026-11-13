@@ -53,6 +53,7 @@ func PairAndroid(host string, port int, code string) error {
 }
 
 type AndroidSession struct {
+	displayMu sync.Mutex
 	baseSession
 	ctx                                         context.Context
 	cancel                                      context.CancelFunc
@@ -451,6 +452,36 @@ func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	stopRequest := context.AfterFunc(r.Context(), cancel)
 	defer stopRequest()
+	if r.URL.Query().Get("op") == "resolution" {
+		if r.Method != "POST" {
+			http.Error(w, "POST required", 405)
+			return
+		}
+		if s.videoSource != "display" {
+			http.Error(w, "screen resolution is unavailable in camera mode", 409)
+			return
+		}
+		var request androidResolutionRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&request); err != nil {
+			http.Error(w, "invalid resolution", 400)
+			return
+		}
+		if _, err := request.command(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		s.displayMu.Lock()
+		defer s.displayMu.Unlock()
+		ctx, stop := context.WithTimeout(ctx, 20*time.Second)
+		defer stop()
+		if err := applyAndroidResolution(request, func(command string) ([]byte, error) { return s.exec(ctx, command) }); err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	path := r.URL.Query().Get("path")
 	if r.URL.Query().Get("op") == "shell" {
 		if r.Method != "POST" {
@@ -546,4 +577,28 @@ func androidVideoOptions(source string) (string, string, error) {
 	default:
 		return "", "", fmt.Errorf("invalid Android video source")
 	}
+}
+
+type androidResolutionRequest struct {
+	Width  int  `json:"width"`
+	Height int  `json:"height"`
+	DPI    int  `json:"dpi"`
+	Reset  bool `json:"reset"`
+}
+
+func (r androidResolutionRequest) command() (string, error) {
+	if r.Reset {
+		return "wm size reset && wm density reset", nil
+	}
+	if r.Width < 320 || r.Width > 4096 || r.Height < 320 || r.Height > 4096 {
+		return "", fmt.Errorf("width and height must be between 320 and 4096")
+	}
+	if r.DPI != 0 && (r.DPI < 120 || r.DPI > 960) {
+		return "", fmt.Errorf("DPI must be between 120 and 960")
+	}
+	command := fmt.Sprintf("wm size %dx%d", r.Width, r.Height)
+	if r.DPI != 0 {
+		command += fmt.Sprintf(" && wm density %d", r.DPI)
+	}
+	return command, nil
 }

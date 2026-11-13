@@ -230,3 +230,34 @@ func TestAndroidVideoOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestAndroidResolutionCommand(t *testing.T) {
+	for _, dims := range [][2]int{{720, 1280}, {1080, 2400}, {1440, 3200}, {320, 4096}} {
+		command, err := (androidResolutionRequest{Width: dims[0], Height: dims[1]}).command()
+		if err != nil || !strings.HasPrefix(command, "wm size ") {
+			t.Fatalf("%s %v", command, err)
+		}
+	}
+	for _, dims := range [][2]int{{0, 1280}, {319, 720}, {4097, 1080}, {720, -1}} {
+		if _, err := (androidResolutionRequest{Width: dims[0], Height: dims[1]}).command(); err == nil {
+			t.Fatal(dims)
+		}
+	}
+	if command, err := (androidResolutionRequest{Reset: true}).command(); err != nil || command != "wm size reset && wm density reset" {
+		t.Fatal(command, err)
+	}
+}
+
+func TestAndroidResolutionDPIValidation(t *testing.T) {
+	for _, dpi := range []int{120, 320, 480, 560, 960} {
+		command, err := (androidResolutionRequest{Width: 1206, Height: 2622, DPI: dpi}).command()
+		if err != nil || !strings.Contains(command, "&& wm density ") {
+			t.Fatalf("%s %v", command, err)
+		}
+	}
+	for _, dpi := range []int{-1, 119, 961} {
+		if _, err := (androidResolutionRequest{Width: 1206, Height: 2622, DPI: dpi}).command(); err == nil {
+			t.Fatal(dpi)
+		}
+	}
+}

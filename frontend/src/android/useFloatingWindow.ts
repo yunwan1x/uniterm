@@ -26,6 +26,7 @@ export function useFloatingWindow(
   const notice = ref('')
   const geometry = ref({ x: 0, y: 0, width: 340, height: 640 })
   let pip: Window | null = null
+  let themeObserver: MutationObserver | null = null
   let destroyed = false
   let generation = 0
   let cancelDrag = () => {}
@@ -69,7 +70,16 @@ export function useFloatingWindow(
           clone.href = (node as HTMLLinkElement).href
         destination.head.appendChild(clone)
       })
-    const tokens = getComputedStyle(root.value || document.documentElement)
+    syncTheme(destination)
+    if (typeof MutationObserver !== 'undefined') {
+      themeObserver = new MutationObserver(() => syncTheme(destination))
+      themeObserver.observe(document.documentElement, { attributes: true })
+      themeObserver.observe(document.body, { attributes: true })
+    }
+    destination.title = 'Android · uniTerm'
+  }
+  function syncTheme(destination: Document) {
+    const tokens = getComputedStyle(document.documentElement)
     for (const name of Array.from(tokens)) {
       if (name.startsWith('--'))
         destination.documentElement.style.setProperty(
@@ -78,14 +88,16 @@ export function useFloatingWindow(
         )
     }
     destination.documentElement.style.cssText +=
-      ';height:100%;background:#111;color:#eee;'
+      ';height:100%;background:var(--bg-base);color:var(--text-primary);'
     destination.body.style.cssText =
-      'margin:0;height:100%;overflow:hidden;background:#111;color:#eee;'
+      'margin:0;height:100%;overflow:hidden;background:var(--bg-base);color:var(--text-primary);'
     destination.title = 'Android · uniTerm'
   }
   function returned() {
     const wasFloating = floating.value
     cancelDrag()
+    themeObserver?.disconnect()
+    themeObserver = null
     pip = null
     kind.value = 'inline'
     target.value = null
@@ -153,8 +165,8 @@ export function useFloatingWindow(
     const move = (event: PointerEvent) => {
       if (event.pointerId !== e.pointerId) return
       if (resize) {
-        geometry.value.width = Math.max(260, start.width + event.clientX - x)
-        geometry.value.height = Math.max(360, start.height + event.clientY - y)
+        geometry.value.width = Math.min(window.innerWidth - start.x, Math.max(260, start.width + event.clientX - x))
+        geometry.value.height = Math.min(window.innerHeight - start.y, Math.max(240, start.height + event.clientY - y))
       } else {
         geometry.value.x = start.x + event.clientX - x
         geometry.value.y = start.y + event.clientY - y
@@ -172,6 +184,14 @@ export function useFloatingWindow(
     window.addEventListener('pointerup', end)
     window.addEventListener('pointercancel', end)
     window.addEventListener('blur', end)
+  }
+  async function maximize() {
+    // Native PiP sizing is browser-controlled. Move the same view into the
+    // opener for an unrestricted viewport-sized window, without reconnecting.
+    if (pip) { window.focus(); await restore(); pageFallback() }
+    if (kind.value === 'page') {
+      geometry.value = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
+    }
   }
   async function fullscreen() {
     notice.value = ''
@@ -203,5 +223,6 @@ export function useFloatingWindow(
     focus,
     drag,
     fullscreen,
+    maximize,
   }
 }

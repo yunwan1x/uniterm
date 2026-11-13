@@ -118,3 +118,33 @@ describe('Android floating window lifecycle', () => {
     expect(view.target.value).toBe(second.document.body)
   })
 })
+
+describe('Android floating viewport geometry', () => {
+ function pointer(type: string,x:number,y:number) {
+  return Object.assign(new Event(type),{clientX:x,clientY:y,pointerId:1,button:0}) as PointerEvent
+ }
+ it('can reach the bottom edge, fill the viewport and resize without moving its anchor',async()=>{
+  const view=useFloatingWindow(ref());await view.open()
+  view.drag(pointer('pointerdown',850,70))
+  window.dispatchEvent(pointer('pointermove',850,1000))
+  window.dispatchEvent(pointer('pointerup',850,1000))
+  expect(view.style.value.top).toBe('260px')
+  await view.maximize()
+  expect(view.style.value).toMatchObject({left:'0px',top:'0px',width:'1200px',height:'900px'})
+  await view.restore();await view.open()
+  const before=view.style.value
+  view.drag(pointer('pointerdown',1176,704),true)
+  window.dispatchEvent(pointer('pointermove',2000,2000))
+  window.dispatchEvent(pointer('pointerup',2000,2000))
+  expect(view.style.value.left).toBe(before.left)
+  expect(view.style.value.top).toBe(before.top)
+  expect(view.style.value.height).toBe('836px')
+ })
+ it('moves native PiP into a full viewport without creating a new session',async()=>{
+  const child=childWindow();Object.assign(window,{focus:vi.fn(),documentPictureInPicture:{requestWindow:vi.fn().mockResolvedValue(child)}})
+  const view=useFloatingWindow(ref());await view.open();await view.maximize()
+  expect(child.close).toHaveBeenCalledOnce()
+  expect(view.kind.value).toBe('page')
+  expect(view.style.value).toMatchObject({width:'1200px',height:'900px'})
+ })
+})
