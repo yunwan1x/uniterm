@@ -68,6 +68,7 @@ type AndroidSession struct {
 	ws                                          *websocket.Conn
 	serving                                     bool
 	videoSource                                 string
+	videoBitrate                                int
 	once                                        sync.Once
 }
 
@@ -82,6 +83,10 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 	source, options, err := androidVideoOptions(cfg.AndroidVideoSource)
 	if err != nil {
 		return err
+	}
+	s.videoBitrate = 4000000
+	if cfg.AndroidVideoQuality != nil {
+		s.videoBitrate = cfg.AndroidVideoQuality.Bitrate
 	}
 	quality, err := androidQualityOptions(cfg.AndroidVideoQuality)
 	if err != nil {
@@ -312,7 +317,7 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
-	meta, _ := json.Marshal(map[string]any{"width": binary.BigEndian.Uint32(header[4:8]), "height": binary.BigEndian.Uint32(header[8:12]), "codec": "h264", "videoSource": s.videoSource})
+	meta, _ := json.Marshal(map[string]any{"width": binary.BigEndian.Uint32(header[4:8]), "height": binary.BigEndian.Uint32(header[8:12]), "codec": "h264", "videoSource": s.videoSource, "dynamicBitrate": true, "bitrate": s.videoBitrate})
 	send(websocket.TextMessage, meta)
 	go func() {
 		if err := s.media(video, 1, send); err != nil {
@@ -325,14 +330,39 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 			s.media(audio, 2, send)
 		}
 	}()
-	go io.Copy(io.Discard, control)
+	go func() {
+		// Consume device messages without allowing a clipboard payload to be
+		// mistaken for a bitrate acknowledgement.
+		if e := androidDeviceMessages(control, func(bitrate int32) {
+			accepted := bitrate > 0
+			if bitrate < 0 {
+				bitrate = -bitrate
+			}
+			data, _ := json.Marshal(map[string]any{"type": "quality", "bitrate": bitrate, "accepted": accepted})
+			send(websocket.TextMessage, data)
+		}); e != nil {
+			ws.Close()
+		}
+	}()
 	ws.SetReadLimit(64 * 1024)
 	for {
 		_, data, e := ws.ReadMessage()
 		if e != nil {
 			return
 		}
-		if s.videoSource != "display" {
+		var message struct {
+			Type     string `json:"type"`
+			Sequence int64  `json:"sequence"`
+		}
+		if json.Unmarshal(data, &message) != nil {
+			continue
+		}
+		if message.Type == "qualityPing" {
+			pong, _ := json.Marshal(map[string]any{"type": "qualityPong", "sequence": message.Sequence})
+			send(websocket.TextMessage, pong)
+			continue
+		}
+		if s.videoSource != "display" && message.Type != "bitrate" {
 			continue
 		} // Camera preview never injects display input.
 		packet, e := androidControl(data)
@@ -374,6 +404,7 @@ func androidControl(data []byte) ([]byte, error) {
 		ScrollX       int16  `json:"scrollX"`
 		ScrollY       int16  `json:"scrollY"`
 		Type          string `json:"type"`
+		Bitrate       uint32 `json:"bitrate"`
 		Key           uint32 `json:"key"`
 		Action        byte   `json:"action"`
 		X, Y          uint32
@@ -384,6 +415,14 @@ func androidControl(data []byte) ([]byte, error) {
 		return nil, e
 	}
 	switch m.Type {
+	case "bitrate":
+		if m.Bitrate < 500000 || m.Bitrate > 40000000 {
+			return nil, fmt.Errorf("invalid video bitrate")
+		}
+		p := make([]byte, 5)
+		p[0] = 100
+		binary.BigEndian.PutUint32(p[1:], m.Bitrate)
+		return p, nil
 	case "key":
 		if m.Key > 300 {
 			return nil, fmt.Errorf("invalid key")

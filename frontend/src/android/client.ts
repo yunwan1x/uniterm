@@ -1,3 +1,4 @@
+import { AdaptiveBitrate } from './quality'
 import { TinyH264Decoder } from '@yume-chan/scrcpy-decoder-tinyh264'
 import {
   BitmapVideoFrameRenderer,
@@ -22,6 +23,23 @@ export class AndroidClient {
   error = ''
   connected = false
   changed = () => {}
+  bitrate = 8000000
+  adaptiveStatus = ''
+  private automatic = false
+  private dynamicBitrate: boolean | undefined
+  private adaptive = new AdaptiveBitrate(this.bitrate)
+  private qualityTimer: ReturnType<typeof setInterval> | undefined
+  private pingSequence = 0
+  private ping: { sequence: number; at: number } | null = null
+  private rtt = 0
+  private minRtt = Infinity
+  private ptsBase = Infinity
+  private lastPts = -1
+  private delay = 0
+  private decodeMs = 0
+  private dataFrames = 0
+  private windowBytes = 0
+  private pendingBitrate: { value: number; at: number } | null = null
   private decoder: TinyH264Decoder | WebCodecsVideoDecoder
   private audio: PcmAudioPlayer | null = null
   private nextAudioStats = 0
@@ -57,6 +75,23 @@ export class AndroidClient {
           this.fail('Invalid response from Android session server')
           return
         }
+        if (m?.type === 'qualityPong') {
+          if (this.ping && this.ping.sequence === m.sequence) {
+            this.rtt = performance.now() - this.ping.at
+            this.minRtt = Math.min(this.minRtt, this.rtt)
+            this.ping = null
+          }
+          return
+        }
+        if (m?.type === 'quality') {
+          if (this.pendingBitrate?.value === m.bitrate) {
+            this.pendingBitrate = null
+            if (m.accepted === true) { this.bitrate = m.bitrate; this.adaptive.bitrate = m.bitrate; if (this.automatic) this.adaptiveStatus = 'active' }
+            else this.adaptiveStatus = 'unsupported'
+            this.changed()
+          }
+          return
+        }
         if (m?.error) {
           this.fail(androidErrorMessage(m.error))
           return
@@ -65,6 +100,10 @@ export class AndroidClient {
           this.fail('Invalid Android video metadata')
           return
         }
+        this.dynamicBitrate = m.dynamicBitrate === true
+        if (Number.isInteger(m.bitrate) && m.bitrate >= 500000 && m.bitrate <= 40000000) this.bitrate = m.bitrate
+        this.adaptive = new AdaptiveBitrate(this.bitrate)
+        if (this.automatic) this.adaptiveStatus = this.dynamicBitrate ? 'active' : 'unsupported'
         this.videoSource = m.videoSource ?? 'display'
         this.width = m.width
         this.height = m.height
@@ -90,6 +129,16 @@ export class AndroidClient {
               pts: flags & ((1n << 62n) - 1n),
               keyframe: !!(flags & (1n << 62n)),
             }
+      if (packet.type === 'data') {
+        const pts = Number(packet.pts) / 1000
+        const arrival = performance.now() - pts
+        if (pts < this.lastPts) this.ptsBase = Infinity
+        this.lastPts = pts
+        this.ptsBase = Math.min(this.ptsBase, arrival)
+        this.delay = Math.max(0, arrival - this.ptsBase)
+        this.dataFrames++
+        this.windowBytes += data.length
+      }
       this.pending += data.length
       if (this.pending > 8 * 1024 * 1024) {
         this.error = 'Video decoder cannot keep up; reconnect'
@@ -99,7 +148,9 @@ export class AndroidClient {
       this.chain = this.chain
         .then(async () => {
           if (!this.disposed) {
+            const started = performance.now()
             await writer.write(packet)
+            this.decodeMs = this.decodeMs * .8 + (performance.now() - started) * .2
             if (packet.type === 'data') clearTimeout(this.startupTimer)
             this.frames = this.decoder.framesRendered
             this.changed()
@@ -123,6 +174,32 @@ export class AndroidClient {
       androidClients.delete(url)
       this.changed()
     }
+  }
+  setAutomatic(enabled: boolean) {
+    this.automatic = enabled
+    this.adaptiveStatus = enabled ? (this.dynamicBitrate === false ? 'unsupported' : 'active') : ''
+    clearInterval(this.qualityTimer)
+    if (enabled) this.qualityTimer = setInterval(() => this.adjustQuality(), 2000)
+  }
+  private adjustQuality() {
+    if (this.disposed || !this.connected || !this.automatic || !this.dynamicBitrate || (this.adaptiveStatus === 'unsupported' || this.adaptiveStatus === 'paused')) return
+    const now = performance.now()
+    const active = this.dataFrames >= 10 && this.windowBytes >= 32000
+    this.dataFrames = this.windowBytes = 0
+    // Pause while the view is hidden; timer throttling is not network congestion.
+    if (this.canvas.ownerDocument?.hidden) { this.ptsBase = Infinity; this.ping = null; this.adaptive = new AdaptiveBitrate(this.bitrate); return }
+    if (this.pendingBitrate) {
+      if (now - this.pendingBitrate.at > 8000) { this.adaptiveStatus = 'paused'; this.changed() }
+      return
+    }
+    const rttGrowth = this.ping ? Math.max(this.rtt, now - this.ping.at) - (Number.isFinite(this.minRtt) ? this.minRtt : 0) : Math.max(0, this.rtt - this.minRtt)
+    if (!this.ping) { this.ping = { sequence: ++this.pingSequence, at: now }; this.send({type:'qualityPing',sequence:this.pingSequence}) }
+    const next = this.adaptive.sample({now, delay:this.delay, rttGrowth, pending:this.pending, decodeMs:this.decodeMs, active})
+    if (next != null) {
+      this.pendingBitrate = {value:next, at:now}
+      this.send({type:'bitrate',bitrate:next})
+    }
+    this.canvas.dataset.androidQualityStats = JSON.stringify({bitrate:this.bitrate, delay:this.delay, rtt:this.rtt, pending:this.pending, decodeMs:this.decodeMs, active, status:this.adaptiveStatus})
   }
   private fail(message: string) {
     if (this.disposed) return
@@ -165,6 +242,7 @@ export class AndroidClient {
     if (this.disposed) return
     this.disposed = true
     clearTimeout(this.startupTimer)
+    clearInterval(this.qualityTimer)
     if (androidClients.get(this.url) === this) androidClients.delete(this.url)
     this.connected = false
     this.ws.close()

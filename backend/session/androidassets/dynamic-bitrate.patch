@@ -1,0 +1,144 @@
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+index 0eb96ad..7f70e42 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+@@ -32,6 +32,13 @@ public final class ControlMessage {
+     public static final int COPY_KEY_COPY = 1;
+     public static final int COPY_KEY_CUT = 2;
+ 
++    public static final int TYPE_SET_VIDEO_BITRATE = 100;
++    public static ControlMessage createVideoBitrate(int bitrate) {
++        ControlMessage msg = new ControlMessage();
++        msg.type = TYPE_SET_VIDEO_BITRATE;
++        msg.keycode = bitrate;
++        return msg;
++    }
+     private int type;
+     private String text;
+     private int metaState; // KeyEvent.META_*
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+index 830a7ec..4d6221c 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+@@ -25,6 +25,8 @@ public class ControlMessageReader {
+     public ControlMessage read() throws IOException {
+         int type = dis.readUnsignedByte();
+         switch (type) {
++            case ControlMessage.TYPE_SET_VIDEO_BITRATE:
++                return ControlMessage.createVideoBitrate(dis.readInt());
+             case ControlMessage.TYPE_INJECT_KEYCODE:
+                 return parseInjectKeycode();
+             case ControlMessage.TYPE_INJECT_TEXT:
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+index b4a8e3c..744f518 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+@@ -265,6 +265,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+         }
+ 
+         switch (msg.getType()) {
++            case ControlMessage.TYPE_SET_VIDEO_BITRATE:
++                int bitrate = msg.getKeycode();
++                boolean applied = com.genymobile.scrcpy.video.SurfaceEncoder.setVideoBitrate(bitrate);
++                sender.send(DeviceMessage.createVideoBitrate(applied ? bitrate : -bitrate));
++                break;
+             case ControlMessage.TYPE_INJECT_KEYCODE:
+                 if (supportsInputEvents) {
+                     injectKeycode(msg.getAction(), msg.getKeycode(), msg.getRepeat(), msg.getMetaState());
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java
+index 079a7a0..1f80926 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java
+@@ -6,6 +6,13 @@ public final class DeviceMessage {
+     public static final int TYPE_ACK_CLIPBOARD = 1;
+     public static final int TYPE_UHID_OUTPUT = 2;
+ 
++    public static final int TYPE_VIDEO_BITRATE = 100;
++    public static DeviceMessage createVideoBitrate(int bitrate) {
++        DeviceMessage msg = new DeviceMessage();
++        msg.type = TYPE_VIDEO_BITRATE;
++        msg.id = bitrate;
++        return msg;
++    }
+     private int type;
+     private String text;
+     private long sequence;
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java
+index a18a2e5..ad0d08c 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java
+@@ -23,6 +23,9 @@ public class DeviceMessageWriter {
+         int type = msg.getType();
+         dos.writeByte(type);
+         switch (type) {
++            case DeviceMessage.TYPE_VIDEO_BITRATE:
++                dos.writeInt(msg.getId());
++                break;
+             case DeviceMessage.TYPE_CLIPBOARD:
+                 String text = msg.getText();
+                 byte[] raw = text.getBytes(StandardCharsets.UTF_8);
+diff --git a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
+index 236a5f4..80c8a37 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
++++ b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
+@@ -40,7 +40,29 @@ public class SurfaceEncoder implements AsyncProcessor {
+     private final Streamer streamer;
+     private final String encoderName;
+     private final List<CodecOption> codecOptions;
+-    private final int videoBitRate;
++    private int videoBitRate;
++    private static final Object BITRATE_LOCK = new Object();
++    private static SurfaceEncoder runningEncoder;
++    private MediaCodec runningCodec;
++
++    // uniTerm extension: serialize with codec stop/reset, keeping the same stream.
++    public static boolean setVideoBitrate(int bitrate) {
++        if (bitrate < 500000 || bitrate > 40000000) return false;
++        synchronized (BITRATE_LOCK) {
++            SurfaceEncoder encoder = runningEncoder;
++            if (encoder == null || encoder.runningCodec == null) return false;
++            try {
++                android.os.Bundle parameters = new android.os.Bundle();
++                parameters.putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrate);
++                encoder.runningCodec.setParameters(parameters);
++                encoder.videoBitRate = bitrate;
++                return true;
++            } catch (IllegalStateException | IllegalArgumentException e) {
++                Ln.w("Dynamic video bitrate unavailable: " + e.getMessage());
++                return false;
++            }
++        }
++    }
+     private final float maxFps;
+     private final boolean downsizeOnError;
+ 
+@@ -82,6 +104,7 @@ public class SurfaceEncoder implements AsyncProcessor {
+                     headerWritten = true;
+                 }
+ 
++                format.setInteger(MediaFormat.KEY_BIT_RATE, videoBitRate);
+                 format.setInteger(MediaFormat.KEY_WIDTH, size.getWidth());
+                 format.setInteger(MediaFormat.KEY_HEIGHT, size.getHeight());
+ 
+@@ -97,6 +120,10 @@ public class SurfaceEncoder implements AsyncProcessor {
+ 
+                     mediaCodec.start();
+                     mediaCodecStarted = true;
++                    synchronized (BITRATE_LOCK) {
++                        runningCodec = mediaCodec;
++                        runningEncoder = this;
++                    }
+ 
+                     // Set the MediaCodec instance to "interrupt" (by signaling an EOS) on reset
+                     reset.setRunningMediaCodec(mediaCodec);
+@@ -123,6 +150,10 @@ public class SurfaceEncoder implements AsyncProcessor {
+                     }
+                     alive = true;
+                 } finally {
++                    synchronized (BITRATE_LOCK) {
++                        runningCodec = null;
++                        if (runningEncoder == this) runningEncoder = null;
++                    }
+                     reset.setRunningMediaCodec(null);
+                     if (captureStarted) {
+                         capture.stop();

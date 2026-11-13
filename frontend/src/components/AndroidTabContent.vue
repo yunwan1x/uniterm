@@ -71,15 +71,22 @@
         <aside v-if="qualityOpen" class="android-panel" @keydown.stop>
           <strong>{{ t('android.videoQuality') }}</strong>
           <button class="close" @click="qualityOpen = false">×</button>
-          <label>{{ t('android.videoLimit') }}
-            <select v-model="qualitySize">
+          <label>{{ t('android.qualityPreset') }}
+            <select v-model="qualityPreset">
+              <option v-for="preset in qualityPresets" :key="preset" :value="preset">{{ t('android.preset.' + preset) }}</option>
+            </select>
+          </label>
+          <p>{{ t('android.presetHint.' + qualityPreset) }}</p>
+          <template v-if="qualityPreset === 'custom'">
+            <label>{{ t('android.videoLimit') }}<select v-model="qualitySize">
               <option value="auto">{{ t('android.autoQuality') }}</option>
               <option v-for="size in [1280, 1920, 2560]" :key="size" :value="String(size)">{{ size }} px</option>
               <option value="0">{{ t('android.nativeQuality') }}</option>
-            </select>
-          </label>
-          <label>{{ t('android.frameRate') }}<select v-model.number="qualityFps"><option v-for="fps in [15, 30, 60]" :key="fps" :value="fps">{{ fps }} FPS</option></select></label>
-          <label>{{ t('android.bitrate') }}<select v-model.number="qualityBitrate"><option v-for="rate in [2, 4, 8, 12, 20]" :key="rate" :value="rate">{{ rate }} Mbps</option></select></label>
+            </select></label>
+            <label>{{ t('android.frameRate') }}<select v-model.number="qualityFps"><option v-for="fps in [15, 30, 60]" :key="fps" :value="fps">{{ fps }} FPS</option></select></label>
+            <label>{{ t('android.bitrate') }}<select v-model.number="qualityBitrate"><option v-for="rate in qualityBitrates" :key="rate" :value="rate">{{ rate }} Mbps</option></select></label>
+          </template>
+          <p v-if="autoQualityStatus">{{ t('android.adaptive.' + autoQualityStatus) }}<span v-if="actualBitrate"> · {{ actualBitrate }} Mbps</span></p>
           <p>{{ t('android.qualityHint') }}</p>
           <button :disabled="switching || !props.config" @click="applyQuality">{{ t('android.applyQuality') }}</button>
           <p>{{ t('android.actualVideo') }}: {{ width }} × {{ height }}</p>
@@ -231,6 +238,7 @@
   </div>
 </template>
 <script setup lang="ts">
+import { qualityBitrates, qualityPresets, presetQuality, storedQuality, type QualityPreset } from '../android/quality'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { PictureInPicture2, PanelTop, Maximize, X, Smartphone, SlidersHorizontal, Scan, Camera, ArrowLeft, House, PanelsTopLeft, Volume2, Volume1, Power, RotateCw, Keyboard, Folder, Terminal, GripVertical, ExternalLink } from '@lucide/vue'
 import { useFloatingWindow } from '../android/useFloatingWindow'
@@ -274,22 +282,25 @@ const navigationActions = computed(() => [
   { code: 26, icon: Power, label: t('android.power') },
 ])
 const qualityOpen = ref(false), qualitySize = ref('auto'), qualityFps = ref(30), qualityBitrate = ref(4), displayMode = ref('fit')
+const qualityPreset = ref<QualityPreset>('auto')
+const autoQualityStatus = ref(''), actualBitrate = ref(0)
 const qualityStorageKey = `android-quality:${props.config?.host || ''}:${props.config?.port || 5555}`
 try {
-  const saved = JSON.parse(localStorage.getItem(qualityStorageKey) || 'null')
-  if (saved && ['auto', '0', '1280', '1920', '2560'].includes(saved.size) && [15,30,60].includes(saved.fps) && [2,4,8,12,20].includes(saved.bitrate)) {
-    qualitySize.value = saved.size; qualityFps.value = saved.fps; qualityBitrate.value = saved.bitrate
+  const saved = storedQuality(JSON.parse(localStorage.getItem(qualityStorageKey) || 'null'))
+  if (saved) {
+    qualitySize.value = saved.size; qualityFps.value = saved.fps; qualityBitrate.value = saved.bitrate; qualityPreset.value = saved.preset
   }
 } catch { /* unavailable storage must not block a connection */ }
 function videoQuality() {
   const rect = screen.value?.getBoundingClientRect()
   const view = screen.value?.ownerDocument.defaultView || window
   const longest = Math.max(rect?.width || 720, rect?.height || 1280) * view.devicePixelRatio
-  const maxSize = qualitySize.value === 'auto' ? Math.min(2560, Math.max(640, Math.ceil(longest / 16) * 16)) : Number(qualitySize.value)
-  return { maxSize, maxFps: qualityFps.value, bitrate: qualityBitrate.value * 1000000 }
+  const selected = presetQuality(qualityPreset.value, { size: qualitySize.value, fps: qualityFps.value, bitrate: qualityBitrate.value })
+  const maxSize = selected.size === 'auto' ? Math.min(1920, Math.max(640, Math.ceil(longest / 16) * 16)) : Number(selected.size)
+  return { maxSize, maxFps: selected.fps, bitrate: selected.bitrate * 1000000 }
 }
 async function applyQuality() {
-  try { localStorage.setItem(qualityStorageKey, JSON.stringify({ size: qualitySize.value, fps: qualityFps.value, bitrate: qualityBitrate.value })) } catch { /* optional persistence */ }
+  try { localStorage.setItem(qualityStorageKey, JSON.stringify({ preset: qualityPreset.value, size: qualitySize.value, fps: qualityFps.value, bitrate: qualityBitrate.value })) } catch { /* optional persistence */ }
   qualityOpen.value = false
   await reconnect()
 }
@@ -365,6 +376,8 @@ function update() {
   if (client.connected) source.value = client.videoSource
   error.value = client.error
   panels.updateStatus(props.panelId, client.error ? 'error' : client.connected ? 'connected' : 'connecting')
+  autoQualityStatus.value = client.adaptiveStatus
+  actualBitrate.value = client.bitrate / 1000000
   mode.value = client.mode
   width.value = client.width
   height.value = client.height
@@ -391,6 +404,7 @@ async function connect(fresh = false) {
       client = new AndroidClient(url)
       androidClients.set(url, client)
     }
+    client.setAutomatic(qualityPreset.value === 'auto')
     client.changed = update
     screen.value?.replaceChildren(client.canvas)
     update()

@@ -106,3 +106,24 @@ describe('Android camera metadata', () => {
    vi.useFakeTimers();const c=make();c.dispose();(c.ws as any).onclose();vi.advanceTimersByTime(45000);expect(c.error).toBe('');
   })
  })
+
+describe('Android live bitrate feedback', () => {
+ it('does not treat quality pongs and acknowledgements as video metadata', () => {
+  const c=make()
+  ;(c.ws as any).onmessage({data:JSON.stringify({width:720,height:1280,dynamicBitrate:true,bitrate:8000000})})
+  c.setAutomatic(true)
+  ;(c as any).pendingBitrate={value:4000000,at:0}
+  ;(c.ws as any).onmessage({data:JSON.stringify({type:'quality',bitrate:4000000,accepted:true})})
+  ;(c.ws as any).onmessage({data:JSON.stringify({type:'qualityPong',sequence:123})})
+  expect(c.bitrate).toBe(4000000);expect(c.error).toBe('');expect(c.connected).toBe(true)
+ })
+ it('keeps old servers usable and disables adaptation on encoder rejection',()=>{
+  const c=make();c.setAutomatic(true)
+  ;(c.ws as any).onmessage({data:JSON.stringify({width:720,height:1280})})
+  expect(c.adaptiveStatus).toBe('unsupported');expect(c.connected).toBe(true)
+  ;(c.ws as any).onmessage({data:JSON.stringify({width:720,height:1280,dynamicBitrate:true,bitrate:8000000})})
+  ;(c as any).pendingBitrate={value:4000000,at:0}
+  ;(c.ws as any).onmessage({data:JSON.stringify({type:'quality',bitrate:4000000,accepted:false})})
+  expect(c.adaptiveStatus).toBe('unsupported');expect(c.bitrate).toBe(8000000);expect(c.connected).toBe(true)
+ })
+})
