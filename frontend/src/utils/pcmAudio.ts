@@ -1,3 +1,4 @@
+import workletUrl from './pcmPlayback.worklet.js?url'
 /** Shared bounded PCM playback for remote desktops. Volume remains remote-controlled. */
 export function decodePcm(data: Uint8Array, channels: number, bits: number): Float32Array<ArrayBuffer>[] {
   if ((channels !== 1 && channels !== 2) || (bits !== 8 && bits !== 16)) throw new Error('Unsupported PCM format')
@@ -15,11 +16,53 @@ export function decodePcm(data: Uint8Array, channels: number, bits: number): Flo
   return output
 }
 
+// Reserve can grow after a measured stall; keep latency and memory bounded.
+const MAX_RESERVE = 0.3
+const MAX_BACKLOG = 0.75
+
 type AudioChunk = { buffer: AudioBuffer; offset: number; duration: number }
 type ScheduledAudio = AudioChunk & { start: number; end: number }
 
 export class PcmAudioPlayer {
   private context: AudioContext | null = null
+  private worklet: AudioWorkletNode | null = null
+  private workletReady: Promise<void> | null = null
+  private workletStats: Record<string, any> | null = null
+  private statsListener: (() => void) | null = null
+
+  onStats(listener: () => void) { this.statsListener = listener }
+
+  /** Transfer the other end to the network worker. PCM then bypasses the UI. */
+  async createInputPort(): Promise<MessagePort | null> {
+    if (this.disposed) return null
+    try { this.ensureContext(); await this.workletReady } catch { return null }
+    if (!this.worklet || this.disposed) return null
+    const channel = new MessageChannel()
+    this.worklet.port.postMessage({ type: 'attach', port: channel.port1 }, [channel.port1])
+    return channel.port2
+  }
+
+  private async setupWorklet(ctx: AudioContext) {
+    if (!ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') return
+    try {
+      await ctx.audioWorklet.addModule(workletUrl)
+      if (this.disposed || this.context !== ctx) return
+      const node = new AudioWorkletNode(ctx, 'uniterm-pcm', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
+      node.onprocessorerror = () => { this.onBlocked(true) }
+      node.port.onmessage = ({ data }) => {
+        if (this.disposed || data.type !== 'stats') return
+        this.workletStats = data.stats
+        this.statsListener?.()
+      }
+      // Discard the short startup fallback tail before switching output engines.
+      this.clear()
+      this.worklet = node
+      node.port.postMessage({ type: 'enabled', value: this.enabled })
+      node.port.postMessage({ type: 'active', value: ctx.state === 'running' })
+      node.port.postMessage({ type: 'volume', left: this.volume[0], right: this.volume[1] })
+      node.connect(ctx.destination)
+    } catch { /* Older/insecure engines retain bounded AudioBuffer playback. */ }
+  }
   private splitter: ChannelSplitterNode | null = null
   private gains: GainNode[] = []
   private sources = new Map<AudioBufferSourceNode, ScheduledAudio>()
@@ -52,7 +95,9 @@ export class PcmAudioPlayer {
       gain.connect(merger, 0, i)
     })
     merger.connect(ctx.destination)
+    this.workletReady = this.setupWorklet(ctx)
     ctx.onstatechange = () => {
+      this.worklet?.port.postMessage({ type: 'active', value: ctx.state === 'running' })
       if (this.disposed || !this.enabled) return
       if (ctx.state !== 'running') this.clear()
       this.onBlocked(ctx.state !== 'running')
@@ -84,6 +129,12 @@ export class PcmAudioPlayer {
       this.unlock()
       return
     }
+    if (this.worklet) {
+      // Copy before transfer: some callers provide views into the WASM heap.
+      const copy = data.slice()
+      this.worklet.port.postMessage({ type: 'pcm', data: copy, rate: sampleRate, channels, bits }, [copy.buffer])
+      return
+    }
     const planes = decodePcm(data, channels, bits)
     const now = ctx.currentTime
     const duration = planes[0].length / sampleRate
@@ -97,7 +148,7 @@ export class PcmAudioPlayer {
       const gap = Math.max(0, now - this.lastArrival)
       this.counters.maxArrivalGapMs = Math.max(this.counters.maxArrivalGapMs, gap * 1000)
       this.jitter += (Math.abs(gap - this.lastDuration) - this.jitter) / 16
-      const desired = Math.min(0.15, 0.08 + 4 * this.jitter)
+      const desired = Math.min(MAX_RESERVE, 0.08 + 4 * this.jitter)
       this.target = Math.max(desired, this.target - duration * 0.005)
     }
     this.lastArrival = now
@@ -105,8 +156,11 @@ export class PcmAudioPlayer {
     if (this.nextTime <= now) {
       if (!this.streamEnded && this.nextTime > 0 && now - this.nextTime > 0.001) {
         this.counters.underruns++
-        this.counters.missingMs += (now - this.nextTime) * 1000
-        this.target = Math.min(0.15, this.target + 0.02)
+        const missing = now - this.nextTime
+        this.counters.missingMs += missing * 1000
+        // Cover the stall we actually observed, rather than adding only 20ms
+        // and repeatedly starving at the old 150ms ceiling.
+        this.target = Math.min(MAX_RESERVE, this.target + missing + 0.02)
       }
       this.nextTime = now + this.target
     }
@@ -119,7 +173,7 @@ export class PcmAudioPlayer {
     for (const [source, item] of this.sources) {
       if (item.end <= now) { source.onended = null; source.disconnect(); this.sources.delete(source) }
     }
-    if (this.nextTime + duration - now > 0.5 || this.sources.size >= 512) this.trimBacklog(chunk, now)
+    if (this.nextTime + duration - now > MAX_BACKLOG || this.sources.size >= 512) this.trimBacklog(chunk, now)
     else this.schedule(chunk)
     this.counters.maxQueuedMs = Math.max(this.counters.maxQueuedMs, (this.nextTime - now) * 1000)
   }
@@ -151,7 +205,7 @@ export class PcmAudioPlayer {
     }
     future.push(incoming)
     const total = future.reduce((sum, item) => sum + item.duration, 0)
-    const budget = Math.min(this.target, Math.max(0, 0.5 - (protectedEnd - now)))
+    const budget = Math.min(this.target, Math.max(0, MAX_BACKLOG - (protectedEnd - now)))
     let remaining = budget
     const retained: AudioChunk[] = []
     for (let i = future.length - 1; i >= 0 && remaining > 0.000001 && retained.length < 256; i--) {
@@ -167,13 +221,15 @@ export class PcmAudioPlayer {
 
   /** End of a remote audio stream; let its already queued tail finish. */
   end() {
+    this.worklet?.port.postMessage({ type: 'end' })
     this.streamEnded = true
     this.lastArrival = null
     this.lastDuration = 0
   }
 
   getStats() {
-    return { ...this.counters, ...this.format, enabled: this.enabled, queuedMs: Math.max(0, this.nextTime - (this.context?.currentTime ?? 0)) * 1000,
+    if (this.worklet) return { ...this.counters, ...this.format, ...this.workletStats, backend: 'audio-worklet', enabled: this.enabled, state: this.disposed ? 'closed' : this.context?.state ?? 'uninitialized' }
+    return { backend: 'buffer-source', ...this.counters, ...this.format, enabled: this.enabled, queuedMs: Math.max(0, this.nextTime - (this.context?.currentTime ?? 0)) * 1000,
       targetMs: this.target * 1000, jitterMs: this.jitter * 1000, sources: this.sources.size, state: this.disposed ? 'closed' : this.context?.state ?? 'uninitialized' }
   }
 
@@ -181,6 +237,7 @@ export class PcmAudioPlayer {
   setEnabled(enabled: boolean) {
     if (this.enabled === enabled || this.disposed) return
     this.enabled = enabled
+    this.worklet?.port.postMessage({ type: 'enabled', value: enabled })
     if (!enabled) {
       this.clear()
       this.onBlocked(false)
@@ -189,10 +246,13 @@ export class PcmAudioPlayer {
 
   setVolume(left: number, right: number) {
     this.volume = [left, right].map(v => Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1)
+    if (this.worklet) { this.worklet.port.postMessage({ type: 'volume', left: this.volume[0], right: this.volume[1] }); return }
     this.gains.forEach((gain, i) => gain.gain.setValueAtTime(this.volume[i], this.context!.currentTime))
   }
 
   clear() {
+    this.worklet?.port.postMessage({ type: 'reset' })
+    this.workletStats = null
     for (const source of this.sources.keys()) {
       source.onended = null
       try { source.stop(); source.disconnect() } catch { /* Already ended. */ }
@@ -207,6 +267,8 @@ export class PcmAudioPlayer {
   dispose() {
     this.disposed = true
     this.clear()
+    if (this.worklet) { this.worklet.port.onmessage = null; this.worklet.port.close(); this.worklet.disconnect(); this.worklet = null }
+    this.statsListener = null
     if (this.context) {
       this.context.onstatechange = null
       void this.context.close().catch(() => {})

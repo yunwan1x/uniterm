@@ -98,3 +98,9 @@ build/android/local.properties
 uniterm-data/
 
 # Docker deploy dir runtime data (data root when running compose from deploy/docker)
+
+# Router build outputs and host-specific recovery data
+/.router-build/
+/router-plugin/output/
+/router-plugin/recovery/
+/router-plugin/package/uniterm/bin/

@@ -6,7 +6,7 @@ let sentAt = 0, nextSnapshot = 0, snapshotTimer: ReturnType<typeof setTimeout> |
 let interval = 16
 let dirty = false, inFlight = false, snapshotting = false, stopped = false
 let codecWorker: Worker | undefined
-const stats = { worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, receivedBytes: 0, maxDecodeMs: 0 }
+const stats = { worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
 const NativeWS = WebSocket
 ;(globalThis as any).WebSocket = class extends NativeWS {
   constructor(url: string | URL, protocols?: string | string[]) {
@@ -40,17 +40,18 @@ async function setupAvc() {
   codecWorker = worker
   const ready = await new Promise<boolean>(resolve => {
     const timer = setTimeout(() => resolve(false), 3000)
-    worker.onmessage = e => { clearTimeout(timer); resolve(e.data.ready === true) }
+    worker.onmessage = e => { clearTimeout(timer); stats.avcYuvAvailable = e.data.yuv === true; resolve(e.data.ready === true) }
     worker.onerror = () => { clearTimeout(timer); resolve(false) }
     worker.postMessage({ method: 'init', control: control.buffer, pixels: pixels.buffer })
   })
   if (!ready) { worker.terminate(); codecWorker = undefined; return }
   stats.avcAvailable = true
+  ;(globalThis as any).unitermAvcYuv = stats.avcYuvAvailable
   let timestamp = 0
   ;(globalThis as any).unitermResetAvc = () => worker.postMessage({ method: 'reset' })
-  ;(globalThis as any).unitermDecodeAvc = (surface: number, data: Uint8Array) => {
+  ;(globalThis as any).unitermDecodeAvc = (surface: number, data: Uint8Array, yuv = false) => {
     Atomics.store(control, 0, 0)
-    worker.postMessage({ method: 'decode', surface, data, timestamp: ++timestamp })
+    worker.postMessage({ method: 'decode', surface, data, yuv, timestamp: ++timestamp })
     const start = performance.now()
     // Never wait on the UI thread. Timeout ends the session instead of showing stale pixels.
     const result = Atomics.wait(control, 0, 0, 2000)
@@ -63,6 +64,10 @@ async function setupAvc() {
     }
     const w = Atomics.load(control, 1), h = Atomics.load(control, 2)
     stats.maxDecodeMs = Math.max(stats.maxDecodeMs, performance.now() - start); stats.avcFrames++
+    if(yuv) {
+      const ySize=w*h,cSize=Math.ceil(w/2)*Math.ceil(h/2)
+      return [w,h,pixels.subarray(0,ySize),pixels.subarray(ySize,ySize+cSize),pixels.subarray(ySize+cSize,ySize+2*cSize)]
+    }
     return [w, h, pixels.subarray(0, w * h * 4)]
   }
 }
@@ -76,7 +81,12 @@ scope.onmessage = async ({ data: m }) => {
     switch (m.method) {
       case 'connect': {
         await mod.default(); try { mod.setup('warn') } catch {}
-        const { options, extensions, callbacks } = m.value
+        const { options, extensions, callbacks, audioPort } = m.value
+        let audioPending = 0, lastAudioAt: number | undefined, lastAudioSource: number | undefined, lastAudioDuration = 0
+        if (audioPort) {
+          audioPort.onmessage = ({ data }: MessageEvent) => { if (data.type === 'consumed') audioPending = Math.max(0, audioPending - data.bytes) }
+          audioPort.start()
+        }
         if (extensions.webcodecs_enabled !== false) await setupAvc()
         canvas = new OffscreenCanvas(options.size.width, options.size.height)
         const ctx = canvas.getContext('2d', { alpha: false })!
@@ -96,6 +106,24 @@ scope.onmessage = async ({ data: m }) => {
             try { event(name, items.map((i: any) => ({ mime: i.mimeType(), value: i.value() }))) }
             finally { items.forEach((i: any) => i.free()); data.free() }
           })
+          else if (name === 'audio_callback' && audioPort) builder.extension(new mod.Extension(name, (kind: string, data: Uint8Array | number, rate?: number, channels?: number, bits?: number, sourceTimestamp?: number) => {
+            if (kind === 'pcm' && data instanceof Uint8Array) {
+              const now=performance.now()
+              if(lastAudioAt!==undefined) stats.maxAudioDispatchGapMs=Math.max(stats.maxAudioDispatchGapMs,now-lastAudioAt)
+              if(sourceTimestamp!==undefined && lastAudioSource!==undefined) {
+                const gap=(sourceTimestamp-lastAudioSource+65536)%65536
+                stats.maxAudioSourceGapMs=Math.max(stats.maxAudioSourceGapMs,gap)
+                stats.maxAudioSourceJitterMs=Math.max(stats.maxAudioSourceJitterMs,Math.abs(gap-lastAudioDuration))
+              }
+              lastAudioAt=now;lastAudioSource=sourceTimestamp;lastAudioDuration=data.byteLength/((rate||1)*(channels||1)*(bits||8)/8)*1000;stats.audioPackets++
+              // Suspended audio renderers must not accumulate unbounded port messages.
+              if (audioPending + data.byteLength > 256 * 1024) return
+              audioPending += data.byteLength
+              const copy = data.slice()
+              audioPort.postMessage({ type: 'pcm', data: copy, rate, channels, bits }, [copy.buffer])
+            } else if (kind === 'volume') audioPort.postMessage({ type: 'volume', left: data, right: rate })
+            else if (kind === 'close') audioPort.postMessage({ type: 'end' })
+          }))
           else builder.extension(new mod.Extension(name, (...args: any[]) => event(name, ...args)))
         }
         try { session = await builder.connect() } finally { builder.free(); options.password = ''; options.authToken = '' }

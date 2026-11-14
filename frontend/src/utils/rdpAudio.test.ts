@@ -98,14 +98,30 @@ describe('Shared PCM / RDP audio', () => {
   it('re-buffers after true starvation and increases reserve', () => {
     const f=fixture();packet(f,1);packet(f,1.3)
     const stats=f.player.getStats();expect(stats.underruns).toBe(1);expect(stats.missingMs).toBeCloseTo(140)
-    expect(stats.targetMs).toBeGreaterThan(120);expect(stats.targetMs).toBeLessThanOrEqual(150)
+    expect(stats.targetMs).toBeGreaterThan(120);expect(stats.targetMs).toBeLessThanOrEqual(300)
     expect(f.sources[1].start.mock.calls[0][0]).toBeCloseTo(1.3+stats.targetMs/1000)
   })
+  it('learns a 250ms delivery stall and absorbs the next one without another gap', () => {
+    const f = fixture()
+    packet(f, 1)
+    packet(f, 1.04)
+    packet(f, 1.29)
+    const recovered = f.player.getStats()
+    expect(recovered.underruns).toBe(1)
+    expect(recovered.targetMs).toBeGreaterThan(200)
+    // One queued 40ms packet arrives in the catch-up burst.
+    packet(f, 1.29)
+    packet(f, 1.33)
+    packet(f, 1.58)
+    expect(f.player.getStats().underruns).toBe(1)
+    expect(f.player.getStats().overflows).toBe(0)
+  })
+
   it('preserves the playing source while trimming an excessive backlog', () => {
     const f=fixture();packet(f,1,.05);for(let i=0;i<20;i++)packet(f,1.13,.05)
     expect(f.sources[0].stop).not.toHaveBeenCalled()
     const stats=f.player.getStats();expect(stats.overflows).toBeGreaterThan(0);expect(stats.droppedMs).toBeGreaterThan(0)
-    expect(stats.queuedMs).toBeLessThanOrEqual(500)
+    expect(stats.queuedMs).toBeLessThanOrEqual(750)
     const active=f.sources.filter(s=>s.stop.mock.calls.length===0)
     active.slice(1).forEach((s,i)=>expect(s.start.mock.calls[0][0]).toBeCloseTo(active[i].start.mock.calls[0][0]+active[i].start.mock.calls[0][2]))
     f.player.dispose();expect(f.sources[0].stop).toHaveBeenCalled();expect(f.ctx.close).toHaveBeenCalled()
@@ -129,7 +145,7 @@ describe('Shared PCM / RDP audio', () => {
     const f=fixture();packet(f,1,.36)
     for(let i=0;i<8;i++)packet(f,1.125,.1)
     expect(f.sources[0].stop).not.toHaveBeenCalled()
-    expect(f.player.getStats().queuedMs).toBeLessThanOrEqual(500.00001)
+    expect(f.player.getStats().queuedMs).toBeLessThanOrEqual(750.00001)
   })
 
 })

@@ -34,7 +34,8 @@ export class SessionBuilder {
   async connect() {
     const session = new WorkerSession(this.canvas, this.callbacks, this.extensions.canvas2d === true)
     try {
-      await session.call('connect', { options: this.options, extensions: this.extensions, callbacks: Object.keys(this.callbacks) })
+      const { audio_port: audioPort, ...extensions } = this.extensions
+      await session.call('connect', { options: this.options, extensions, callbacks: Object.keys(this.callbacks), audioPort }, audioPort ? [audioPort] : [])
       return session
     } catch (e) { session.free(); throw e }
     finally { this.options.password = ''; this.options.authToken = '' }
@@ -69,11 +70,11 @@ class WorkerSession {
     this.worker.onerror = e => { e.preventDefault(); this.fail(new Error('RDP worker failed')) }
     this.worker.onmessageerror = () => this.fail(new Error('RDP worker message failed'))
   }
-  private post(value: any) { if (!this.dead) this.worker.postMessage(value) }
-  call(method: string, value?: any): Promise<any> {
+  private post(value: any, transfer: Transferable[] = []) { if (!this.dead) this.worker.postMessage(value, transfer) }
+  call(method: string, value?: any, transfer: Transferable[] = []): Promise<any> {
     if (this.dead) return Promise.reject(new Error('RDP session ended'))
     const id = ++this.serial
-    return new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject }); this.post({ id, method, value }) })
+    return new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject }); this.post({ id, method, value }, transfer) })
   }
   private fail(error: Error) { for (const p of this.pending.values()) p.reject(error); this.pending.clear(); this.free() }
   run() { return this.call('run').then(reason => ({ reason: () => reason, free() {} })) }

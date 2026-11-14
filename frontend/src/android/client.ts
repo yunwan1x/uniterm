@@ -1,3 +1,4 @@
+import { AndroidTransport } from './transport'
 import { AdaptiveBitrate } from './quality'
 import { TinyH264Decoder } from '@yume-chan/scrcpy-decoder-tinyh264'
 import {
@@ -14,7 +15,7 @@ import { PcmAudioPlayer } from '../utils/pcmAudio'
 export const androidClients = new Map<string, AndroidClient>()
 export class AndroidClient {
   canvas = document.createElement('canvas')
-  ws: WebSocket
+  ws: WebSocket | AndroidTransport
   width = 720
   height = 1280
   frames = 0
@@ -42,6 +43,7 @@ export class AndroidClient {
   private pendingBitrate: { value: number; at: number } | null = null
   private decoder: TinyH264Decoder | WebCodecsVideoDecoder
   private audio: PcmAudioPlayer | null = null
+  private audioTransportPending = false
   private nextAudioStats = 0
   private pending = 0
   private chain = Promise.resolve()
@@ -64,10 +66,10 @@ export class AndroidClient {
       this.changed()
     })
     const writer = this.decoder.writable.getWriter()
-    this.ws = new WebSocket(toWebSocketURL(url))
+    this.ws = typeof Worker === 'undefined' ? new WebSocket(toWebSocketURL(url)) : new AndroidTransport(toWebSocketURL(url))
     this.ws.binaryType = 'arraybuffer'
     this.startupTimer = setTimeout(() => this.fail('Android connection timed out: no video received. Check wireless debugging, device authorization and network reachability.'), 45000)
-    this.ws.onmessage = (e) => {
+    this.ws.onmessage = (e: { data: any }) => {
       if (this.disposed) return
       if (typeof e.data === 'string') {
         let m
@@ -166,7 +168,7 @@ export class AndroidClient {
     this.ws.onerror = () => {
       if (!this.disposed) this.fail('Android stream connection failed. Check server connectivity and reconnect.')
     }
-    this.ws.onclose = (event) => {
+    this.ws.onclose = (event: { code?: number; reason?: string }) => {
       if (this.disposed) return
       if (!this.error) this.error = `Android connection closed${event?.code ? ` (${event.code})` : ''}${event?.reason ? `: ${event.reason}` : '; reconnect'}`
       this.connected = false
@@ -217,6 +219,15 @@ export class AndroidClient {
     if (!this.audio) this.audio = new PcmAudioPlayer(() => {},
       () => new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' }))
     this.audio.unlock()
+    if (this.ws instanceof AndroidTransport && !this.audioTransportPending) {
+      this.audioTransportPending = true
+      this.audio.onStats(() => { if (this.audio) this.canvas.dataset.androidAudioStats = JSON.stringify(this.audio.getStats()) })
+      void this.audio.createInputPort().then(port => {
+        if (!port) return
+        if (this.disposed) { port.close(); return }
+        ;(this.ws as AndroidTransport).attachAudio(port)
+      })
+    }
   }
   private playAudio(data: Uint8Array) {
     if (!this.audio || data.length < 4 || data.length % 4 !== 0) return

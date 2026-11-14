@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.7.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.12.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -19,8 +19,9 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 1. Exact dirty rectangle extraction. The contiguous full-row copy path is used
    only for genuinely full-width damage. A 64x128 rectangle on a 1920px-wide
    desktop now copies 32 KiB instead of 960 KiB.
-2. Protocol updates still decode in order into the existing framebuffer. Only
-   presentation is deferred; no protocol packets or dependent deltas are dropped.
+2. Protocol updates still decode in order into the existing framebuffer. Completed-frame
+   presentation is batched; the opt-in scheduling below also defers graphics
+   commands without dropping protocol packets or dependent deltas.
 3. Merge pending rectangles when their bounding box costs no more than 25%
    extra pixels. Keep distant regions separate, with at most 32 pending regions
    before falling back to one bounding rectangle. This bounds hidden-tab memory.
@@ -168,7 +169,7 @@ The frontend now defaults to a dedicated protocol worker with bounded complete
 ImageBitmap snapshots. The WASM canvas bridge accepts OffscreenCanvas and its
 scheduler supports worker globals. A nested WebCodecs worker implements AVC420
 through a bounded shared-memory bridge; each surface has an independent decoder.
-AVC444 is not advertised. HTTPS/localhost and cross-origin isolation are required
+That revision did not advertise AVC444. HTTPS/localhost and cross-origin isolation are required
 for the AVC bridge; the worker can still use existing codecs without them.
 WebGL2 is selected on hardware-capable contexts, with software-GPU avoidance and
 automatic Canvas recovery. No user mode selection is required.
@@ -180,3 +181,53 @@ Browser file transfer uses package revision `.7`. It tolerates an xrdp
 unknown locks still fail. The combined patch includes the regression test in
 `ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs`. Run it with
 `cargo +stable test --locked -p ironrdp-testsuite-core --test integration_tests_core clipboard`.
+
+## Audio queue revision (uniterm.8)
+
+RDPSND uses a separate 256 KiB PCM queue, drained after each protocol event
+before handling graphics outputs or reading another buffered PDU. PCM no longer
+competes with input/clipboard events in the fair-select input queue. Control
+events retain protocol order, and JS callbacks execute without holding the queue
+lock. Individual graphics PDU processing still cannot be preempted; this change
+does not promise uninterrupted playback under arbitrary server/network stalls.
+
+## AVC444 YUV and channel priority revision (uniterm.11)
+
+The WebCodecs bridge now exposes raw I420/NV12 planes with validated offsets
+and row strides. It preserves the samples required by AVC444 rather than
+converting its auxiliary picture to RGB. Both pictures of a surface's AVC444
+stream use the same decoder, in protocol order. AVC420 and AVC444 both select
+the correct per-surface decoder. The nested worker decodes a small H.264 probe
+and successfully reads its YUV planes before the session advertises AVC444.
+Unsupported clients retain the existing codec fallback.
+
+RDPSND requests high MCS priority. Statistics expose native audio dispatch gaps,
+source timestamp gaps and wall-clock worklet arrival gaps, alongside the audio
+render clock, so source/transport stalls can be distinguished from playback
+queue behavior. Timestamp-gap statistics wrap at 16 bits for compatibility with
+older Wave PDUs; they do not alone establish the cause of a source delay.
+
+Windows live testing negotiated graphics protocol 10.7 with AVC available, and
+received actual AVC frames. This establishes codec interoperability, not proof
+that all real-video audio regressions have passed.
+
+## Deferred graphics scheduling (uniterm.12)
+
+The browser opts into a bounded FIFO of parsed graphics commands. Receiving
+DRDYNVC data decompresses and parses messages without synchronously decoding
+their pictures. After connection finalization, the session drains ready network PDUs first,
+including RDPSND, and executes one graphics command when the receiver has
+caught up. A 4 ms receive-work budget and queue high-water marks ensure
+continuous traffic cannot starve graphics or exhaust the queue. Graphics
+commands retain their order and frame ACKs follow actual EndFrame processing.
+The queue fails closed at 64 MiB or 16,384 commands; reference frames are never
+dropped to make room. Closing/reopening a channel releases pending work.
+Other IronRDP clients retain synchronous processing unless they explicitly opt in.
+
+Native coverage checks deferred surface creation/deletion, ordered frame ACKs,
+overload rejection and channel cleanup. Live Windows 4K acceptance passed with
+AVC444 preferred: sustained tone, natural YouTube audio and a concurrent moving
+720p H264 fixture had no new underruns, recovery silence or dropped PCM during
+the measured scrolling intervals. Mixed legacy graphics still had underruns.
+The router now runs rc.3, and audio reserve limits are unchanged. See
+`../../router-plugin/output/rdp-acceptance.json` for measurements and limits.

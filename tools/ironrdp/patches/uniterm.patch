@@ -76,10 +76,97 @@ index 672a1494..d2f42e87 100644
  
                  (Written::Nothing, next_state)
 diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
-index a4392fa4..35251b3e 100644
+index a4392fa4..b92367d9 100644
 --- a/crates/ironrdp-egfx/src/client.rs
 +++ b/crates/ironrdp-egfx/src/client.rs
-@@ -1244,6 +1244,8 @@ impl GraphicsPipelineClient {
+@@ -59,7 +59,7 @@
+ //! [3.3.5.17]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/df29d040-f74b-4002-92ed-f0903b8402c3
+ 
+ use std::collections::btree_map::Entry;
+-use std::collections::{BTreeMap, BTreeSet};
++use std::collections::{BTreeMap, BTreeSet, VecDeque};
+ 
+ use ironrdp_core::{Decode as _, ReadCursor, impl_as_any};
+ use ironrdp_dvc::{DvcClientProcessor, DvcMessage, DvcProcessor};
+@@ -447,6 +447,9 @@ enum ClientState {
+ /// [MS-RDPEGFX]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/da5c75f9-cd99-450c-98c4-014a496942b0
+ pub struct GraphicsPipelineClient {
+     handler: Box<dyn GraphicsPipelineHandler>,
++    deferred: bool,
++    pending_pdus: VecDeque<(GfxPdu, usize)>,
++    pending_bytes: usize,
+     h264_decoder: Option<Box<dyn H264Decoder>>,
+     /// Combined AVC444 picture of each surface, kept between updates so a luma-only or
+     /// chroma-only update combines with what earlier ones left.
+@@ -494,6 +497,9 @@ impl GraphicsPipelineClient {
+     pub fn new(handler: Box<dyn GraphicsPipelineHandler>, h264_decoder: Option<Box<dyn H264Decoder>>) -> Self {
+         Self {
+             handler,
++            deferred: false,
++            pending_pdus: VecDeque::new(),
++            pending_bytes: 0,
+             h264_decoder,
+             avc444_frames: BTreeMap::new(),
+             clearcodec_decoder: None,
+@@ -532,6 +538,30 @@ impl GraphicsPipelineClient {
+         self
+     }
+ 
++    /// Separate network receipt from expensive graphics decoding. Call
++    /// `process_pending` until `has_pending` is false, transmitting its replies.
++    /// Ordering and frame ACKs are preserved; exceeding the bounded queue fails
++    /// the session rather than dropping reference frames or surface commands.
++    #[must_use]
++    pub fn with_deferred_processing(mut self) -> Self {
++        self.deferred = true;
++        self
++    }
++
++    pub fn enable_deferred_processing(&mut self) { self.deferred = true; }
++
++    pub fn has_pending(&self) -> bool { !self.pending_pdus.is_empty() }
++
++    pub fn pending_work(&self) -> (usize, usize) { (self.pending_pdus.len(), self.pending_bytes) }
++
++    pub fn process_pending(&mut self) -> PduResult<Vec<DvcMessage>> {
++        let Some((pdu, bytes)) = self.pending_pdus.pop_front() else { return Ok(Vec::new()) };
++        self.pending_bytes -= bytes;
++        self.handle_pdu(pdu).inspect_err(|_| {
++            if self.state == ClientState::Resetting { self.state = ClientState::Closed; }
++        })
++    }
++
+     // ========================================================================
+     // State Queries
+     // ========================================================================
+@@ -686,13 +716,24 @@ impl GraphicsPipelineClient {
+         {
+             let mut cursor = ReadCursor::new(self.decompressed_buffer.as_slice());
+             while !cursor.is_empty() {
++                let before = cursor.len();
+                 let pdu: GfxPdu = decode_cursor(&mut cursor).map_err(|e| decode_err!(e))?;
+-                pdus.push(pdu);
++                pdus.push((pdu, before - cursor.len() + 64));
+             }
+         }
+ 
++        if self.deferred {
++            let added: usize = pdus.iter().map(|(_, bytes)| *bytes).sum();
++            if self.pending_bytes.saturating_add(added) > 64 * 1024 * 1024
++                || self.pending_pdus.len().saturating_add(pdus.len()) > 16384 {
++                return Err(pdu_other_err!("deferred graphics queue exceeded its limit", source: std::io::Error::other(format!("pending={} bytes={} added={} commands={}", self.pending_pdus.len(), self.pending_bytes, added, pdus.len()))));
++            }
++            self.pending_bytes += added;
++            self.pending_pdus.extend(pdus);
++            return Ok(Vec::new());
++        }
+         let mut responses: Vec<DvcMessage> = Vec::new();
+-        for pdu in pdus {
++        for (pdu, _) in pdus {
+             let pdu_responses = self.handle_pdu(pdu)?;
+             responses.extend(pdu_responses);
+         }
+@@ -1244,6 +1285,8 @@ impl GraphicsPipelineClient {
              return Ok(());
          };
  
@@ -88,6 +175,97 @@ index a4392fa4..35251b3e 100644
          // A decoder returning YUV planes is converted with the transform MS-RDPEGFX
          // specifies, whatever matrix it would convert with itself.
          let frame = if decoder.supports_yuv420() {
+@@ -1392,6 +1435,7 @@ impl GraphicsPipelineClient {
+             .map(|surface| (surface.width, surface.height))
+             .ok_or_else(|| pdu_other_err!("unknown surface in WireToSurface1"))?;
+ 
++        decoder.select_surface(surface_id);
+         trace!(surface_id, ?codec_id, encoding = ?stream.encoding, "AVC444 update");
+         let (main, auxiliary) = match stream.encoding {
+             Encoding::LUMA => (Some(&stream.stream1), None),
+@@ -1977,6 +2021,7 @@ impl DvcProcessor for GraphicsPipelineClient {
+     }
+ 
+     fn start(&mut self, _channel_id: u32) -> PduResult<Vec<DvcMessage>> {
++        self.pending_pdus.clear(); self.pending_bytes = 0;
+         self.state = ClientState::WaitingForConfirm;
+         if let Some(decoder) = self.h264_decoder.as_mut()
+             && !decoder.wait_until_ready()
+@@ -2019,6 +2064,7 @@ impl DvcProcessor for GraphicsPipelineClient {
+     }
+ 
+     fn close(&mut self, _channel_id: u32) {
++        self.pending_pdus.clear(); self.pending_bytes = 0;
+         self.save_persistent_cache();
+         self.restart_channel_state();
+         self.state = ClientState::Closed;
+@@ -2196,6 +2242,66 @@ mod tests {
+ 
+     use super::*;
+ 
++    fn queue_deferred(client: &mut GraphicsPipelineClient, pdus: &[GfxPdu]) -> PduResult<Vec<DvcMessage>> {
++        let bytes: Vec<u8> = pdus.iter().flat_map(|p| ironrdp_core::encode_vec(p).unwrap()).collect();
++        client.process(0, &zgfx::wrap_uncompressed(&bytes))
++    }
++
++    #[test]
++    fn deferred_graphics_preserves_order_and_acks_only_completed_frames() {
++        let mut client = GraphicsPipelineClient::new(Box::new(TestHandler), None).with_deferred_processing();
++        let pdus = [
++            GfxPdu::StartFrame(crate::pdu::StartFramePdu { timestamp: crate::pdu::Timestamp {milliseconds:0,seconds:0,minutes:0,hours:0}, frame_id: 41 }),
++            GfxPdu::EndFrame(crate::pdu::EndFramePdu { frame_id: 41 }),
++            GfxPdu::StartFrame(crate::pdu::StartFramePdu { timestamp: crate::pdu::Timestamp {milliseconds:1,seconds:0,minutes:0,hours:0}, frame_id: 42 }),
++            GfxPdu::EndFrame(crate::pdu::EndFramePdu { frame_id: 42 }),
++        ];
++        assert!(queue_deferred(&mut client, &pdus).unwrap().is_empty());
++        assert_eq!(client.total_frames_decoded(), 0);
++        assert_eq!(client.pending_work().0, 4);
++        for expected in [41, 42] {
++            assert!(client.process_pending().unwrap().is_empty());
++            assert_eq!(client.current_frame_id, Some(expected));
++            let replies = client.process_pending().unwrap();
++            assert_eq!(replies.len(), 1);
++            let bytes = ironrdp_core::encode_vec(replies[0].as_ref()).unwrap();
++            let GfxPdu::FrameAcknowledge(ack) = ironrdp_core::decode::<GfxPdu>(&bytes).unwrap() else { panic!("missing ACK") };
++            assert_eq!(ack.frame_id, expected);
++        }
++        assert_eq!(client.total_frames_decoded(), 2);
++        assert_eq!(client.pending_work(), (0, 0));
++    }
++
++    #[test]
++    fn deferred_graphics_does_not_create_surfaces_during_network_receive() {
++        let mut client = GraphicsPipelineClient::new(Box::new(TestHandler), None).with_deferred_processing();
++        queue_deferred(&mut client, &[
++            GfxPdu::CreateSurface(crate::pdu::CreateSurfacePdu { surface_id: 3, width: 8, height: 8, pixel_format: PixelFormat::XRgb }),
++            GfxPdu::DeleteSurface(crate::pdu::DeleteSurfacePdu { surface_id: 3 }),
++        ]).unwrap();
++        assert!(client.get_surface(3).is_none());
++        client.process_pending().unwrap();
++        assert!(client.get_surface(3).is_some());
++        client.process_pending().unwrap();
++        assert!(client.get_surface(3).is_none());
++    }
++
++    #[test]
++    fn deferred_graphics_rejects_overload_without_dropping_reference_commands() {
++        let mut client = GraphicsPipelineClient::new(Box::new(TestHandler), None).with_deferred_processing();
++        let pdu = [GfxPdu::StartFrame(crate::pdu::StartFramePdu { timestamp: crate::pdu::Timestamp {milliseconds:0,seconds:0,minutes:0,hours:0}, frame_id: 1 })];
++        for _ in 0..16384 { queue_deferred(&mut client, &pdu).unwrap(); }
++        let bytes = client.pending_work().1;
++        assert!(queue_deferred(&mut client, &pdu).is_err());
++        assert_eq!(client.pending_work(), (16384, bytes));
++        client.close(0);
++        assert_eq!(client.pending_work(), (0, 0));
++        client.start(0).unwrap();
++        queue_deferred(&mut client, &pdu).unwrap();
++        client.process_pending().unwrap();
++        assert_eq!(client.current_frame_id, Some(1));
++    }
++
+     struct TestHandler;
+     impl GraphicsPipelineHandler for TestHandler {
+         fn on_capabilities_confirmed(&mut self, _caps: &CapabilitySet) {}
 diff --git a/crates/ironrdp-egfx/src/decode.rs b/crates/ironrdp-egfx/src/decode.rs
 index 1adc2fed..58205d65 100644
 --- a/crates/ironrdp-egfx/src/decode.rs
@@ -100,6 +278,76 @@ index 1adc2fed..58205d65 100644
 +    fn select_surface(&mut self, _surface_id: u16) {}
      /// Decode H.264 NAL units, as an Annex B byte stream or in AVC format
      /// (4-byte BE length prefix), into an RGBA bitmap.
+     ///
+diff --git a/crates/ironrdp-rdpsnd/src/client.rs b/crates/ironrdp-rdpsnd/src/client.rs
+index ab62dde2..a7000af2 100644
+--- a/crates/ironrdp-rdpsnd/src/client.rs
++++ b/crates/ironrdp-rdpsnd/src/client.rs
+@@ -823,6 +823,11 @@ impl Rdpsnd {
+ impl_as_any!(Rdpsnd);
+ 
+ impl SvcProcessor for Rdpsnd {
++    fn channel_options(&self) -> ironrdp_pdu::gcc::ChannelOptions {
++        // MS-RDPBCGR CHANNEL_DEF: send RDPSND ahead of bulk graphics data.
++        ironrdp_pdu::gcc::ChannelOptions::INITIALIZED | ironrdp_pdu::gcc::ChannelOptions::PRI_HIGH
++    }
++
+     fn channel_name(&self) -> ChannelName {
+         Self::NAME
+     }
+@@ -959,3 +964,16 @@ impl DvcProcessor for RdpsndDvc {
+ }
+ 
+ impl DvcClientProcessor for RdpsndDvc {}
++
++#[cfg(test)]
++mod channel_priority_tests {
++    use super::*;
++    #[test]
++    fn audio_requests_high_priority_without_bulk_compression() {
++        use ironrdp_pdu::gcc::ChannelOptions;
++        let channel = Rdpsnd::new(Box::new(NoopRdpsndBackend));
++        let options = channel.channel_options();
++        assert!(options.contains(ChannelOptions::PRI_HIGH));
++        assert!(!options.intersects(ChannelOptions::PRI_MED | ChannelOptions::PRI_LOW | ChannelOptions::COMPRESS | ChannelOptions::COMPRESS_RDP));
++    }
++}
+diff --git a/crates/ironrdp-session/src/active_stage.rs b/crates/ironrdp-session/src/active_stage.rs
+index c9889218..ddbfab0f 100644
+--- a/crates/ironrdp-session/src/active_stage.rs
++++ b/crates/ironrdp-session/src/active_stage.rs
+@@ -318,6 +318,32 @@ impl ActiveStage {
+         Ok(stage_outputs)
+     }
+ 
++    /// Pending deferred graphics commands, independently of incoming network PDUs.
++    pub fn pending_graphics_work(&self) -> (usize, usize) {
++        self.get_dvc::<GraphicsPipelineClient>()
++            .map(|gfx| gfx.processor().pending_work()).unwrap_or_default()
++    }
++
++    /// Execute one ordered graphics command, returning its actual completion ACK
++    /// and framebuffer damage. The receiver can service RDPSND between commands.
++    pub fn process_pending_graphics(&mut self, image: &mut DecodedImage) -> SessionResult<Vec<ActiveStageOutput>> {
++        let Some(mut gfx) = self.get_dvc_mut::<GraphicsPipelineClient>() else { return Ok(Vec::new()) };
++        let channel_id = gfx.channel_id();
++        let replies = gfx.processor_mut().process_pending().map_err(SessionError::pdu)?;
++        let mut outputs = Vec::new();
++        if !replies.is_empty() {
++            let messages = ironrdp_dvc::encode_dvc_messages(channel_id, replies, ironrdp_svc::ChannelFlags::empty())
++                .map_err(SessionError::encode)?;
++            let frame = self.encode_dvc_messages(messages)?;
++            outputs.push(ActiveStageOutput::ResponseFrame(frame));
++        }
++        let (region, windows) = self.drain_graphics_pipeline(image)?;
++        if let Some(region) = region { outputs.push(ActiveStageOutput::GraphicsUpdate(region)); }
++        if !windows.is_empty() { outputs.push(ActiveStageOutput::WindowSurfaceUpdates(windows)); }
++        self.widen_to_full_refresh(image, &mut outputs);
++        Ok(outputs)
++    }
++
+     /// Drains the client-side EGFX compositor: follows a pending `ResetGraphics`, composites
+     /// each completed-frame output region into `image` and records its damage.
      ///
 diff --git a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 index 2d65a124..a281702f 100644
@@ -160,20 +408,19 @@ index c964d7ce..c2cee187 100644
  ironrdp-futures.path = "../ironrdp-futures"
 diff --git a/crates/ironrdp-web/src/audio.rs b/crates/ironrdp-web/src/audio.rs
 new file mode 100644
-index 00000000..2c1ac328
+index 00000000..d43d8f5c
 --- /dev/null
 +++ b/crates/ironrdp-web/src/audio.rs
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,156 @@
 +//! Bounded PCM bridge. JS owns Web Audio; the protocol backend remains Send.
-+use crate::session::RdpInputEvent;
-+use futures_channel::mpsc;
 +use ironrdp::rdpsnd::{
 +    client::RdpsndClientHandler,
 +    pdu::{AudioFormat, AudioFormatFlags, PitchPdu, VolumePdu, WaveFormat},
 +};
 +use std::borrow::Cow;
++use std::collections::VecDeque;
 +use std::sync::{
-+    Arc,
++    Arc, Mutex,
 +    atomic::{AtomicUsize, Ordering},
 +};
 +
@@ -183,6 +430,7 @@ index 00000000..2c1ac328
 +pub(crate) struct PcmPacket {
 +    pub format: AudioFormat,
 +    pub data: Vec<u8>,
++    pub timestamp: u32,
 +    queued: Arc<AtomicUsize>,
 +}
 +impl Drop for PcmPacket {
@@ -197,15 +445,17 @@ index 00000000..2c1ac328
 +    Close,
 +}
 +
++pub(crate) type AudioQueue = Arc<Mutex<VecDeque<AudioEvent>>>;
++
 +#[derive(Debug)]
 +pub(crate) struct WebAudioBackend {
-+    tx: mpsc::UnboundedSender<RdpInputEvent>,
++    queue: AudioQueue,
 +    queued: Arc<AtomicUsize>,
 +}
 +impl WebAudioBackend {
-+    pub fn new(tx: mpsc::UnboundedSender<RdpInputEvent>) -> Self {
++    pub fn new(queue: AudioQueue) -> Self {
 +        Self {
-+            tx,
++            queue,
 +            queued: Arc::new(AtomicUsize::new(0)),
 +        }
 +    }
@@ -227,7 +477,7 @@ index 00000000..2c1ac328
 +    fn choose_formats(&self, formats: &[AudioFormat]) -> Vec<AudioFormat> {
 +        formats.iter().filter(|f| supported(f)).cloned().collect()
 +    }
-+    fn wave(&mut self, format: &AudioFormat, _ts: u32, data: Cow<'_, [u8]>) {
++    fn wave(&mut self, format: &AudioFormat, ts: u32, data: Cow<'_, [u8]>) {
 +        if !supported(format) || data.is_empty() || data.len() % usize::from(format.n_block_align) != 0 {
 +            return;
 +        }
@@ -242,27 +492,27 @@ index 00000000..2c1ac328
 +        }
 +        let packet = PcmPacket {
 +            format: format.clone(),
++            timestamp: ts,
 +            data: data.into_owned(),
 +            queued: self.queued.clone(),
 +        };
-+        let _ = self.tx.unbounded_send(RdpInputEvent::Audio(AudioEvent::Pcm(packet)));
++        self.queue.lock().unwrap().push_back(AudioEvent::Pcm(packet));
 +    }
 +    fn set_volume(&mut self, volume: VolumePdu) {
-+        let _ = self.tx.unbounded_send(RdpInputEvent::Audio(AudioEvent::Volume(
++        self.queue.lock().unwrap().push_back(AudioEvent::Volume(
 +            volume.volume_left,
 +            volume.volume_right,
-+        )));
++        ));
 +    }
 +    fn set_pitch(&mut self, _pitch: PitchPdu) {} // PITCH is deliberately not advertised.
 +    fn close(&mut self) {
-+        let _ = self.tx.unbounded_send(RdpInputEvent::Audio(AudioEvent::Close));
++        self.queue.lock().unwrap().push_back(AudioEvent::Close);
 +    }
 +}
 +
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
-+    use futures_util::StreamExt;
 +    fn pcm() -> AudioFormat {
 +        AudioFormat {
 +            format: WaveFormat::PCM,
@@ -276,8 +526,7 @@ index 00000000..2c1ac328
 +    }
 +    #[test]
 +    fn only_advertise_supported_server_pcm_formats() {
-+        let (tx, _) = mpsc::unbounded();
-+        let b = WebAudioBackend::new(tx);
++        let b = WebAudioBackend::new(AudioQueue::default());
 +        let mut invalid = pcm();
 +        invalid.format = WaveFormat::AAC_MS;
 +        let mut misaligned = pcm();
@@ -287,19 +536,37 @@ index 00000000..2c1ac328
 +        assert!(!b.get_flags().contains(AudioFormatFlags::PITCH));
 +    }
 +    #[test]
-+    fn queue_is_bounded_and_released_when_consumed_or_disconnected() {
-+        let (tx, mut rx) = mpsc::unbounded();
-+        let mut b = WebAudioBackend::new(tx);
++    fn pcm_and_close_are_drained_in_protocol_order() {
++        let queue = AudioQueue::default();
++        let mut backend = WebAudioBackend::new(queue.clone());
++        backend.wave(&pcm(), 0, Cow::Owned(vec![1; 4]));
++        backend.wave(&pcm(), 1, Cow::Owned(vec![2; 4]));
++        backend.close();
++        let mut events = queue.lock().unwrap();
++        for expected in [1, 2] {
++            match events.pop_front().unwrap() {
++                AudioEvent::Pcm(packet) => assert_eq!(packet.data, vec![expected; 4]),
++                other => panic!("unexpected audio event: {other:?}"),
++            }
++        }
++        assert!(matches!(events.pop_front(), Some(AudioEvent::Close)));
++        assert!(events.is_empty());
++        assert_eq!(backend.queued.load(Ordering::Relaxed), 0);
++    }
++    #[test]
++    fn queue_is_bounded_and_released_when_drained() {
++        let queue = AudioQueue::default();
++        let mut b = WebAudioBackend::new(queue.clone());
 +        b.wave(&pcm(), 0, Cow::Owned(vec![0; MAX_QUEUED_BYTES]));
 +        b.wave(&pcm(), 1, Cow::Owned(vec![0; 4]));
 +        assert_eq!(b.queued.load(Ordering::Relaxed), MAX_QUEUED_BYTES);
-+        drop(rx.next().now_or_never().unwrap());
++        drop(queue.lock().unwrap().pop_front());
 +        assert_eq!(b.queued.load(Ordering::Relaxed), 0);
-+        drop(rx);
++        queue.lock().unwrap().clear();
 +        b.wave(&pcm(), 2, Cow::Owned(vec![0; 4]));
++        drop(queue.lock().unwrap().pop_front());
 +        assert_eq!(b.queued.load(Ordering::Relaxed), 0);
 +    }
-+    use futures_util::FutureExt;
 +}
 diff --git a/crates/ironrdp-web/src/canvas.rs b/crates/ironrdp-web/src/canvas.rs
 index 30ba5be7..a867c9e0 100644
@@ -1221,7 +1488,7 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..ad0e4549 100644
+index ac630290..dd4545c4 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
 @@ -1,3 +1,4 @@
@@ -1233,11 +1500,11 @@ index ac630290..ad0e4549 100644
  use std::borrow::Cow;
  use std::rc::Rc;
  
-+use crate::audio::{AudioEvent, WebAudioBackend};
++use crate::audio::{AudioEvent, AudioQueue, WebAudioBackend};
  use crate::canvas::Canvas;
  use crate::clipboard;
  use crate::clipboard::{ClipboardData, FileMetadata, WasmClipboard, WasmClipboardBackend, WasmClipboardBackendMessage};
-@@ -12,6 +14,7 @@ use crate::error::IronError;
+@@ -12,12 +14,13 @@ use crate::error::IronError;
  use crate::image::extract_partial_image;
  use crate::input::InputTransaction;
  use crate::network_client::WasmNetworkClient;
@@ -1245,6 +1512,13 @@ index ac630290..ad0e4549 100644
  use crate::printer::{JsPrinterStreamCallbacks, WasmPrinter, WasmPrinterBackend, wasm_printer_pair};
  use anyhow::Context as _;
  use base64::Engine as _;
+ use futures_channel::mpsc;
+ use futures_util::io::{ReadHalf, WriteHalf};
+-use futures_util::{AsyncWriteExt as _, FutureExt as _, StreamExt as _, select};
++use futures_util::{AsyncWriteExt as _, FutureExt as _, StreamExt as _, select_biased};
+ use gloo_net::websocket;
+ use gloo_net::websocket::futures::WebSocket;
+ use gloo_timers::future::IntervalStream;
 @@ -34,12 +37,13 @@ use ironrdp::graphics::image_processing::PixelFormat;
  use ironrdp::pdu::input::fast_path::FastPathInputEvent;
  use ironrdp::pdu::rdp::capability_sets::{BitmapCodecs, client_codecs_capabilities};
@@ -1354,7 +1628,7 @@ index ac630290..ad0e4549 100644
              security = SecurityConfig {
                  enable_credssp: inner.enable_credssp,
                  enable_standard_rdp_security: inner.enable_standard_rdp_security,
-@@ -473,13 +518,40 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -473,13 +518,41 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              client_name.clone(),
              desktop_size,
              legacy_graphics,
@@ -1389,13 +1663,14 @@ index ac630290..ad0e4549 100644
 +        config.enable_audio_capture = microphone_enabled;
 +        let audio_callback = self.0.borrow().audio_callback.clone();
 +        config.enable_audio_playback = audio_callback.is_some();
++        let audio_queue = AudioQueue::default();
 +        let audio_backend = audio_callback
 +            .as_ref()
-+            .map(|_| WebAudioBackend::new(input_events_tx.clone()));
++            .map(|_| WebAudioBackend::new(audio_queue.clone()));
  
          let clipboard = remote_clipboard_changed_callback.clone().map(|callback| {
              WasmClipboard::new(
-@@ -566,6 +638,11 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -566,6 +639,11 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              vmconnect,
              kdc_proxy_url,
              clipboard_backend: clipboard.as_ref().map(|clip| clip.backend()),
@@ -1407,34 +1682,35 @@ index ac630290..ad0e4549 100644
              printer_backend,
              printer_device_id,
              printer_name,
-@@ -584,6 +661,8 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -584,6 +662,9 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
          spawn_local(writer_task(writer_rx, rdp_writer, outbound_message_size_limit));
  
          Ok(Session {
 +            audio_callback,
++            audio_queue,
 +            capture,
              desktop_size: connection_result.desktop_size,
              input_database: RefCell::new(ironrdp::input::Database::new()),
              writer_tx,
-@@ -606,6 +685,8 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
+@@ -606,6 +687,7 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
  
  #[derive(Debug)]
  pub(crate) enum RdpInputEvent {
-+    Audio(AudioEvent),
 +    Capture(CaptureMessages),
      Cliprdr(ClipboardMessage),
      ClipboardBackend(WasmClipboardBackendMessage),
      /// Printer backend → event loop: a print job finished and its bytes are
-@@ -638,6 +719,8 @@ pub(crate) struct Session {
+@@ -638,6 +720,9 @@ pub(crate) struct Session {
      input_events_tx: mpsc::UnboundedSender<RdpInputEvent>,
  
      render_canvas: HtmlCanvasElement,
 +    audio_callback: Option<js_sys::Function>,
++    audio_queue: AudioQueue,
 +    capture: Capture,
      set_cursor_style_callback: js_sys::Function,
      set_cursor_style_callback_context: JsValue,
  
-@@ -742,7 +825,11 @@ impl iron_remote_desktop::Session for Session {
+@@ -742,7 +827,12 @@ impl iron_remote_desktop::Session for Session {
          let mut requested_resize = None;
  
          // Reused across frames so per-region extraction doesn't allocate on every draw.
@@ -1443,15 +1719,54 @@ index ac630290..ad0e4549 100644
 +        let mut damage = Damage::default();
 +        let mut animation_frame = None;
 +        let mut processing_slice_ms = 0.0;
++        let mut receive_work_ms = 0.0;
  
          // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
          let activation_factory = connection_result.activation_factory;
-@@ -763,17 +850,77 @@ impl iron_remote_desktop::Session for Session {
+@@ -763,17 +853,75 @@ impl iron_remote_desktop::Session for Session {
          let mut cleanup_interval = IntervalStream::new(5_000).fuse();
  
          let disconnect_reason = 'outer: loop {
+-            let outputs = select! {
++            // Keep connector finalization synchronous: it has no graphics pump.
++            // Once this loop owns the channel, network receipt can defer decoding.
++            if let Some(mut gfx) = active_stage.get_dvc_mut::<GraphicsPipelineClient>() {
++                gfx.processor_mut().enable_deferred_processing();
++            }
 +            let processing_started;
-             let outputs = select! {
++            let (pending_count, pending_bytes) = active_stage.pending_graphics_work();
++            let pending_graphics = pending_count != 0;
++            let service_graphics = receive_work_ms >= 4.0 || pending_bytes >= 16 * 1024 * 1024 || pending_count >= 512;
++            let outputs = select_biased! {
++                _ = async {
++                    if pending_graphics { if !service_graphics { gloo_timers::future::sleep(Duration::ZERO).await; } }
++                    else { futures_util::future::pending::<()>().await; }
++                }.fuse() => {
++                    processing_started = js_sys::Date::now();
++                    receive_work_ms = 0.0;
++                    let outputs = active_stage.process_pending_graphics(&mut image)?;
++                    if framebuffer_dimensions != (image.width(), image.height()) {
++                        damage.clear();
++                        framebuffer_dimensions = (image.width(), image.height());
++                    }
++                    outputs
++                }
+                 frame = framed.read_pdu().fuse() => {
++                    processing_started = js_sys::Date::now();
+                     let (action, payload) = frame.context("read frame")?;
+                     trace!(?action, frame_length = payload.len(), "Frame received");
+ 
+-                    active_stage.process(&mut image, action, &payload, framed.last_read_at())?
++                    let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
++                    receive_work_ms += js_sys::Date::now() - processing_started;
++                    if framebuffer_dimensions != (image.width(), image.height()) {
++                        // ResetGraphics may resize without DeactivateAll. Discard rectangles
++                        // from the old extent before the next animation callback reads pixels.
++                        damage.clear();
++                        framebuffer_dimensions = (image.width(), image.height());
++                    }
++                    outputs
++                }
 +                _ = wait_for_frame(&mut animation_frame).fuse() => {
 +                    processing_started = js_sys::Date::now();
 +                    animation_frame = None;
@@ -1471,21 +1786,6 @@ index ac630290..ad0e4549 100644
 +                        draw_buffer.clear();
 +                    }
 +                    Vec::new()
-+                }
-                 frame = framed.read_pdu().fuse() => {
-+                    processing_started = js_sys::Date::now();
-                     let (action, payload) = frame.context("read frame")?;
-                     trace!(?action, frame_length = payload.len(), "Frame received");
- 
--                    active_stage.process(&mut image, action, &payload, framed.last_read_at())?
-+                    let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
-+                    if framebuffer_dimensions != (image.width(), image.height()) {
-+                        // ResetGraphics may resize without DeactivateAll. Discard rectangles
-+                        // from the old extent before the next animation callback reads pixels.
-+                        damage.clear();
-+                        framebuffer_dimensions = (image.width(), image.height());
-+                    }
-+                    outputs
                  }
                  input_events = input_events.next() => {
 +                    processing_started = js_sys::Date::now();
@@ -1498,34 +1798,10 @@ index ac630290..ad0e4549 100644
 +                                vec![ActiveStageOutput::ResponseFrame(frame)]
 +                            }
 +                        }
-+                        RdpInputEvent::Audio(event) => {
-+                            if let Some(callback) = &self.audio_callback {
-+                                let args = js_sys::Array::new();
-+                                match &event {
-+                                    AudioEvent::Pcm(packet) => {
-+                                        args.push(&JsValue::from_str("pcm"));
-+                                        args.push(&js_sys::Uint8Array::from(packet.data.as_slice()));
-+                                        args.push(&JsValue::from_f64(f64::from(packet.format.n_samples_per_sec)));
-+                                        args.push(&JsValue::from_f64(f64::from(packet.format.n_channels)));
-+                                        args.push(&JsValue::from_f64(f64::from(packet.format.bits_per_sample)));
-+                                    }
-+                                    AudioEvent::Volume(left, right) => {
-+                                        args.push(&JsValue::from_str("volume"));
-+                                        args.push(&JsValue::from_f64(f64::from(*left) / 65535.0));
-+                                        args.push(&JsValue::from_f64(f64::from(*right) / 65535.0));
-+                                    }
-+                                    AudioEvent::Close => { args.push(&JsValue::from_str("close")); }
-+                                }
-+                                if let Err(error) = callback.apply(&JsValue::NULL, &args) {
-+                                    warn!(?error, "Audio playback callback failed");
-+                                }
-+                            }
-+                            Vec::new()
-+                        }
                          RdpInputEvent::Cliprdr(message) => {
                              if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                                  if let Some(svc_messages) = match message {
-@@ -949,6 +1096,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -949,6 +1097,7 @@ impl iron_remote_desktop::Session for Session {
                      }
                  }
                  _ = cleanup_interval.next() => {
@@ -1533,7 +1809,44 @@ index ac630290..ad0e4549 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -979,10 +1127,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -971,6 +1120,36 @@ impl iron_remote_desktop::Session for Session {
+                 }
+             };
+ 
++            // RDPSND callbacks run during process(). Forward all decoded PCM
++            // before graphics output or another buffered network PDU can run.
++            // Remove each event under the lock, then call JS without holding it.
++            loop {
++                let event = self.audio_queue.lock().unwrap().pop_front();
++                let Some(event) = event else { break };
++                if let Some(callback) = &self.audio_callback {
++                    let args = js_sys::Array::new();
++                    match &event {
++                        AudioEvent::Pcm(packet) => {
++                            args.push(&JsValue::from_str("pcm"));
++                            args.push(&js_sys::Uint8Array::from(packet.data.as_slice()));
++                            args.push(&JsValue::from_f64(f64::from(packet.format.n_samples_per_sec)));
++                            args.push(&JsValue::from_f64(f64::from(packet.format.n_channels)));
++                            args.push(&JsValue::from_f64(f64::from(packet.format.bits_per_sample)));
++                            args.push(&JsValue::from_f64(f64::from(packet.timestamp)));
++                        }
++                        AudioEvent::Volume(left, right) => {
++                            args.push(&JsValue::from_str("volume"));
++                            args.push(&JsValue::from_f64(f64::from(*left) / 65535.0));
++                            args.push(&JsValue::from_f64(f64::from(*right) / 65535.0));
++                        }
++                        AudioEvent::Close => { args.push(&JsValue::from_str("close")); }
++                    }
++                    if let Err(error) = callback.apply(&JsValue::NULL, &args) {
++                        warn!(?error, "Audio playback callback failed");
++                    }
++                }
++            }
++
+             for out in outputs {
+                 match out {
+                     ActiveStageOutput::ResponseFrame(frame) => {
+@@ -979,10 +1158,7 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -1545,7 +1858,7 @@ index ac630290..ad0e4549 100644
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1239,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1270,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -1554,7 +1867,7 @@ index ac630290..ad0e4549 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1326,16 @@ impl iron_remote_desktop::Session for Session {
+@@ -1179,6 +1357,16 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -1571,7 +1884,7 @@ index ac630290..ad0e4549 100644
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1278,6 +1435,36 @@ impl iron_remote_desktop::Session for Session {
+@@ -1278,6 +1466,36 @@ impl iron_remote_desktop::Session for Session {
          // to keep the iron-remote-desktop trait surface protocol-agnostic.
          iron_remote_desktop::extension_match! {
              match ext;
@@ -1608,7 +1921,7 @@ index ac630290..ad0e4549 100644
              |request_file_contents: JsValue| {
                  let obj = into_object(request_file_contents)?;
                  let stream_id = get_u32(&obj, "stream_id")?;
-@@ -1517,6 +1704,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1517,6 +1735,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -1631,7 +1944,7 @@ index ac630290..ad0e4549 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1727,7 @@ fn build_config(
+@@ -1524,6 +1758,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -1639,7 +1952,7 @@ index ac630290..ad0e4549 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1779,7 @@ fn build_config(
+@@ -1575,7 +1810,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -1648,7 +1961,7 @@ index ac630290..ad0e4549 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -1647,6 +1851,11 @@ struct ConnectParams {
+@@ -1647,6 +1882,11 @@ struct ConnectParams {
      vmconnect: Option<String>,
      kdc_proxy_url: Option<String>,
      clipboard_backend: Option<WasmClipboardBackend>,
@@ -1660,7 +1973,7 @@ index ac630290..ad0e4549 100644
      printer_backend: Option<WasmPrinterBackend>,
      printer_device_id: u32,
      printer_name: String,
-@@ -1699,6 +1908,11 @@ async fn connect(
+@@ -1699,6 +1939,11 @@ async fn connect(
          vmconnect,
          kdc_proxy_url,
          clipboard_backend,
@@ -1672,7 +1985,7 @@ index ac630290..ad0e4549 100644
          printer_backend,
          printer_device_id,
          printer_name,
-@@ -1712,30 +1926,45 @@ async fn connect(
+@@ -1712,30 +1957,45 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -1727,7 +2040,7 @@ index ac630290..ad0e4549 100644
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2274,42 @@ mod tests {
+@@ -2045,10 +2305,41 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -1742,8 +2055,7 @@ index ac630290..ad0e4549 100644
 +        let mut connector = ClientConnector::new(config, "127.0.0.1:3389".parse().unwrap());
 +        ensure_audio_device_channel(&mut connector, false, "test".into());
 +        assert!(connector.static_channels.get_by_type::<Rdpdr>().is_none());
-+        let (tx, _rx) = mpsc::unbounded();
-+        connector.attach_static_channel(Rdpsnd::new(Box::new(WebAudioBackend::new(tx))));
++        connector.attach_static_channel(Rdpsnd::new(Box::new(WebAudioBackend::new(AudioQueue::default()))));
 +        ensure_audio_device_channel(&mut connector, true, "test".into());
 +        assert!(connector.static_channels.get_by_type::<Rdpsnd>().is_some());
 +        let original = connector.static_channels.get_by_type::<Rdpdr>().unwrap() as *const _;
@@ -1770,7 +2082,7 @@ index ac630290..ad0e4549 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2879,29 @@ mod tests {
+@@ -2618,3 +2909,29 @@ mod tests {
          }
      }
  }
@@ -1802,17 +2114,18 @@ index ac630290..ad0e4549 100644
 +}
 diff --git a/crates/ironrdp-web/src/webcodecs.rs b/crates/ironrdp-web/src/webcodecs.rs
 new file mode 100644
-index 00000000..01273716
+index 00000000..f31c6687
 --- /dev/null
 +++ b/crates/ironrdp-web/src/webcodecs.rs
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,64 @@
 +//! The JS bridge runs only in a dedicated worker. Its nested WebCodecs worker
 +//! completes one picture before waking this synchronous protocol decoder.
-+use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder};
++use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder, Yuv420Frame};
 +use wasm_bindgen::{JsCast, JsValue};
 +
 +struct WebDecoder {
 +    surface: u16,
++    yuv: bool,
 +}
 +fn invoke(name: &str, args: &js_sys::Array) -> Result<JsValue, JsValue> {
 +    let global = js_sys::global();
@@ -1823,7 +2136,8 @@ index 00000000..01273716
 +pub(crate) fn decoder() -> Option<Box<dyn H264Decoder>> {
 +    #[cfg(target_arch = "wasm32")]
 +    if js_sys::Reflect::get(&js_sys::global(), &"unitermDecodeAvc".into()).is_ok_and(|v| v.is_function()) {
-+        return Some(Box::new(WebDecoder { surface: 0 }));
++        let yuv = js_sys::Reflect::get(&js_sys::global(), &"unitermAvcYuv".into()).ok().and_then(|v| v.as_bool()).unwrap_or(false);
++        return Some(Box::new(WebDecoder { surface: 0, yuv }));
 +    }
 +    None
 +}
@@ -1845,7 +2159,25 @@ index 00000000..01273716
 +        }
 +        Ok(DecodedFrame::new(pixels, width, height))
 +    }
-+    // AVC444 is deliberately not advertised: its paired YUV views need a separate adapter.
++    fn supports_yuv420(&self) -> bool { self.yuv }
++    fn decode_yuv420(&mut self, data: &[u8]) -> DecoderResult<Yuv420Frame> {
++        let args = js_sys::Array::new();
++        args.push(&self.surface.into());
++        args.push(&js_sys::Uint8Array::from(data));
++        args.push(&JsValue::TRUE);
++        let result = invoke("unitermDecodeAvc", &args).map_err(|_| DecoderError::msg("WebCodecs YUV decode failed"))?;
++        let a = js_sys::Array::from(&result);
++        let width = a.get(0).as_f64().unwrap_or_default();
++        let height = a.get(1).as_f64().unwrap_or_default();
++        if width < 1.0 || height < 1.0 || width > 8192.0 || height > 8192.0 || width.fract() != 0.0 || height.fract() != 0.0 {
++            return Err(DecoderError::msg("Invalid WebCodecs YUV extent"));
++        }
++        let (width, height) = (width as u16, height as u16);
++        Yuv420Frame::new(width, height,
++            js_sys::Uint8Array::new(&a.get(2)).to_vec(), usize::from(width),
++            js_sys::Uint8Array::new(&a.get(3)).to_vec(),
++            js_sys::Uint8Array::new(&a.get(4)).to_vec(), usize::from(width.div_ceil(2)))
++    }
 +    fn reset(&mut self) {
 +        let _ = invoke("unitermResetAvc", &js_sys::Array::new());
 +    }

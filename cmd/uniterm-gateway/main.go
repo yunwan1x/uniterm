@@ -117,6 +117,10 @@ const sessionCookieName = "uniterm_web_session"
 func main() {
 	dataRoot := envOrDefault("UNITERM_DATA_DIR", "/data")
 	listenAddr := envOrDefault("UNITERM_GATEWAY_ADDR", "0.0.0.0:8080")
+	certFile, keyFile := os.Getenv("UNITERM_TLS_CERT_FILE"), os.Getenv("UNITERM_TLS_KEY_FILE")
+	if certFile != "" || keyFile != "" {
+		_ = os.Setenv("UNITERM_COOKIE_SECURE", "true")
+	}
 	workerBin := envOrDefault("UNITERM_SERVER_BIN", "/app/uniterm-server")
 	idleMinutes, _ := strconv.Atoi(envOrDefault("UNITERM_WORKER_IDLE_MINUTES", "60"))
 	if idleMinutes <= 0 {
@@ -139,9 +143,22 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
+	if err := configureGatewayTLS(srv, certFile, keyFile); err != nil {
+		log.Fatalf("[uniterm-gateway] HTTPS configuration error: %v", err)
+	}
 	go func() {
-		log.Printf("[uniterm-gateway] Multi-user Web UI listening on http://%s (dataRoot=%s)", listenAddr, dataRoot)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		scheme := "http"
+		if srv.TLSConfig != nil {
+			scheme = "https"
+		}
+		log.Printf("[uniterm-gateway] Multi-user Web UI listening on %s://%s (dataRoot=%s)", scheme, listenAddr, dataRoot)
+		var err error
+		if srv.TLSConfig != nil {
+			err = srv.ListenAndServeTLS("", "")
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("[uniterm-gateway] HTTP server error: %v", err)
 		}
 	}()

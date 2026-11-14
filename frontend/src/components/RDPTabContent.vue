@@ -224,7 +224,7 @@ import { RdpClipboardSync, RdpInputQueue } from '../utils/rdpClipboard'
 import { RdpFileTransfer } from '../utils/rdpFileTransfer'
 import { adaptiveRdpSize, rdpPointerPosition } from '../utils/rdpGeometry'
 import type { RdpDesktopSize } from '../utils/rdpGeometry'
-import { DEFAULT_RDP_QUALITY, normalizeRdpQuality, rdpQualityProfile } from '../utils/rdpQuality'
+import { normalizeRdpQuality, rdpQualityProfile } from '../utils/rdpQuality'
 import type { RdpQuality } from '../utils/rdpQuality'
 import { RDP_RESOLUTION_PRESETS, resolutionSentinels, seedResolutionChoice } from '../utils/rdpResolutions'
 import type { RdpResolutionChoice } from '../utils/rdpResolutions'
@@ -600,6 +600,15 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     const player = new RdpAudioPlayer(blocked => { if (generation === clientGeneration) audioBlocked.value = blocked })
     player.setEnabled(audioEnabled.value)
     audioPlayer = player
+    player.unlock()
+    player.onStats(() => {
+      if (generation === clientGeneration && canvasEl.value) canvasEl.value.dataset.rdpAudioStats = JSON.stringify(player.getStats())
+    })
+    if (mod.isWorker) {
+      const audioPort = await player.createInputPort()
+      if (generation !== clientGeneration) { audioPort?.close(); player.dispose(); return }
+      if (audioPort) builder.extension(new mod.Extension('audio_port', audioPort))
+    }
     let nextAudioStats = 0
     builder.extension(new mod.Extension('audio_callback', (kind: string, data: Uint8Array | number, rate?: number, channels?: number, bits?: number) => {
       if (generation !== clientGeneration) return
@@ -632,13 +641,12 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     builder.extension(new mod.Extension('autologon', !!effectivePassword.value))
     // Low-bandwidth tiers negotiate a smaller connection_type and strip
     // server-side graphics features (wallpaper, theming, animations). The
-    // default tier equals the engine's built-in values, so it is not sent —
-    // connections keep their current behavior on older WASM builds too.
-    if (activeQuality.value !== DEFAULT_RDP_QUALITY) {
-      const profile = rdpQualityProfile(activeQuality.value)
-      builder.extension(new mod.Extension('connection_type', profile.connectionType))
-      builder.extension(new mod.Extension('performance_flags', profile.performanceFlags))
-    }
+    // bundled engine supports these options on every connection.
+    // Send the default profile too: the engine defaults to LAN/high quality,
+    // not our UI's balanced tier. Otherwise selecting Balanced has no effect.
+    const profile = rdpQualityProfile(activeQuality.value)
+    builder.extension(new mod.Extension('connection_type', profile.connectionType))
+    builder.extension(new mod.Extension('performance_flags', profile.performanceFlags))
     sessionQuality.value = activeQuality.value
     sessionResolution.value = activeResolution.value
     // Servers with Display Control resize in place; older servers use the
