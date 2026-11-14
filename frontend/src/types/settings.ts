@@ -72,6 +72,11 @@ export interface TerminalSettings {
   selectionAction: 'none' | 'copy'
   rightClickAction: 'none' | 'menu' | 'paste' | 'copyOrPaste'
   middleClickAction: 'none' | 'paste' | 'menu'
+  // Multi-line paste protection (issue #1370): 'confirm' opens an editable
+  // preview dialog before anything with multiple lines reaches the terminal,
+  // 'direct' pastes without asking. Defaults to 'confirm' — a multi-line
+  // clipboard pasted unattended runs every line as its own command.
+  multilinePaste: 'confirm' | 'direct'
   // Ctrl/Cmd + mouse wheel zooms the terminal font. Can be turned off (issue
   // #671) for scroll-sensitive mice; defaults to enabled.
   ctrlWheelZoom?: boolean
@@ -156,6 +161,10 @@ export interface AISettings {
   autoCompact?: boolean
   contextTokenBudget?: number
   summaryModelId?: string
+  // How user messages render in the AI panel: 'plain' (default) keeps the
+  // shared left-aligned full-width layout; 'bubble' right-aligns a
+  // content-sized chat bubble (issue #1478). Undefined behaves as 'plain'.
+  userMessageStyle?: 'plain' | 'bubble'
   models: AIModelConfig[]
 }
 
@@ -476,6 +485,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     selectionAction: 'none',
     rightClickAction: 'menu',
     middleClickAction: 'paste',
+    multilinePaste: 'confirm',
     maxHistoryLines: 2500,
     smartCompletion: true,
     suggestionPopup: true,
@@ -500,6 +510,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoCompact: true,
     contextTokenBudget: DEFAULT_CONTEXT_TOKEN_BUDGET,
     summaryModelId: '',
+    userMessageStyle: 'plain',
     models: [
       {
         id: 'model-default',

@@ -236,16 +236,31 @@ import { useRemoteDesktopPreferences } from '../composables/useRemoteDesktopPref
 import { queueRemoteKeyboardChange, isRdpPasteKey, REMOTE_KEY_SCANCODES as KEY_SCANCODES } from '../utils/remoteKeyboard'
 import type { NativeRdpKey } from '../utils/remoteKeyboard'
 import { charToScancode } from '../utils/remoteCharInput'
+import { resolveIdentityCredentials } from '../utils/identityCredentials'
+import { useIdentityStore } from '../stores/identityStore'
 
 const { t } = useI18n()
 const panelStore = usePanelStore()
 const connectionStore = useConnectionStore()
+const identityStore = useIdentityStore()
 
 const props = defineProps<{
   panelId: string
   config: ConnectionConfig | null
   sessionId: string | null
 }>()
+
+// The RDP protocol runs in the webview's WASM client, which reads the
+// credentials straight off the panel config — the backend's identity
+// materialization never reaches it. Resolve an identity reference here
+// (password-type identities only; user override per #959 semantics).
+// The store may not be loaded yet on a fresh window; refresh it lazily.
+identityStore.load()
+const identityCreds = computed(() =>
+  props.config ? resolveIdentityCredentials(props.config, identityStore.identities) : null
+)
+const effectiveUser = computed(() => identityCreds.value?.user ?? props.config?.user ?? '')
+const effectivePassword = computed(() => identityCreds.value?.password ?? props.config?.password ?? '')
 
 const status = ref<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
 // Graphics/network tier. Seed from the saved connection; the status bar
@@ -442,17 +457,25 @@ async function loadWasm(): Promise<RDPModule> {
 
 // ── Session state ──
 
+type RdpSecurityMode = NonNullable<ConnectionConfig['rdpSecurityMode']>
+
+// The explicit mode field wins; connections saved before it existed map the
+// legacy NLA boolean (false = TLS only, per the old retry-free behavior).
+function resolveSecurityMode(config: ConnectionConfig | null): RdpSecurityMode {
+  return config?.rdpSecurityMode ?? (config?.rdpEnableNLA === false ? 'tls' : 'nla-prefer')
+}
+
 let session: any = null
 let connectTimer: ReturnType<typeof setTimeout> | null = null
 let started = false
 let clientGeneration = 0
-let activeCredSSP = props.config?.rdpEnableNLA ?? false
-let nlaFallbackAttempted = false
+let activeSecurityMode = resolveSecurityMode(props.config)
+let securityFallbackAttempted = false
+let pendingSecurityFallback = false
 let avcFallbackAttempted = false
 let workerFallbackAttempted = false
 let canvasFallbackAttempted = false
 const canvasGeneration = ref(0)
-let pendingNlaFallback = false
 let clipboardSync: RdpClipboardSync | null = null
 let fileTransfer: RdpFileTransfer | null = null
 const browserFilesEnabled = ref(false), filesOpen = ref(false), fileChannelReady = ref(false), browserFilesError = ref('')
@@ -513,8 +536,7 @@ function resolveDesktopSize(): { width: number; height: number } {
 }
 
 // "DOMAIN\user" falls back to domain like mstsc accepts; rdpDomain wins.
-function splitDomainUser(cfg: ConnectionConfig): { username: string; domain: string } {
-  let username = cfg.user || ''
+function splitDomainUser(username: string, cfg: ConnectionConfig): { username: string; domain: string } {
   let domain = cfg.rdpDomain || ''
   const idx = username.indexOf('\\')
   if (idx > 0 && !domain) {
@@ -526,7 +548,7 @@ function splitDomainUser(cfg: ConnectionConfig): { username: string; domain: str
 
 async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSize) {
   if (started || !props.config || !canvasEl.value) return
-  if (clientGeneration === 0) activeCredSSP = props.config.rdpEnableNLA ?? false
+  if (clientGeneration === 0) activeSecurityMode = resolveSecurityMode(props.config)
   started = true
   const generation = ++clientGeneration
   status.value = 'connecting'
@@ -550,14 +572,14 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     browserFilesEnabled.value = await isWebServerMode()
     const mod = await loadWasm()
     if (generation !== clientGeneration) return
-    const { username, domain } = splitDomainUser(props.config)
+    const { username, domain } = splitDomainUser(effectiveUser.value, props.config)
     const size = desktopSizeOverride ?? resolveDesktopSize()
     lastResizeRequest = desktopSizeOverride ?? null
     lastScaleRequest = null
     scaleSyncAttempts = 0
     displayControlUsable = null
     clearScaleSync()
-    rdpLog(`client start: tier=${activeQuality.value} graphics=${activeGraphicsMode.value} res=${activeResolution.value} zoom=${zoom.value} size=${size.width}x${size.height} dpi=${localScalePercent()}% credssp=${activeCredSSP} displayControl=${isAdaptive()} gen=${generation}`)
+    rdpLog(`client start: tier=${activeQuality.value} graphics=${activeGraphicsMode.value} res=${activeResolution.value} zoom=${zoom.value} size=${size.width}x${size.height} dpi=${localScalePercent()}% credssp=${activeSecurityMode !== 'tls' && activeSecurityMode !== 'unencrypted'} securityMode=${activeSecurityMode} displayControl=${isAdaptive()} gen=${generation}`)
 
     // proxyUrl: ws://127.0.0.1:<port>/<token> on desktop, or the same-origin
     // path /api/web/session-proxy/<token> in server mode — the token doubles
@@ -567,7 +589,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
 
     const builder = new mod.SessionBuilder()
       .username(username)
-      .password(props.config.password || '')
+      .password(effectivePassword.value)
       .destination(props.config.host)
       .proxyAddress(wsUrl)
       .authToken(authToken)
@@ -594,16 +616,20 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     }))
     builder.extension(new mod.Extension('microphone_enabled', capture.enabled('microphone')))
     builder.extension(new mod.Extension('camera_enabled', capture.enabled('camera')))
-    builder.extension(new mod.Extension('enable_credssp', activeCredSSP))
     builder.extension(new mod.Extension('graphics_pipeline', activeGraphicsMode.value === 'gfx'))
     if (mod.isWorker) {
       builder.extension(new mod.Extension('webcodecs_enabled', !avcFallbackAttempted))
       builder.extension(new mod.Extension('canvas2d', canvasFallbackAttempted))
     }
     sessionGraphicsMode.value = activeGraphicsMode.value
+    builder.extension(new mod.Extension('enable_credssp', activeSecurityMode === 'nla-prefer' || activeSecurityMode === 'nla'))
+    // Standard RDP Security (ENCRYPTION_LEVEL_NONE) for legacy servers that
+    // reject TLS and NLA outright. The engine disables TLS/CredSSP when this
+    // is set, so it wins over the credssp extension above.
+    builder.extension(new mod.Extension('enable_standard_rdp_security', activeSecurityMode === 'unencrypted'))
     // Auto-logon with the saved credentials (mstsc saved-creds equivalent) —
     // requires the autologon extension patch in the WASM build.
-    builder.extension(new mod.Extension('autologon', !!props.config.password))
+    builder.extension(new mod.Extension('autologon', !!effectivePassword.value))
     // Low-bandwidth tiers negotiate a smaller connection_type and strip
     // server-side graphics features (wallpaper, theming, animations). The
     // default tier equals the engine's built-in values, so it is not sent —
@@ -743,7 +769,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     const detail = describeError(e)
     rdpLog(`connect failed: ${detail}`)
     if (retryRenderer(detail)) return
-    if (retryWithoutNLA(detail)) return
+    if (retryWithSecurityFallback(detail)) return
     errorMessage.value = detail
     status.value = 'error'
     teardownClient()
@@ -770,7 +796,7 @@ function runEnded(reason: string, isError = false) {
     void reconnect()
     return
   }
-  if (retryWithoutNLA(reason)) return
+  if (retryWithSecurityFallback(reason)) return
   onFocusOut()
   stopClipboardPoll()
   clearResizeProbe()
@@ -813,7 +839,11 @@ async function connect() {
   status.value = 'connecting'
   errorMessage.value = ''
   try {
-    const info = await CreateSession('rdp', { ...props.config, rdpEnableNLA: activeCredSSP })
+    const info = await CreateSession('rdp', {
+      ...props.config,
+      rdpSecurityMode: activeSecurityMode,
+      rdpEnableNLA: activeSecurityMode !== 'tls',
+    })
     currentSessionId.value = info.id
     panelStore.bindSession(props.panelId, info.id)
     if (info.proxyAddr) {
@@ -848,30 +878,49 @@ async function reconnect(preserveCapture = false) {
     await connect()
   } finally {
     reconnecting = false
-    if (pendingNlaFallback) {
-      pendingNlaFallback = false
+    if (pendingSecurityFallback) {
+      pendingSecurityFallback = false
       void reconnect()
     }
   }
 }
 
-function retryWithoutNLA(reason: string): boolean {
-  if (!activeCredSSP || nlaFallbackAttempted || framebufferSize.value) return false
-  if (!/remote error: tls: internal error/i.test(reason)) return false
-  nlaFallbackAttempted = true
-  activeCredSSP = false
-  status.value = 'connecting'
-  errorMessage.value = ''
-  rdpLog(`NLA handshake failed (${reason}); retrying with TLS login`)
-  if (reconnecting) pendingNlaFallback = true
-  else void reconnect()
-  return true
+// nla-prefer walks the security modes until one sticks: NLA → TLS when the
+// server's CredSSP handshake breaks (TLS alert inside the NTLM exchange),
+// then → unencrypted when the server reports it only accepts Standard RDP
+// Security. Servers express that two ways: an engine connector error naming
+// STANDARD_RDP_SECURITY (server picks PROTOCOL_RDP directly) or a NEG_FAILURE
+// code=2 "server only supports Standard RDP Security" Display string — match
+// both. The pinned modes stay as configured.
+function retryWithSecurityFallback(reason: string): boolean {
+  if ((activeSecurityMode !== 'nla-prefer' && !securityFallbackAttempted) || framebufferSize.value) return false
+  if (activeSecurityMode === 'nla-prefer' && /remote error: tls: internal error/i.test(reason)) {
+    securityFallbackAttempted = true
+    activeSecurityMode = 'tls'
+    status.value = 'connecting'
+    errorMessage.value = ''
+    rdpLog(`NLA handshake failed (${reason}); retrying with TLS login`)
+    if (reconnecting) pendingSecurityFallback = true
+    else void reconnect()
+    return true
+  }
+  if (/STANDARD_RDP_SECURITY|Standard RDP Security/i.test(reason)) {
+    securityFallbackAttempted = true
+    activeSecurityMode = 'unencrypted'
+    status.value = 'connecting'
+    errorMessage.value = ''
+    rdpLog(`server requires Standard RDP Security (${reason}); retrying unencrypted`)
+    if (reconnecting) pendingSecurityFallback = true
+    else void reconnect()
+    return true
+  }
+  return false
 }
 
 function retryConnection() {
   if (reconnecting) return
-  activeCredSSP = props.config?.rdpEnableNLA ?? false
-  nlaFallbackAttempted = false
+  activeSecurityMode = resolveSecurityMode(props.config)
+  securityFallbackAttempted = false
   void reconnect()
 }
 
@@ -1428,7 +1477,13 @@ async function reconnectWithSize(width: number, height: number) {
       try { await CloseSession(currentSessionId.value) } catch (_) {}
       currentSessionId.value = null
     }
-    const cfg = { ...(props.config || {}), rdpFixedWidth: width, rdpFixedHeight: height, rdpEnableNLA: activeCredSSP }
+    const cfg = {
+      ...(props.config || {}),
+      rdpFixedWidth: width,
+      rdpFixedHeight: height,
+      rdpSecurityMode: activeSecurityMode,
+      rdpEnableNLA: activeSecurityMode !== 'tls',
+    }
     const info = await CreateSession('rdp', cfg)
     currentSessionId.value = info.id
     panelStore.bindSession(props.panelId, info.id)
@@ -1445,8 +1500,8 @@ async function reconnectWithSize(width: number, height: number) {
     status.value = 'error'
   } finally {
     reconnecting = false
-    if (pendingNlaFallback) {
-      pendingNlaFallback = false
+    if (pendingSecurityFallback) {
+      pendingSecurityFallback = false
       void reconnect()
     }
     // Catch viewport changes that happened while the handshake was running.
@@ -1605,7 +1660,7 @@ onMounted(() => {
         break
       case 'error':
         rdpLog(`session error: ${data.errorMessage || '(empty)'}`)
-        if (retryWithoutNLA(backendErrorTextOf(data.errorMessage || ''))) break
+        if (retryWithSecurityFallback(backendErrorTextOf(data.errorMessage || ''))) break
         clearConnectTimer()
         status.value = 'error'
         errorMessage.value = backendErrorTextOf(data.errorMessage || '')

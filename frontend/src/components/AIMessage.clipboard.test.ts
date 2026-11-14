@@ -10,6 +10,8 @@ vi.mock('element-plus', () => ({ ElMessage: { error: showError } }))
 vi.mock('../stores/aiStore', () => ({ useAIStore: () => ({ isRunning: false }) }))
 vi.mock('../i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
+vi.mock('../stores/settingsStore', () => ({ useSettingsStore: () => ({ settings: { ai: {} } }) }))
+
 // Run the real SFC setup and clipboard helper without a browser DOM.
 // Rendering is disabled; only the handlers and their feedback are needed.
 const renderer = createRenderer<object, object>({
@@ -19,10 +21,10 @@ const renderer = createRenderer<object, object>({
   parentNode: () => null, nextSibling: () => null,
 })
 type Handlers = {
-  copyAsMarkdown(): Promise<void>
+  onReplyCopy(): Promise<void>
   copyToolText(text: string, key: string): Promise<void>
   onTextClick(event: MouseEvent): Promise<void>
-  copyMdLabel: string
+  replyCopied: boolean
   copiedTool: string
 }
 let handlers: Handlers
@@ -65,8 +67,8 @@ for (const platform of ['Macintosh', 'Windows NT 10.0']) {
     beforeEach(() => { Object.defineProperty(navigator, 'userAgent', { value: platform }) })
 
     it('copies Markdown, tool input/output and code blocks through the platform clipboard path', async () => {
-      await handlers.copyAsMarkdown()
-      expect(handlers.copyMdLabel).toBe('ai.copied')
+      await handlers.onReplyCopy()
+      expect(handlers.replyCopied).toBe(true)
       await handlers.copyToolText('printf "你好"', 'tool-in')
       expect(handlers.copiedTool).toBe('tool-in')
       await handlers.copyToolText('输出\r\nsecond line', 'tool-out')
@@ -85,8 +87,8 @@ for (const platform of ['Macintosh', 'Windows NT 10.0']) {
     it('falls back when the preferred clipboard API rejects', async () => {
       const primary = platform === 'Macintosh' ? setText : writeText
       primary.mockRejectedValue(new Error('preferred API unavailable'))
-      await handlers.copyAsMarkdown()
-      expect(handlers.copyMdLabel).toBe('ai.copied')
+      await handlers.onReplyCopy()
+      expect(handlers.replyCopied).toBe(true)
       expect(setText).toHaveBeenCalledWith(markdown)
       expect(writeText).toHaveBeenCalledWith(markdown)
     })
@@ -94,14 +96,14 @@ for (const platform of ['Macintosh', 'Windows NT 10.0']) {
     it('reports failure without claiming a successful tool or code copy', async () => {
       setText.mockResolvedValue(false)
       writeText.mockRejectedValue(new Error('clipboard unavailable'))
-      await handlers.copyAsMarkdown()
-      expect(handlers.copyMdLabel).toBe('ai.copyFailed')
+      await handlers.onReplyCopy()
+      expect(handlers.replyCopied).toBe(false)
       await handlers.copyToolText('command', 'tool-in')
       expect(handlers.copiedTool).toBe('')
       const { button, event } = codeClick('command')
       await handlers.onTextClick(event)
       expect(button.innerHTML).toBe('copy')
-      expect(showError).toHaveBeenCalledTimes(2)
+      expect(showError).toHaveBeenCalledTimes(3)
       expect(showError).toHaveBeenCalledWith('ai.copyFailed')
     })
   })

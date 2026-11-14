@@ -1,5 +1,5 @@
 <template>
-  <div class="ai-message" :class="[message.role, { interrupted: isInterrupted || isTimeout }]">
+  <div class="ai-message" :class="[message.role, { interrupted: isInterrupted || isTimeout, 'bubble-mode': userBubbleStyle }]">
     <!-- Skill card: 仅显示用了哪个 skill，正文已隐藏进 _contextHeader -->
     <div v-if="message.skillName" class="skill-card">
       <BookOpen :size="'0.8125rem'" class="skill-card-icon" />
@@ -62,13 +62,6 @@
         </div>
       </div>
 
-      <div v-if="message.role === 'assistant' && message.content?.trim()" class="copy-action">
-        <button class="copy-md-btn" @click="copyAsMarkdown" :title="t('ai.copyMarkdown')">
-          <el-icon><Copy :size="'0.875rem'" /></el-icon>
-          <span class="copy-md-label">{{ copyMdLabel }}</span>
-        </button>
-      </div>
-
       <div v-if="message.needsContinue" class="continue-box">
         <el-button type="primary" @click="$emit('continue')">
           {{ t('ai.continue') }}
@@ -76,8 +69,8 @@
       </div>
 
       <!-- Tool call pairs: IN + OUT grouped together -->
-      <div v-if="message.tool_calls?.length" class="tool-pairs">
-        <div v-for="tc in message.tool_calls" :key="tc.id" class="tool-pair">
+      <div v-if="displayToolCalls.length" class="tool-pairs">
+        <div v-for="tc in displayToolCalls" :key="tc.id" class="tool-pair">
           <!-- IN box -->
           <div class="tool-box in-box">
             <div class="tool-box-header" @click="inExpanded = !inExpanded">
@@ -172,20 +165,83 @@
         </div>
       </div>
 
-      <!-- Per-message actions for user messages: copy the question exactly, or
-           delete it together with the AI's reply for that turn (used to fix a
-           mistyped question without leaving orphaned context behind). -->
-      <div v-if="message.role === 'user'" class="user-actions">
-        <button class="user-action-btn" :class="{ active: userCopied }" @click="onUserCopy" :title="t('ai.copy')">
-          <el-icon><Check v-if="userCopied" :size="'0.8125rem'" /><Copy v-else :size="'0.8125rem'" /></el-icon>
-        </button>
-        <button class="user-action-btn danger" @click="onUserDelete" :title="t('common.delete')">
-          <el-icon><Trash2 :size="'0.8125rem'" /></el-icon>
-        </button>
+      <!-- Answered ask_user interactions stay in the stream as read-only
+           records: the form is rebuilt from the ask_user tool call arguments
+           plus its structured tool result, with the chosen options marked. -->
+      <div
+        v-for="aq in answeredQuestions"
+        :key="aq.toolCallId"
+        class="question-box locked"
+      >
+        <div v-if="aq.args.header" class="question-header">{{ aq.args.header }}</div>
+        <div class="question-text">{{ aq.args.question }}</div>
+        <div class="question-options">
+          <label
+            v-for="(opt, i) in aq.args.options || []"
+            :key="i"
+            class="question-option"
+            :class="{ selected: aq.answer.selectedLabels.includes(opt.label) }"
+          >
+            <span v-if="aq.args.multiSelect" class="option-check">
+              <el-icon v-if="aq.answer.selectedLabels.includes(opt.label)"><Check :size="14" /></el-icon>
+              <span v-else class="option-check-empty"></span>
+            </span>
+            <span v-else class="option-radio" :class="{ on: aq.answer.selectedLabels.includes(opt.label) }"></span>
+            <span class="option-body">
+              <span class="option-label">{{ opt.label }}</span>
+              <span class="option-desc">{{ opt.description }}</span>
+            </span>
+          </label>
+          <label class="question-option" :class="{ selected: aq.answer.customText !== undefined }">
+            <span v-if="aq.args.multiSelect" class="option-check">
+              <el-icon v-if="aq.answer.customText !== undefined"><Check :size="14" /></el-icon>
+              <span v-else class="option-check-empty"></span>
+            </span>
+            <span v-else class="option-radio" :class="{ on: aq.answer.customText !== undefined }"></span>
+            <span class="option-body">
+              <span class="option-label">{{ t('ai.other') }}</span>
+              <input class="other-input" :value="aq.answer.customText ?? ''" disabled />
+            </span>
+          </label>
+        </div>
+        <div v-if="aq.answer.dismissed" class="question-dismissed">{{ t('ai.questionDismissed') }}</div>
       </div>
 
-      <!-- Message timestamp (user questions and assistant answers only) -->
-      <div v-if="messageTimeLabel && message.role !== 'tool'" class="msg-meta">{{ messageTimeLabel }}</div>
+      <!-- Message timestamp (user questions and assistant answers only).
+           The row shows the short clock; hovering reveals the full date and
+           time. -->
+      <!-- Shared meta row below every message (tool results excluded): the
+           timestamp first, then hover-revealed actions to its right — copy the
+           reply for assistant messages, copy/delete the turn for user ones. -->
+      <div v-if="message.role !== 'tool'" class="msg-meta-row">
+        <el-tooltip
+          v-if="messageTimeLabel"
+          :content="createdAtFullLabel"
+          placement="top"
+          :show-after="300"
+        >
+          <div class="msg-meta">{{ messageTimeLabel }}</div>
+        </el-tooltip>
+        <div class="msg-actions">
+          <button
+            v-if="message.role === 'assistant' && message.content?.trim()"
+            class="msg-action-btn"
+            :class="{ active: replyCopied }"
+            @click="onReplyCopy"
+            :title="t('ai.copyMarkdown')"
+          >
+            <el-icon><Check v-if="replyCopied" :size="'0.8125rem'" /><Copy v-else :size="'0.8125rem'" /></el-icon>
+          </button>
+          <template v-if="message.role === 'user'">
+            <button class="msg-action-btn" :class="{ active: userCopied }" @click="onUserCopy" :title="t('ai.copy')">
+              <el-icon><Check v-if="userCopied" :size="'0.8125rem'" /><Copy v-else :size="'0.8125rem'" /></el-icon>
+            </button>
+            <button class="msg-action-btn danger" @click="onUserDelete" :title="t('common.delete')">
+              <el-icon><Trash2 :size="'0.8125rem'" /></el-icon>
+            </button>
+          </template>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -196,6 +252,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { writeClipboard } from '../composables/useClipboardWrite'
 import { Copy, Check, BookOpen, Terminal, FileText, Trash2 } from '@lucide/vue'
 import { useAIStore } from '../stores/aiStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { useI18n } from '../i18n'
 import { sanitizeRenderedHtml, escapeHtml as escapeHtmlBase } from '../utils/markdown'
 import { formatClock, formatMessageTime, formatDuration } from '../utils/timeFormat'
@@ -223,6 +280,69 @@ const isPendingQ = computed(() =>
   aiStore.pendingQuestion?.messageId === props.message.id
 )
 const pendingQ = computed(() => isPendingQ.value ? aiStore.pendingQuestion! : null)
+
+// Rebuilds answered ask_user forms from data that already exists in the
+// stream: the ask_user tool call arguments (question, options) plus its tool
+// result (the structured answer). Anything missing or unparseable — legacy
+// sessions, deleted results, unexpected shapes — is simply skipped, and the
+// regular IN/OUT tool boxes remain the record. Never throws.
+const answeredQuestions = computed(() => {
+  if (pendingQ.value || props.message.role !== 'assistant' || !props.message.tool_calls?.length) return []
+  const out: Array<{
+    toolCallId: string
+    args: { question: string; header?: string; multiSelect?: boolean; options?: Array<{ label: string; description: string }> }
+    answer: { selectedLabels: string[]; customText?: string; dismissed?: boolean }
+  }> = []
+  for (const tc of props.message.tool_calls) {
+    if (tc.function?.name !== 'ask_user') continue
+    try {
+      const args = JSON.parse(tc.function.arguments || '{}') as {
+        question?: unknown; header?: unknown; multiSelect?: unknown; options?: unknown
+      }
+      if (typeof args.question !== 'string') continue
+      const result = getToolResult(tc.id)?.content || ''
+      let answer: { selectedLabels?: unknown; customText?: unknown; dismissed?: unknown } | null = null
+      if (result.startsWith('User dismissed this question.') || result.includes('question was dismissed')) {
+        answer = { selectedLabels: [], dismissed: true }
+      } else if (result.startsWith('User answered: ')) {
+        answer = JSON.parse(result.slice('User answered: '.length))
+      }
+      if (!answer || !Array.isArray(answer.selectedLabels)) continue
+      const selectedLabels = answer.selectedLabels.every(l => typeof l === 'string') ? answer.selectedLabels as string[] : []
+      const options = Array.isArray(args.options)
+        ? args.options.filter((o): o is { label: string; description: string } =>
+            !!o && typeof (o as any).label === 'string')
+        : undefined
+      out.push({
+        toolCallId: tc.id,
+        args: {
+          question: args.question,
+          header: typeof args.header === 'string' ? args.header : undefined,
+          multiSelect: args.multiSelect === true,
+          options,
+        },
+        answer: {
+          selectedLabels,
+          customText: typeof answer.customText === 'string' ? answer.customText : undefined,
+          dismissed: answer.dismissed === true,
+        },
+      })
+    } catch {
+      // Malformed history: leave this one to the plain IN/OUT boxes.
+    }
+  }
+  return out
+})
+
+// When a question form is shown for an ask_user call — pending or answered —
+// the raw IN/OUT tool boxes for that call are redundant and hidden. Calls
+// whose form could not be rebuilt keep the plain IN/OUT boxes as the record.
+const displayToolCalls = computed(() => {
+  if (!props.message.tool_calls?.length) return []
+  const hidden = new Set(answeredQuestions.value.map(aq => aq.toolCallId))
+  if (pendingQ.value) hidden.add(pendingQ.value.toolId)
+  return props.message.tool_calls.filter(tc => !hidden.has(tc.id))
+})
 
 // Question state
 const selectedOptions = ref<number[]>([])
@@ -262,6 +382,18 @@ function toggleOther() {
 
 function onOtherInput(e: Event) {
   otherText.value = (e.target as HTMLInputElement).value
+  // Typing a custom answer selects the "Other" option automatically — the
+  // user should not have to click the radio separately.
+  if (otherText.value.trim() && !otherSelected.value) {
+    otherSelected.value = true
+    if (!pendingQ.value?.multiSelect) selectedOptions.value = []
+  }
+  // Clearing the text unchecks "Other" again in multi-select mode; in
+  // single-select mode the radio stays on the last chosen option instead of
+  // silently deselecting everything.
+  if (!otherText.value.trim() && pendingQ.value?.multiSelect && otherSelected.value) {
+    otherSelected.value = false
+  }
 }
 
 function handleAnswer() {
@@ -295,13 +427,29 @@ function handleReject() {
 }
 
 const aiStore = useAIStore()
+const settingsStore = useSettingsStore()
 const { t, locale } = useI18n()
+// 'bubble' right-aligns user messages as chat bubbles (issue #1478);
+// 'plain' / undefined keeps the shared left-aligned layout.
+const userBubbleStyle = computed(() => settingsStore.settings.ai.userMessageStyle === 'bubble')
 const inExpanded = ref(true)
 const outExpanded = ref(false)
 const thinkingShown = ref(false)
 
 // ── Timestamps & thinking status ──
 const createdAtLabel = computed(() => formatClock(props.message.createdAt))
+// Hover detail for the timestamp row: full local date and time.
+const createdAtFullLabel = computed(() => {
+  if (!props.message.createdAt) return ''
+  try {
+    return new Date(props.message.createdAt).toLocaleString([], {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+  } catch {
+    return ''
+  }
+})
 
 // Message timestamp: today shows only the clock ("14:32"), yesterday shows a
 // relative word + clock ("昨天 14:32"), older messages show date + clock
@@ -339,15 +487,21 @@ const thinkingDurationLabel = computed(() => {
 
 watch(thinkingLive, (on) => ensureLiveTimer(on), { immediate: true })
 onUnmounted(() => ensureLiveTimer(false))
-const copyMdLabel = ref(t('ai.copyMarkdown'))
-
 const COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="0.75rem" height="0.75rem" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
 const CHECK_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="0.75rem" height="0.75rem" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
 
-async function copyAsMarkdown() {
-  const copied = await writeClipboard(props.message.content)
-  copyMdLabel.value = t(copied ? 'ai.copied' : 'ai.copyFailed')
-  setTimeout(() => { copyMdLabel.value = t('ai.copyMarkdown') }, 2000)
+// Copy the assistant reply (markdown source) from the shared meta row.
+const replyCopied = ref(false)
+
+async function onReplyCopy() {
+  const text = props.message.content || ''
+  if (!text) return
+  if (await writeClipboard(text)) {
+    replyCopied.value = true
+    setTimeout(() => { replyCopied.value = false }, 2000)
+  } else {
+    ElMessage.error(t('ai.copyFailed'))
+  }
 }
 
 // ── User message actions: copy the exact question, or delete it along with
@@ -831,29 +985,43 @@ function escapeHtml(text: string): string {
   display: flex;
   padding: 0.875rem 1.125rem;
 }
-.ai-message.user {
+/* Bubble style (settings.ai.userMessageStyle = 'bubble', issue #1478): user
+   messages right-align as content-sized chat bubbles so a question stands
+   out from the answers when scrolling back. Attachments and the meta row
+   follow the right edge; undefined/'plain' keeps the shared left layout. */
+.ai-message.bubble-mode.user {
+  justify-content: flex-end;
+}
+.ai-message.bubble-mode.user .content {
+  align-items: flex-end;
+  flex: 0 1 auto;
+  max-width: 85%;
+}
+.ai-message.bubble-mode.user .text {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 0.875rem;
+  border-bottom-right-radius: 0;
+}
+.ai-message.bubble-mode.user .msg-attachments {
+  justify-content: flex-end;
+}
+.ai-message.bubble-mode.user .msg-attachment {
+  border-radius: 0.875rem;
+  border-bottom-right-radius: 0;
+}
+.ai-message.bubble-mode.user .msg-meta-row {
   justify-content: flex-end;
 }
 .ai-message.user .content {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  flex: 0 1 auto;
-  max-width: 85%;
 }
 .ai-message.user .text {
-  width: fit-content;
-  max-width: 100%;
   background: var(--bg-surface);
   padding: 0.625rem 1rem;
-  border-radius: 0.875rem;
-  border-bottom-right-radius: 0;
+  border-radius: var(--radius-sm);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
-  /* Cap the user bubble to ~10 text lines; a longer message gets its own
-     scrollbar instead of growing without bound. 10 lines + vertical padding:
-     calc(0.75rem * 1.6 * 10 + 0.625rem * 2) = 13.25rem. */
-  max-height: 13.25rem;
-  overflow-y: auto;
 }
 /* Lower the scrollbar top edge so it sits just below the bubble's rounded
    top-right corner instead of meeting it flush. */
@@ -882,9 +1050,6 @@ function escapeHtml(text: string): string {
   gap: 0.375rem;
   margin-top: 0.375rem;
 }
-.ai-message.user .msg-attachments {
-  justify-content: flex-end;
-}
 .msg-attachment {
   display: flex;
   align-items: center;
@@ -894,10 +1059,6 @@ function escapeHtml(text: string): string {
   background: var(--bg-surface);
   border-radius: var(--radius-sm);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
-}
-.ai-message.user .msg-attachment {
-  border-radius: 0.875rem;
-  border-bottom-right-radius: 0;
 }
 .msg-attachment-thumb {
   width: 4.5rem;
@@ -927,6 +1088,13 @@ function escapeHtml(text: string): string {
   font-family: var(--font-ui);
   user-select: text;
   -webkit-user-select: text;
+}
+/* A user message can carry a huge paste; clamp it like tool output so one
+   message cannot dominate the transcript. Assistant answers stream into .text
+   and stay unclamped. */
+.ai-message.user .text {
+  max-height: 8rem;
+  overflow-y: auto;
 }
 .text :deep(.code-block-wrapper) {
   margin: 0.375rem 0;
@@ -1142,14 +1310,17 @@ function escapeHtml(text: string): string {
   color: var(--text-muted);
   opacity: 0.75;
   user-select: none;
+  /* Hug the text instead of stretching: the hover tooltip anchors to this
+     box, and a full-width box would pop the tooltip mid-sidebar. */
+  width: fit-content;
 }
-.ai-message.user .msg-meta {
-  text-align: right;
+.msg-meta-row .msg-meta {
+  margin-top: 0;
 }
 .thinking-content {
   margin: 0.25rem 0 0 0;
   padding: 0.375rem 0.625rem;
-  max-height: 16rem;
+  max-height: 8rem;
   overflow-y: auto;
   border-left: 2px solid var(--border-subtle);
   background: var(--bg-elevated);
@@ -1241,6 +1412,8 @@ function escapeHtml(text: string): string {
   font-size: 0.6875rem;
   white-space: pre-wrap;
   word-break: break-word;
+  max-height: 8rem;
+  overflow-y: auto;
 }
 
 /* OUT box - accent themed */
@@ -1276,7 +1449,7 @@ function escapeHtml(text: string): string {
   font-size: 0.6875rem;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 18.75rem;
+  max-height: 8rem;
   overflow-y: auto;
 }
 
@@ -1339,59 +1512,26 @@ function escapeHtml(text: string): string {
   margin-top: 0.5rem;
 }
 
-.copy-action {
-  margin-top: 0.25rem;
-}
-.copy-md-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  padding: 0.125rem 0.25rem;
-  font-size: 0.6875rem;
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  transition: all 0.2s;
-}
-.copy-md-label {
-  max-width: 0;
-  overflow: hidden;
-  opacity: 0;
-  white-space: nowrap;
-  padding-left: 0;
-  transition: max-width 0.2s, opacity 0.15s, padding-left 0.2s;
-}
-.copy-md-btn:hover {
-  gap: 0.25rem;
-  padding: 0.125rem 0.5rem;
-  color: var(--accent);
-  border-color: var(--accent-glow);
-  background: var(--accent-subtle);
-}
-.copy-md-btn:hover .copy-md-label {
-  max-width: 9.375rem;
-  opacity: 1;
-  padding-left: 0.125rem;
-}
-
-/* User message actions: copy & delete shown below the question text,
-   right-aligned to match the user bubble's own timestamp. Icon-only and
-   hidden until the mouse is over the message bubble. */
-.user-actions {
+/* Shared message meta row: timestamp first, hover-revealed icon actions to
+   its right, for both user and assistant messages. */
+.msg-meta-row {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.125rem;
+  gap: 0.375rem;
   margin-top: 0.25rem;
+}
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
   min-height: 1.25rem;
   opacity: 0;
   transition: opacity 0.2s;
 }
-.ai-message:hover .user-actions {
+.ai-message:hover .msg-actions {
   opacity: 1;
 }
-.user-action-btn {
+.msg-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1406,14 +1546,14 @@ function escapeHtml(text: string): string {
   cursor: pointer;
   transition: color 0.2s, background 0.2s;
 }
-.user-action-btn:hover {
+.msg-action-btn:hover {
   color: var(--accent);
   background: var(--accent-subtle);
 }
-.user-action-btn.active {
+.msg-action-btn.active {
   color: var(--accent);
 }
-.user-action-btn.danger:hover {
+.msg-action-btn.danger:hover {
   color: var(--error);
   background: var(--error-subtle);
 }
@@ -1458,13 +1598,32 @@ function escapeHtml(text: string): string {
   transition: border-color 0.15s, background 0.15s;
   user-select: none;
 }
-.question-option:hover {
+.question-box:not(.locked) .question-option:hover {
   border-color: var(--accent-glow);
   background: var(--accent-subtle);
 }
 .question-option.selected {
   border-color: var(--accent);
   background: var(--accent-subtle);
+}
+/* Answered question: options are a read-only record, no hover affordance. */
+.question-box.locked {
+  border-color: var(--border-subtle);
+}
+.question-box.locked .question-option {
+  cursor: default;
+  opacity: 0.75;
+}
+.question-box.locked .question-option.selected {
+  opacity: 1;
+}
+.other-input:disabled {
+  color: var(--text-muted);
+}
+.question-dismissed {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-style: italic;
 }
 .option-radio {
   width: 0.875rem;

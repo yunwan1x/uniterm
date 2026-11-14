@@ -56,6 +56,11 @@ type TelnetSession struct {
 
 	// Telnet option state (configured in Connect, consumed by Write)
 	localEcho   bool
+	// serverEchoes is true once the server has told us it will echo (received
+	// IAC WILL ECHO). In that case the server is responsible for echoing, so we
+	// must NOT echo locally — otherwise each keystroke is shown twice (server +
+	// local), e.g. "exit" renders as "exexiexit".
+	serverEchoes bool
 	telnetSendMode    string // "character" | "line"
 	newlineMode string // "cr" | "crlf"
 	termType    string // terminal name replied to the server's TTYPE SEND
@@ -126,18 +131,10 @@ func (s *TelnetSession) Connect(config ConnectionConfig) error {
 	s.newlineMode = config.NewlineMode
 	s.termType = EffectiveTermType(config.TermType)
 
-	// Proactively negotiate binary transmission, character-at-a-time mode,
-	// and terminal type — unless the user opted for passive negotiation.
+	// Proactively negotiate character-at-a-time mode and terminal type —
+	// unless the user opted for passive negotiation.
 	if config.TelnetNegotiationMode != "passive" {
-		s.conn.Write([]byte{telnetIAC, telnetWILL, telnetOptBinary})
-		s.conn.Write([]byte{telnetIAC, telnetDO, telnetOptSuppressGoAhead})
-		s.conn.Write([]byte{telnetIAC, telnetWILL, telnetOptTerminalType})
-
-		if cols, rows := s.GetPendingSize(); cols > 0 && rows > 0 {
-			s.sendNAWS(cols, rows)
-		} else {
-			s.sendNAWS(80, 24)
-		}
+		s.sendActiveNegotiation()
 	}
 
 	s.startEmitLoop()
@@ -310,6 +307,7 @@ func (s *TelnetSession) handleNegotiation(cmd byte, opt byte) {
 			}
 		case telnetOptEcho:
 			s.reply(telnetDO, opt) // Accept server echoing
+			s.serverEchoes = true // server owns echoing → do not echo locally
 		case telnetOptTerminalType:
 			s.reply(telnetDO, opt) // Accept server knows terminal type
 		default:
@@ -339,16 +337,40 @@ func (s *TelnetSession) reply(cmd byte, opt byte) {
 	s.conn.Write([]byte{telnetIAC, cmd, opt})
 }
 
+// sendActiveNegotiation proactively offers the options the client drives in
+// active mode: character-at-a-time (suppress Go Ahead) and terminal type,
+// plus an initial window size. BINARY is deliberately not offered (issue
+// #1486): Cisco's telnet server switches to its binary path, where the login
+// code skips the echo-off before the password prompt, so passwords come back
+// echoed in cleartext. Servers that need binary negotiate it themselves —
+// handleNegotiation answers DO BINARY with WILL BINARY as before.
+func (s *TelnetSession) sendActiveNegotiation() {
+	s.conn.Write([]byte{telnetIAC, telnetDO, telnetOptSuppressGoAhead})
+	s.conn.Write([]byte{telnetIAC, telnetWILL, telnetOptTerminalType})
+
+	if cols, rows := s.GetPendingSize(); cols > 0 && rows > 0 {
+		s.sendNAWS(cols, rows)
+	} else {
+		s.sendNAWS(80, 24)
+	}
+}
+
 func (s *TelnetSession) sendNAWS(cols, rows int) {
 	if s.conn == nil {
 		return
 	}
-	data := []byte{
-		telnetIAC, telnetSB, telnetOptNAWS,
-		byte(cols >> 8), byte(cols & 0xff),
-		byte(rows >> 8), byte(rows & 0xff),
-		telnetIAC, telnetSE,
+	// RFC 1073: any 0xFF byte inside the sub-negotiation must be doubled
+	// (IAC IAC) or the server parses it as a command and the whole
+	// negotiation desynchronizes (e.g. cols=255 leaking a bare IAC).
+	data := []byte{telnetIAC, telnetSB, telnetOptNAWS}
+	for _, v := range []int{cols >> 8, cols & 0xff, rows >> 8, rows & 0xff} {
+		if b := byte(v); b == telnetIAC {
+			data = append(data, telnetIAC, telnetIAC)
+		} else {
+			data = append(data, b)
+		}
 	}
+	data = append(data, telnetIAC, telnetSE)
 	s.conn.Write(data)
 }
 
@@ -567,8 +589,12 @@ func (s *TelnetSession) Write(data []byte) error {
 				return err
 			}
 		}
-		// Echo each character locally while buffering for visibility
-		s.emitData(data)
+		// Echo each character locally while buffering — but only if the server
+		// is NOT responsible for echoing (the server told us WILL ECHO, so it
+		// echoes and we must stay silent, or the keystroke shows up twice).
+		if !s.serverEchoes {
+			s.emitData(data)
+		}
 		return nil
 	}
 
@@ -587,8 +613,10 @@ func (s *TelnetSession) Write(data []byte) error {
 
 	_, err := s.conn.Write(encoded)
 
-	// Local echo: show typed characters in terminal (for servers that don't echo)
-	if err == nil && s.localEcho {
+	// Local echo: show typed characters in terminal (for servers that don't echo).
+	// Skip when the server owns echoing (received WILL ECHO) — otherwise each key
+	// is rendered twice (server/conpty echo + our local echo), e.g. "exit" → "exexiexit".
+	if err == nil && s.localEcho && !s.serverEchoes {
 		s.emitData(data)
 	}
 

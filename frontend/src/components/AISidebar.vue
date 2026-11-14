@@ -61,29 +61,32 @@
     </div>
 
     <div ref="messagesRef" class="ai-messages" @contextmenu="onAIContextMenu">
-      <div
-        v-for="msg in visibleMessages"
-        :key="msg.id"
-        @contextmenu.stop.prevent="onMessageContextMenu($event, msg.id)"
-      >
-        <AIMessage
-          :message="msg"
-          :search-text="searchText"
-          @approve="onApprove"
-          @reject="onReject"
-          @continue="onContinue"
-          @answer="onAnswer"
-          @dismiss="onDismiss"
-        />
-      </div>
-      <div v-if="aiStore.contextNotice" class="ai-context-notice" role="status">{{ aiStore.contextNotice }}</div>
-      <div v-if="aiStore.isRunning || aiStore.pendingCommand || aiStore.pendingQuestion" class="ai-thinking">
-        <div class="thinking-row" :title="t('ai.thinkingToggleHint')" @click="toggleThinking">
-          <div class="thinking-text">{{ statusText }}</div>
-          <ChevronDown v-if="!aiStore.thinkingExpanded" :size="'0.75rem'" class="thinking-chevron" />
-          <ChevronUp v-else :size="'0.75rem'" class="thinking-chevron" />
+      <template v-for="(msg, msgIndex) in visibleMessages" :key="msg.id">
+        <div @contextmenu.stop.prevent="onMessageContextMenu($event, msg.id)">
+          <AIMessage
+            :message="msg"
+            :search-text="searchText"
+            @approve="onApprove"
+            @reject="onReject"
+            @continue="onContinue"
+            @answer="onAnswer"
+            @dismiss="onDismiss"
+          />
         </div>
-        <div v-if="aiStore.thinkingExpanded" ref="thinkingPanelRef" class="thinking-panel">
+        <div v-if="msgIndex === contextRecordIndex" class="ai-context-notice" :class="{ 'ai-context-record-failed': aiStore.contextRecord?.failed }" role="status">{{ aiStore.contextRecord?.text }}</div>
+      </template>
+      <div v-if="aiStore.contextRecord && contextRecordIndex < 0" class="ai-context-notice" :class="{ 'ai-context-record-failed': aiStore.contextRecord.failed }" role="status">{{ aiStore.contextRecord.text }}</div>
+      <div v-if="aiStore.isRunning || aiStore.pendingCommand || aiStore.pendingQuestion" class="ai-thinking">
+        <div class="thinking-row" :class="{ clickable: thinkingToggleVisible }" :title="thinkingToggleVisible ? t('ai.thinkingToggleHint') : undefined" @click="thinkingToggleVisible && toggleThinking()">
+          <div class="thinking-text">{{ statusText }}</div>
+          <span v-if="liveThinkingElapsed" class="thinking-panel-time">{{ liveThinkingElapsed }}</span>
+          <span v-if="liveCompactionElapsed" class="thinking-panel-time">{{ liveCompactionElapsed }}</span>
+          <template v-if="thinkingToggleVisible">
+            <ChevronDown v-if="!aiStore.thinkingExpanded" :size="'0.75rem'" class="thinking-chevron" />
+            <ChevronUp v-else :size="'0.75rem'" class="thinking-chevron" />
+          </template>
+        </div>
+        <div v-if="thinkingToggleVisible && aiStore.thinkingExpanded" ref="thinkingPanelRef" class="thinking-panel">
           <div class="thinking-panel-header">
             <span class="thinking-dot" :class="aiStore.status === 'thinking' ? 'live' : 'done'">{{ aiStore.status === 'thinking' ? '○' : '●' }}</span>
             <span class="thinking-panel-title">{{ t('ai.thoughtProcess') }}</span>
@@ -724,26 +727,9 @@ async function readClipboardImage(): Promise<Blob | null> {
     if (type) return await item.getType(type)
   }
   // Screenshots arrive as image/* (handled above). Local files copied from the
-  // OS (e.g. Explorer) arrive as "Files" references instead of bitmap data:
-  // Chromium/WebView2 exposes them as FileSystemFileHandle objects. Read those
-  // and attach the first one that is an image, so a copied .png/.jpg pastes
-  // like a screenshot.
-  for (const item of items) {
-    if (!item.types.includes('Files')) continue
-    try {
-      const data = await item.getType('Files')
-      const file = typeof (data as FileSystemFileHandle).getFile === 'function'
-        ? await (data as FileSystemFileHandle).getFile()
-        : (data as File)
-      // On Windows the file handle may report an empty MIME type; fall back to
-      // a file-extension check so a copied .png/.jpg/.gif still pastes.
-      const isImage = file && (file.type.startsWith('image/') ||
-        /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(file.name))
-      if (isImage) return file
-    } catch {
-      // Ignore unreadable / unsupported file references.
-    }
-  }
+  // OS (e.g. Explorer) are not visible to this API — 'Files' is not a MIME
+  // type, so there is nothing to getType; those are covered by the Go
+  // backend's CF_HDROP reader (ClipboardGetFiles) in aiSidebarPasteFromClipboard.
   return null
 }
 
@@ -782,12 +768,12 @@ function pasteFromClipboard() {
  *
  * Ctrl+V works for local files copied from Explorer because Chromium surfaces the
  * clipboard file reference in a genuine DOM paste event as an image/* item, which
- * onPaste attaches. Right-click has no such event, so we first replay a real
- * paste via document.execCommand('paste') (allowed on this user-gesture path) to
- * reuse the exact same onPaste handling, then fall back to the async Clipboard API
- * (readClipboardImage, covers screenshots/bitmaps), and finally to the Go backend's
- * CF_HDROP reader (ClipboardGetFiles) which is the only way to see files copied from
- * the OS file explorer.
+ * onPaste attaches. Right-click has no such event, so we try the async Clipboard
+ * API first (readClipboardImage, covers screenshots/bitmaps), then the Go
+ * backend's CF_HDROP reader (ClipboardGetFiles), which is the only way to see
+ * files copied from the OS file explorer, and finally replay a real paste via
+ * document.execCommand('paste') — a no-op in Chromium, so App.vue then falls
+ * back to inserting plain clipboard text.
  */
 async function aiSidebarPasteFromClipboard(): Promise<boolean> {
   const el = editableRef.value
@@ -806,6 +792,14 @@ async function aiSidebarPasteFromClipboard(): Promise<boolean> {
       const name = f.name || ''
       if (!/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name)) continue
       if (!f.id || !f.size) continue
+      // Same gate as every other attach path, so size/count rejections show a
+      // visible error instead of the backend read failing silently (the Go
+      // reader also caps chunks at 8MB; images are capped lower anyway).
+      const verdict = validateAttachment({ name, size: f.size, type: mimeFromName(name) }, attachments.value)
+      if (!verdict.ok) {
+        showAttachmentError(attachmentErrorMessageKey(verdict.error), verdict.error.params)
+        continue
+      }
       try {
         const dataB64 = await ClipboardReadFileChunkByID(f.id, 0, f.size)
         const bytes = bytesFromBase64(dataB64)
@@ -893,6 +887,28 @@ const visibleMessages = computed(() => {
   })
 })
 
+// Index in visibleMessages after which the compaction record renders:
+// the message the last summary attempt split the history at, not the
+// bottom of the transcript. If the anchor message itself is hidden (a paired
+// tool result), the record rides with the nearest visible message above it;
+// if the anchor is gone entirely, the record falls back to the bottom
+// (contextRecordIndex < 0).
+const contextRecordIndex = computed(() => {
+  const record = aiStore.contextRecord
+  if (!record?.afterId) return -1
+  const full = aiStore.messages
+  const cutFull = full.findIndex(m => m.id === record.afterId)
+  if (cutFull < 0) return -1
+  const visible = visibleMessages.value
+  const visibleIdx = visible.findIndex(m => m.id === record.afterId)
+  if (visibleIdx >= 0) return visibleIdx
+  for (let i = cutFull - 1; i >= 0; i--) {
+    const idx = visible.findIndex(m => m.id === full[i].id)
+    if (idx >= 0) return idx
+  }
+  return 0
+})
+
 // ── Search ──
 const searchVisible = ref(false)
 const searchText = ref('')
@@ -954,6 +970,12 @@ const statusText = computed(() => {
 })
 
 // ── Live thinking box (click the status text to expand/collapse) ──
+// The panel shows the live thinking stream, which only exists while the
+// status is 'thinking'. In every other running state (outputting, executing,
+// compacting) the content would be the previous thinking phase's leftover,
+// so the toggle affordance is hidden there; per-message thinking stays
+// reviewable in the message bubbles.
+const thinkingToggleVisible = computed(() => aiStore.isRunning && aiStore.status === 'thinking')
 const thinkingPanelRef = ref<HTMLDivElement>()
 
 function scrollThinkingToBottom() {
@@ -988,11 +1010,12 @@ onUnmounted(() => {
   if (thinkingRenderTimer !== null) clearTimeout(thinkingRenderTimer)
 })
 
-// 1s tick feeding the live elapsed counter while the model is thinking.
+// 1s tick feeding the live elapsed counters shown in the status row while
+// the model is thinking or the context summary is running.
 const thinkingTick = ref(0)
 let thinkingTickTimer: ReturnType<typeof setInterval> | null = null
 watch(
-  () => aiStore.thinkingExpanded && aiStore.isRunning && aiStore.status === 'thinking',
+  () => aiStore.isRunning && (aiStore.status === 'thinking' || aiStore.status === 'compacting'),
   (on) => {
     if (on && thinkingTickTimer === null) {
       thinkingTick.value = Date.now()
@@ -1009,6 +1032,11 @@ onUnmounted(() => { if (thinkingTickTimer !== null) clearInterval(thinkingTickTi
 const liveThinkingElapsed = computed(() => {
   if (aiStore.status !== 'thinking' || !aiStore.thinkingStartedAt) return ''
   return formatDuration(Math.max(0, thinkingTick.value - aiStore.thinkingStartedAt))
+})
+
+const liveCompactionElapsed = computed(() => {
+  if (aiStore.status !== 'compacting' || !aiStore.compactionStartedAt) return ''
+  return formatDuration(Math.max(0, thinkingTick.value - aiStore.compactionStartedAt))
 })
 
 const thinkingStartLabel = computed(() => formatClock(aiStore.thinkingStartedAt))
@@ -2022,6 +2050,13 @@ async function onContinue() {
 }
 
 function onResizeStart(e: MouseEvent) {
+  // Without this, the browser keeps the mousedown default action alive during
+  // the drag: the handle point starts a text selection that can promote to a
+  // native OLE drag mid-resize — the drag loop stalls the UI, swallows the
+  // mouseup (resize keeps following the cursor after release) and, on
+  // WebView2 131.x, ends with Edge killing the renderer over a bad
+  // proprietary LocalFrameHost message.
+  e.preventDefault()
   isResizing.value = true
   const el = sidebarEl.value
   if (!el) return
@@ -2134,6 +2169,8 @@ defineExpose({ focusInput })
   bottom: 0;
   width: 0.375rem;
   cursor: col-resize;
+  user-select: none;
+  -webkit-user-drag: none;
   z-index: 10;
   background: transparent;
   transition: background 0.15s ease;
@@ -2288,9 +2325,12 @@ defineExpose({ focusInput })
 }
 .ai-context-notice {
   padding: 0.5rem 0.75rem;
-  color: var(--el-color-warning);
+  color: var(--text-muted);
   font-size: 0.75rem;
   line-height: 1.5;
+}
+.ai-context-record-failed {
+  color: var(--el-color-warning);
 }
 
 .ai-thinking {
@@ -2303,9 +2343,11 @@ defineExpose({ focusInput })
   align-items: center;
   gap: 0.25rem;
   align-self: flex-start;
+}
+.thinking-row.clickable {
   cursor: pointer;
 }
-.thinking-row:hover .thinking-text {
+.thinking-row.clickable:hover .thinking-text {
   color: var(--text-secondary);
 }
 .thinking-text {
