@@ -16,7 +16,7 @@ Presentation remains independent: one in-flight ImageBitmap, accumulated damage,
 - EGFX: 72 native tests, including external YUV rendering and ACK order; web: 36 native-compatible tests. Browser-only clipboard tests are excluded from native execution.
 - Frontend RDP/audio tests and worker TypeScript checks pass; production Vite/WASM builds pass.
 - Browser pixel checks cover exact 420/444 transforms, orientation, preserved patches, overlapping self-copy, cache survival after reset, and no normal-video readback.
-- Full frontend run passed 1,306 tests; `tabSnapshot.test.ts` failed to load because its document mock has no `addEventListener`. The same failure reproduces on the unchanged baseline.
+- An earlier broad frontend run passed 1,306 tests; the final RDP/audio subset passed 33 tests; `tabSnapshot.test.ts` failed to load because its document mock has no `addEventListener`. The same failure reproduces on the unchanged baseline.
 
 ## Live comparison
 
@@ -33,3 +33,9 @@ Both versions had zero new audio underruns/overflows in this final comparison an
 A separate Linux-source AVC comparison on the same hardware receiver improved from 4.98 to 10.13 FPS, with p95 gaps 628→118 ms. An earlier intercepted baseline did not enable AVC and is excluded. The Linux audio source produced no PCM, so it does not establish audio continuity. A synchronous GPU readback prototype regressed and was replaced by the persistent surface path; requesting software decoding did not produce a stable benefit and is not shipped.
 
 Reproducible GPU checks are `tools/ironrdp/worker/yuv-gpu-check.mjs` and `gpu-compositor-check.mjs`, against the frontend Vite origin selected by `UNITERM_RENDER_TEST_ORIGIN`. Set `PLAYWRIGHT_MODULE` and `CHROMIUM_EXECUTABLE` as in the existing renderer harness. The scripts print concise results and save no snapshots.
+
+## Router delivery
+
+Source commit `d3855519` was built as linux/arm64 and validated on an isolated HTTPS listener, including real Windows NLA, AVC444 GPU frames, dynamic thumbnail playback and nonzero audio output. The tested binaries were then deployed on the existing HTTPS port 18888; health and installed hashes passed. Existing account data and TLS files were retained.
+
+The current archive is `uniterm-0.3.0-rc.3-d3855519-arm64.tar.gz` (15,554,297 bytes), SHA256 `50aa597fe8d705aef23ebc5376e585c01837565c8063d559272e28dc311f6336`. One previous installed archive is retained for rollback; transient builds, browser profiles and test accounts are removed.
