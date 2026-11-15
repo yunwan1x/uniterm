@@ -57,7 +57,8 @@ The next reproduction needs startup capability/probe outcomes, actual decoded
 AVC and GPU AVC420/444 observations, and simultaneous Windows Input/Output FPS,
 encoding time and skipped-frame counters. The user was asked to reconnect in
 the router webpage and play video or scroll for about thirty seconds, and to
-identify the client device/browser. No active reproduction was captured yet.
+identify the client device/browser. At that stage, no active reproduction had
+been captured; the later NAS test is recorded below.
 
 ## Implemented diagnostics
 
@@ -102,13 +103,83 @@ check establishes the installed binary and gateway health, not a new live RDP
 performance measurement. Reload/reconnect the browser to load the diagnostic
 assets; Windows sampling must be restarted alongside the next reproduction.
 
+## Live NAS browser reproduction, 18:49–19:07 +08
+
+The user authorized direct browser testing on the fnOS NAS. A visible Chromium
+156 browser in the existing Linux desktop container opened the production
+router HTTPS page, logged in through its UI, and connected the saved Win11 RDP
+entry. This used the actual router service, not the earlier isolated xrdp
+fixture. The installed build remained `723d91b4` throughout.
+
+The client reported secure context and cross-origin isolation, successful AVC
+and YUV decoder probes, and positive decoded-AVC observations. WebGL2 was
+unavailable in this container, so rendering used Canvas2D. RdpCoreTS events
+162/170 correlated to the same connection confirmed AVC444 and Intel Quick
+Sync hardware encoding. This run therefore does not exercise the GPU shader
+path optimized in `560fd1ac`.
+
+An owned Edge guest window on Win11 ran two separate workloads: a locally
+prerecorded 1920×1080 VP8 video, and continuous whole-page scrolling with video
+paused and canvas drawing stopped. The page remained visible and focused.
+The video requested 30 fps but its source counters did not establish stable
+30 fps; no percentage loss from a 30-fps baseline is inferred. The scrolling
+source changed position about 32 times/s at approximately 897 pixels/s.
+
+| Workload / remote desktop | Browser draw submissions/s | Submission gap P95 / maximum | Windows input = output frames/s | Mean encoding time |
+|---|---:|---:|---:|---:|
+| Video, 3196×1484 | 16.85 | 85 / 113 ms | 14.58 | 23.87 ms |
+| Continuous scroll, 3196×1484 | 13.69 | 102 / 120 ms | 12.43 | 25.93 ms |
+| Same video, 1920×1080 | 32.30 | 59 / 151 ms | 25.70 | 18.65 ms |
+
+Browser values count JavaScript canvas draw submissions, not physical screen
+presentations. Windows values count logical RDP frames, and AVC picture counts
+are another unit. These values must not be subtracted to calculate frame loss.
+Windows samples were trimmed to overlapping source intervals; their windows
+are not identical to the full browser intervals. Exact timestamps, dimensions,
+source counters and summaries are retained in
+[the numeric evidence](rdp-nas-browser-reproduction-20261115.json).
+
+All three resource-skipped counters were zero in these matched intervals.
+This does not exclude earlier capture throttling, update coalescing or client
+feedback: input = output alone cannot assign the cause exclusively to Win11.
+The browser's `ackWaitMs` measures internal presentation acknowledgement wait,
+not network RTT; pipeline timing totals can overlap. No browser page errors
+were observed, and an F8 key sent through the actual RDP canvas was recorded by
+the source page. Audio was not exercised.
+
+The 1080p comparison held the browser viewport for the whole measurement, and
+Windows display events confirmed 1920×1080 throughout the matched interval.
+An earlier resize attempt reverted before sampling and was excluded. Lowering
+resolution nearly doubled browser submission throughput in this run and also
+improved Windows output, showing sensitivity to pixel workload across the
+pipeline. The maximum observed gap did not improve, so this is not evidence
+that all stalls are resolved or that a single stage is the sole bottleneck.
+
+A read-only `DwmGetCompositionTimingInfo` probe in the interactive RDP session
+reported nominal refresh and composition rates of exactly 32 Hz, with a
+31.25-ms period. This agrees with the source rAF cadence. It is not a physical
+monitor measurement or a universal Win11 default; the API's `cFrame` delta was
+not used as an observed frame rate. Microsoft's DWMFRAMEINTERVAL guidance
+requires a computer restart and does not explicitly establish Win11 behavior,
+so no registry policy or reboot was applied.
+
+The owned source/browser profiles, scheduled tasks, CDP relays, SSH tunnel and
+temporary login file were removed after sampling. The existing NAS container
+and user applications were preserved. Connection preferences remain adaptive;
+the resolution reduction was only a test-window resize. This follow-up adds
+reproduction evidence, not another application performance change. A GPU
+enabled client and matched before/after runs are still needed to assess the
+earlier GPU optimization on this Windows host.
+
 ## References
 
 - [Microsoft AVC/H.264 event interpretation](https://techcommunity.microsoft.com/blog/microsoft-security-blog/remote-desktop-protocol-rdp-10-avch-264-improvements-in-windows-10-and-windows-s/249588)
 - [Microsoft graphics performance counters](https://learn.microsoft.com/en-us/azure/virtual-desktop/remotefx-graphics-performance-counters)
 - [Microsoft GPU acceleration verification](https://learn.microsoft.com/en-us/azure/virtual-desktop/graphics-enable-gpu-acceleration)
 - [Microsoft graphics policy definitions](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-terminalserver#ts_dx_use_full_hwgpu)
+- [Microsoft DWM timing API](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo)
+- [Microsoft RDP frame-rate registry guidance](https://learn.microsoft.com/en-us/troubleshoot/windows-server/remote/frame-rate-limited-to-30-fps)
 
-These findings do not establish a new frame-rate improvement or resolve the
-remaining long stalls. The previously deployed GPU synchronization fix remains
+These findings do not establish a new application-code performance gain or
+resolve all stalls. The previously deployed GPU synchronization fix remains
 the performance baseline.

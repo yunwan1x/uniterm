@@ -1,0 +1,530 @@
+{
+  "date": "2026-11-15",
+  "client": "Visible Chromium 156.0.8078.79 in existing fnOS NAS Linux desktop container",
+  "serverBuild": "router-0.3.0-rc.6-rdp-diag-723d91b4",
+  "renderer": "Canvas2D; WebGL2 unavailable; AVC and YUV decoder probes ready",
+  "hostCodec": "AVC444 with Intel Quick Sync hardware encoder, RdpCoreTS events162/170",
+  "measurement": "Browser draw submissions are not physical visible FPS. Windows logical frames and AVC pictures have different units. Windows windows are subsets of source windows, not fully identical to client windows.",
+  "runs": {
+    "video_large": {
+      "source": {
+        "startUtc": "2026-11-15T10:57:35.401Z",
+        "endUtc": "2026-11-15T10:58:05.587Z",
+        "elapsedSeconds": 30.18539999999106,
+        "viewportSizes": [
+          [
+            3148,
+            1461
+          ]
+        ],
+        "mode": "video",
+        "visibility": [
+          "visible"
+        ],
+        "errors": [],
+        "rafFrames": {
+          "delta": 966,
+          "perSecond": 32.002226241835
+        },
+        "canvasFrames": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "videoCallbacks": {
+          "delta": 493,
+          "perSecond": 16.33239910685782
+        },
+        "videoPresentedFrames": {
+          "delta": 772,
+          "perSecond": 25.575278114592773
+        },
+        "videoTotalFrames": {
+          "delta": 781,
+          "perSecond": 25.87343550193906
+        },
+        "videoDroppedFrames": {
+          "delta": 8,
+          "perSecond": 0.2650287887522567
+        },
+        "scrollChanges": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "scrollDistance": {
+          "delta": 0,
+          "perSecond": 0.0
+        }
+      },
+      "client": {
+        "label": "client-v2-video",
+        "elapsed": 33.34805999994278,
+        "drawFps": 16.852554541432525,
+        "p95GapMs": 85.14499998092651,
+        "maximumGapMs": 113.22999978065491,
+        "delta": {
+          "frames": 547,
+          "avcFrames": 568,
+          "decodeMs": 9229.88000369072,
+          "snapshotMs": 3649.5049979686737,
+          "ackWaitMs": 15853.870002508163,
+          "canvasWriteMs": 1333.7000007629395,
+          "gpuAvc420Frames": 0,
+          "gpuAvc444Frames": 0,
+          "gpuYuvMs": 0,
+          "receivedBytes": 20483361
+        },
+        "errors": [],
+        "startUtc": "2026-11-15T10:57:37.024Z",
+        "endUtc": "2026-11-15T10:58:10.372Z",
+        "desktopSizes": [
+          [
+            3196,
+            1484
+          ]
+        ]
+      },
+      "windows": {
+        "variant": "v2-video",
+        "requestedSourceStartUtc": "2026-11-15T10:57:35.401000+00:00",
+        "requestedSourceEndUtc": "2026-11-15T10:58:05.587000+00:00",
+        "sampleCount": 30,
+        "firstSampleUtc": "2026-11-15T10:57:36.0598675Z",
+        "lastSampleUtc": "2026-11-15T10:58:05.3511952Z",
+        "metrics": {
+          "input frames/second": {
+            "n": 30,
+            "mean": 14.583895795736165,
+            "median": 14.761296234934502,
+            "min": 8.865507590204322,
+            "max": 17.688882625714154
+          },
+          "output frames/second": {
+            "n": 30,
+            "mean": 14.583895795736165,
+            "median": 14.761296234934502,
+            "min": 8.865507590204322,
+            "max": 17.688882625714154
+          },
+          "average encoding time": {
+            "n": 30,
+            "mean": 23.866666666666667,
+            "median": 23.0,
+            "min": 13,
+            "max": 41
+          },
+          "frames skipped/second - insufficient client resources": {
+            "n": 30,
+            "mean": 0,
+            "median": 0.0,
+            "min": 0,
+            "max": 0
+          },
+          "frames skipped/second - insufficient network resources": {
+            "n": 30,
+            "mean": 0,
+            "median": 0.0,
+            "min": 0,
+            "max": 0
+          },
+          "frames skipped/second - insufficient server resources": {
+            "n": 30,
+            "mean": 0,
+            "median": 0.0,
+            "min": 0,
+            "max": 0
+          },
+          "frame quality": {
+            "n": 30,
+            "mean": 70.73333333333333,
+            "median": 68.0,
+            "min": 51,
+            "max": 100
+          }
+        }
+      }
+    },
+    "scroll_large": {
+      "source": {
+        "startUtc": "2026-11-15T10:58:49.633Z",
+        "endUtc": "2026-11-15T10:59:34.926Z",
+        "elapsedSeconds": 45.29370000000298,
+        "viewportSizes": [
+          [
+            3148,
+            1461
+          ]
+        ],
+        "mode": "scroll",
+        "visibility": [
+          "visible"
+        ],
+        "errors": [],
+        "rafFrames": {
+          "delta": 1449,
+          "perSecond": 31.991204074736768
+        },
+        "canvasFrames": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "videoCallbacks": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "videoPresentedFrames": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "videoTotalFrames": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "videoDroppedFrames": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "scrollChanges": {
+          "delta": 1449,
+          "perSecond": 31.991204074736768
+        },
+        "scrollDistance": {
+          "delta": 40618,
+          "perSecond": 896.7693078727799
+        }
+      },
+      "client": {
+        "label": "client-v2-scroll",
+        "elapsed": 49.46267499995231,
+        "drawFps": 13.687088294368484,
+        "p95GapMs": 102.02500009536743,
+        "maximumGapMs": 120.20500016212463,
+        "delta": {
+          "frames": 680,
+          "avcFrames": 689,
+          "decodeMs": 8994.715000152588,
+          "snapshotMs": 4986.769997835159,
+          "ackWaitMs": 26487.73499894142,
+          "canvasWriteMs": 1850.9049973487854,
+          "gpuAvc420Frames": 0,
+          "gpuAvc444Frames": 0,
+          "gpuYuvMs": 0,
+          "receivedBytes": 8950627
+        },
+        "errors": [],
+        "startUtc": "2026-11-15T10:58:51.142Z",
+        "endUtc": "2026-11-15T10:59:40.604Z",
+        "desktopSizes": [
+          [
+            3196,
+            1484
+          ]
+        ]
+      },
+      "windows": {
+        "variant": "v2-scroll-matched",
+        "requestedSourceStartUtc": "2026-11-15T10:58:49.633000+00:00",
+        "requestedSourceEndUtc": "2026-11-15T10:59:34.926000+00:00",
+        "sampleCount": 27,
+        "firstSampleUtc": "2026-11-15T10:59:08.1490052Z",
+        "lastSampleUtc": "2026-11-15T10:59:34.5676307Z",
+        "metrics": {
+          "input frames/second": {
+            "n": 27,
+            "mean": 12.434403928670195,
+            "median": 12.70435939342743,
+            "min": 9.923040864273043,
+            "max": 13.975772997508818
+          },
+          "output frames/second": {
+            "n": 27,
+            "mean": 12.434403928670195,
+            "median": 12.70435939342743,
+            "min": 9.923040864273043,
+            "max": 13.975772997508818
+          },
+          "average encoding time": {
+            "n": 27,
+            "mean": 25.925925925925927,
+            "median": 24,
+            "min": 13,
+            "max": 49
+          },
+          "frames skipped/second - insufficient client resources": {
+            "n": 27,
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "frames skipped/second - insufficient network resources": {
+            "n": 27,
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "frames skipped/second - insufficient server resources": {
+            "n": 27,
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "frame quality": {
+            "n": 27,
+            "mean": 50.18518518518518,
+            "median": 45,
+            "min": 45,
+            "max": 73
+          }
+        }
+      }
+    },
+    "video_1080": {
+      "source": {
+        "startUtc": "2026-11-15T11:05:57.024Z",
+        "endUtc": "2026-11-15T11:06:42.316Z",
+        "elapsedSeconds": 45.29170000000298,
+        "viewportSizes": [
+          [
+            1872,
+            1057
+          ]
+        ],
+        "mode": "video",
+        "visibility": [
+          "visible"
+        ],
+        "errors": [],
+        "rafFrames": {
+          "delta": 1449,
+          "perSecond": 31.992616748762014
+        },
+        "canvasFrames": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "videoCallbacks": {
+          "delta": 733,
+          "perSecond": 16.18398072935994
+        },
+        "videoPresentedFrames": {
+          "delta": 1147,
+          "perSecond": 25.324728371863376
+        },
+        "videoTotalFrames": {
+          "delta": 1172,
+          "perSecond": 25.876705886507303
+        },
+        "videoDroppedFrames": {
+          "delta": 25,
+          "perSecond": 0.5519775146439271
+        },
+        "scrollChanges": {
+          "delta": 0,
+          "perSecond": 0.0
+        },
+        "scrollDistance": {
+          "delta": 0,
+          "perSecond": 0.0
+        }
+      },
+      "client": {
+        "label": "client-v2-video-1080-valid",
+        "elapsed": 65.65886500000954,
+        "drawFps": 32.30333025098274,
+        "p95GapMs": 59.15000009536743,
+        "maximumGapMs": 151.4800000190735,
+        "delta": {
+          "frames": 2095,
+          "avcFrames": 2153,
+          "decodeMs": 21587.624997615814,
+          "snapshotMs": 7030.995001792908,
+          "ackWaitMs": 28207.269996404648,
+          "canvasWriteMs": 2630.065000772476,
+          "gpuAvc420Frames": 0,
+          "gpuAvc444Frames": 0,
+          "gpuYuvMs": 0,
+          "receivedBytes": 52725208
+        },
+        "errors": [],
+        "startUtc": "2026-11-15T11:05:43.557Z",
+        "endUtc": "2026-11-15T11:06:49.215Z",
+        "desktopSizes": [
+          [
+            1920,
+            1080
+          ]
+        ]
+      },
+      "windows": {
+        "variant": "v2-video-1080-valid",
+        "requestedSourceStartUtc": "2026-11-15T11:05:57.024000+00:00",
+        "requestedSourceEndUtc": "2026-11-15T11:06:42.316000+00:00",
+        "sampleCount": 31,
+        "firstSampleUtc": "2026-11-15T11:06:11.3584030Z",
+        "lastSampleUtc": "2026-11-15T11:06:41.7879019Z",
+        "sampleDimensionsConsistent": true,
+        "sampleDimensions": [
+          1920,
+          1080
+        ],
+        "validFor1080Comparison": true,
+        "connections": [
+          {
+            "LocalAddress": "192.168.50.66",
+            "RemoteAddress": "192.168.50.1",
+            "RemotePort": 55528
+          }
+        ],
+        "events": [
+          {
+            "id": 168,
+            "record": 45370,
+            "time": "2026-11-15T11:06:49.9194325Z",
+            "activity": "{f4201cd6-1525-4bd9-95ab-ca24aac60000}",
+            "fields": {
+              "MonitorNum": "0",
+              "MonitorWidth": "3196",
+              "MonitorHeight": "1484",
+              "MonitorX": "0",
+              "MonitorY": "0"
+            }
+          },
+          {
+            "id": 168,
+            "record": 45367,
+            "time": "2026-11-15T11:05:37.0666575Z",
+            "activity": "{f4201cd6-1525-4bd9-95ab-ca24aac60000}",
+            "fields": {
+              "MonitorNum": "0",
+              "MonitorWidth": "1920",
+              "MonitorHeight": "1080",
+              "MonitorX": "0",
+              "MonitorY": "0"
+            }
+          },
+          {
+            "id": 168,
+            "record": 45364,
+            "time": "2026-11-15T11:04:20.6633385Z",
+            "activity": "{f4201cd6-1525-4bd9-95ab-ca24aac60000}",
+            "fields": {
+              "MonitorNum": "0",
+              "MonitorWidth": "3196",
+              "MonitorHeight": "1484",
+              "MonitorX": "0",
+              "MonitorY": "0"
+            }
+          },
+          {
+            "id": 168,
+            "record": 45361,
+            "time": "2026-11-15T11:04:12.5150552Z",
+            "activity": "{f4201cd6-1525-4bd9-95ab-ca24aac60000}",
+            "fields": {
+              "MonitorNum": "0",
+              "MonitorWidth": "1920",
+              "MonitorHeight": "1080",
+              "MonitorX": "0",
+              "MonitorY": "0"
+            }
+          },
+          {
+            "id": 168,
+            "record": 45358,
+            "time": "2026-11-15T11:04:01.4733626Z",
+            "activity": "{f4201cd6-1525-4bd9-95ab-ca24aac60000}",
+            "fields": {
+              "MonitorNum": "0",
+              "MonitorWidth": "3196",
+              "MonitorHeight": "1484",
+              "MonitorX": "0",
+              "MonitorY": "0"
+            }
+          },
+          {
+            "id": 168,
+            "record": 45355,
+            "time": "2026-11-15T11:03:53.3875797Z",
+            "activity": "{f4201cd6-1525-4bd9-95ab-ca24aac60000}",
+            "fields": {
+              "MonitorNum": "0",
+              "MonitorWidth": "1920",
+              "MonitorHeight": "1224",
+              "MonitorX": "0",
+              "MonitorY": "0"
+            }
+          }
+        ],
+        "errors": [],
+        "metrics": {
+          "input frames/second": {
+            "n": 31,
+            "mean": 25.6950974116847,
+            "median": 25.870960821613952,
+            "min": 18.674954939299518,
+            "max": 31.502757328058195
+          },
+          "output frames/second": {
+            "n": 31,
+            "mean": 25.6950974116847,
+            "median": 25.870960821613952,
+            "min": 18.674954939299518,
+            "max": 31.502757328058195
+          },
+          "average encoding time": {
+            "n": 31,
+            "mean": 18.64516129032258,
+            "median": 17,
+            "min": 13,
+            "max": 44
+          },
+          "frames skipped/second - insufficient client resources": {
+            "n": 31,
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "frames skipped/second - insufficient network resources": {
+            "n": 31,
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "frames skipped/second - insufficient server resources": {
+            "n": 31,
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "frame quality": {
+            "n": 31,
+            "mean": 73.03225806451613,
+            "median": 63,
+            "min": 61,
+            "max": 100
+          }
+        }
+      }
+    }
+  },
+  "keyboardF8ReachedWin11": true,
+  "dwm": {
+    "nominalRefreshHz": 32.0,
+    "nominalCompositionHz": 32.0,
+    "refreshPeriodMilliseconds": 31.25,
+    "interpretation": "Reported composition and refresh cadence is 32 Hz (31.25 ms); cFrame advances only once between these calls and is not used as an observed frame-rate measure.",
+    "api": "DwmGetCompositionTimingInfo(NULL, ...) in interactive session 1, SDK Pack=1, sizeof(DWM_TIMING_INFO)=292"
+  },
+  "limitations": [
+    "Single software-rendered NAS client; no same-client code baseline comparison.",
+    "Video source was requested30fps but did not establish stable30fps; do not calculate a30fps loss percentage.",
+    "Zero resource-skip counters do not exclude capture throttling, coalescing or downstream feedback.",
+    "The first1080 attempt reverted before sampling and is excluded.",
+    "No audio acceptance test; source video muted."
+  ]
+}
