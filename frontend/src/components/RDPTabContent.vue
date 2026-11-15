@@ -580,6 +580,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     displayControlUsable = null
     clearScaleSync()
     rdpLog(`client start: tier=${activeQuality.value} graphics=${activeGraphicsMode.value} res=${activeResolution.value} zoom=${zoom.value} size=${size.width}x${size.height} dpi=${localScalePercent()}% credssp=${activeSecurityMode !== 'tls' && activeSecurityMode !== 'unencrypted'} securityMode=${activeSecurityMode} displayControl=${isAdaptive()} gen=${generation}`)
+    rdpLog('diagnostic '+JSON.stringify({ phase: 'client-startup', generation, build: import.meta.env.VITE_VERSION, asset: new URL(import.meta.url).pathname, path: mod.isWorker ? 'worker' : 'main-thread', secureContext: globalThis.isSecureContext === true, crossOriginIsolated: globalThis.crossOriginIsolated === true, worker: typeof Worker !== 'undefined', offscreenCanvas: typeof OffscreenCanvas !== 'undefined', createImageBitmap: typeof createImageBitmap === 'function', sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined', videoDecoder: typeof VideoDecoder !== 'undefined', avcFallbackAttempted, workerFallbackAttempted, canvasFallbackAttempted }))
 
     // proxyUrl: ws://127.0.0.1:<port>/<token> on desktop, or the same-origin
     // path /api/web/session-proxy/<token> in server mode — the token doubles
@@ -627,6 +628,9 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     builder.extension(new mod.Extension('camera_enabled', capture.enabled('camera')))
     builder.extension(new mod.Extension('graphics_pipeline', activeGraphicsMode.value === 'gfx'))
     if (mod.isWorker) {
+      builder.extension(new mod.Extension('rdp_diagnostic', (diagnostic: Record<string, unknown>) => {
+        if (generation === clientGeneration) rdpLog('diagnostic '+JSON.stringify({ ...diagnostic, generation }))
+      }))
       builder.extension(new mod.Extension('webcodecs_enabled', !avcFallbackAttempted))
       builder.extension(new mod.Extension('canvas2d', canvasFallbackAttempted))
     }

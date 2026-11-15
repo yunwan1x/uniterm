@@ -47,6 +47,7 @@ class WorkerSession {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>()
   private serial = 0
   private dead = false
+  private observedCodecs = new Set<string>()
   private renderer: DesktopRenderer
   constructor(canvas: HTMLCanvasElement, private callbacks: Record<string, Function>, canvas2d: boolean) {
     try { this.renderer = new DesktopRenderer(canvas, () => this.post({ method: 'frameAck', hidden: canvas.ownerDocument.hidden }), () => this.fail(new Error('RDP WebGL context lost')), canvas2d ? 'canvas2d' : 'auto') }
@@ -60,6 +61,13 @@ class WorkerSession {
       }
       if (data.type === 'stats') {
         canvas.dataset.rdpStats = JSON.stringify({ ...data.stats, renderer: this.renderer.mode, presentation: this.renderer.stats })
+        // Report actual codec use once per kind, using the existing 1 Hz stats.
+        for (const [kind, counter] of [['avc-decoded', 'avcFrames'], ['gpu-avc420', 'gpuAvc420Frames'], ['gpu-avc444', 'gpuAvc444Frames']]) {
+          if (data.stats[counter!] > 0 && !this.observedCodecs.has(kind!)) {
+            this.observedCodecs.add(kind!)
+            this.callbacks.rdp_diagnostic?.({ phase: 'codec-observed', kind, renderer: this.renderer.mode, avcFrames: data.stats.avcFrames, gpuAvc420Frames: data.stats.gpuAvc420Frames, gpuAvc444Frames: data.stats.gpuAvc444Frames })
+          }
+        }
         return
       }
       const p = this.pending.get(data.id); if (!p) return

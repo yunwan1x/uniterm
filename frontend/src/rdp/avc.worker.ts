@@ -24,13 +24,13 @@ function nalUnits(data: Uint8Array) {
   }
   return starts.map((s, i) => data.subarray(s.payload, starts[i + 1]?.offset ?? data.length))
 }
-async function probeYuv(): Promise<boolean> {
+async function probeYuv(): Promise<{ supported: boolean; reason: string }> {
   // A real decoded picture is required: API presence alone does not guarantee
   // that an opaque GPU frame exposes readable I420/NV12 planes.
   const data=new Uint8Array([0,0,0,1,103,66,192,10,217,30,192,68,0,0,3,0,4,0,0,3,0,202,60,72,153,32,0,0,0,1,104,203,131,203,32,0,0,0,1,101,136,132,4,188,152,160,0,56,163,128])
   return new Promise(resolve=>{
     let settled=false
-    const complete=(ok:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);try{decoder.close()}catch{};resolve(ok)}
+    const complete=(reason:string)=>{if(settled)return;settled=true;clearTimeout(timer);try{decoder.close()}catch{};resolve({supported:reason==='ready',reason})}
     const decoder=new VideoDecoder({output:async frame=>{
       try {
         const rect=frame.visibleRect ?? {x:0,y:0,width:frame.codedWidth,height:frame.codedHeight}
@@ -38,22 +38,25 @@ async function probeYuv(): Promise<boolean> {
         const source=new Uint8Array(frame.allocationSize({rect})),out=new Uint8Array(width*height+2*Math.ceil(width/2)*Math.ceil(height/2))
         const layout=await frame.copyTo(source,{rect})
         packYuv420(source,frame.format,layout,width,height,out)
-        complete(true)
-      }catch{complete(false)}finally{frame.close()}
-    },error:()=>complete(false)})
-    const timer=setTimeout(()=>complete(false),2000)
-    try { decoder.configure({codec:'avc1.42C00A',optimizeForLatency:true});decoder.decode(new EncodedVideoChunk({type:'key',timestamp:0,data})) }catch{complete(false)}
+        complete('ready')
+      }catch(error){complete('readback-error:'+(error instanceof Error ? error.name : 'unknown'))}finally{frame.close()}
+    },error:error=>complete('decode-error:'+error.name)})
+    const timer=setTimeout(()=>complete('probe-timeout'),2000)
+    try { decoder.configure({codec:'avc1.42C00A',optimizeForLatency:true});decoder.decode(new EncodedVideoChunk({type:'key',timestamp:0,data})) }catch(error){complete('configure-decode-error:'+(error instanceof Error ? error.name : 'unknown'))}
   })
 }
 scope.onmessage = async ({ data: m }) => {
   if (m.method === 'init') {
     control = new Int32Array(m.control); pixels = new Uint8Array(m.pixels)
-    let supported = false
-    try { supported = (await VideoDecoder.isConfigSupported({ codec: 'avc1.42E028', optimizeForLatency: true })).supported === true } catch {}
-    let yuv = false
-    try { yuv = supported && (await VideoDecoder.isConfigSupported({ codec: 'avc1.640033', optimizeForLatency: true })).supported === true } catch {}
-    if(yuv)yuv=await probeYuv()
-    scope.postMessage({ ready: supported, yuv }); return
+    let supported = false, baselineReason = 'unsupported'
+    try { supported = (await VideoDecoder.isConfigSupported({ codec: 'avc1.42E028', optimizeForLatency: true })).supported === true; baselineReason = supported ? 'ready' : 'unsupported' }
+    catch(error) { baselineReason = 'query-error:'+(error instanceof Error ? error.name : 'unknown') }
+    let yuv = false, yuvReason = supported ? 'high-profile-unsupported' : 'baseline-unavailable'
+    try { yuv = supported && (await VideoDecoder.isConfigSupported({ codec: 'avc1.640033', optimizeForLatency: true })).supported === true }
+    catch(error) { yuvReason = 'high-profile-query-error:'+(error instanceof Error ? error.name : 'unknown') }
+    if(yuv)try { const probe=await probeYuv();yuv=probe.supported;yuvReason=probe.reason }
+    catch(error) { scope.postMessage({ ready: false, yuv: false, reason: 'yuv-probe-error', baselineReason, yuvReason: 'probe-error:'+(error instanceof Error ? error.name : 'unknown') });return }
+    scope.postMessage({ ready: supported, yuv, baselineReason, yuvReason }); return
   }
   if (m.method === 'reset') { reset(); return }
   if (m.method !== 'decode') return

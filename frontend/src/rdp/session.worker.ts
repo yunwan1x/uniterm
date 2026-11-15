@@ -54,19 +54,25 @@ async function snapshot() {
     send({ type: 'frame', bitmap, region: { ...region, desktopWidth: width, desktopHeight: height } }, [bitmap])
   } catch { stopped = true; session?.shutdown(); event('workerError', 'RDP worker snapshot failed') } finally { snapshotting = false }
 }
-async function setupAvc() {
-  if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined' || typeof VideoDecoder === 'undefined') return
+async function setupAvc(enabled = true): Promise<Record<string, unknown>> {
+  const started = performance.now()
+  const prerequisites = { secureContext: globalThis.isSecureContext === true, crossOriginIsolated: globalThis.crossOriginIsolated === true, sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined', videoDecoder: typeof VideoDecoder !== 'undefined' }
+  const report = (reason: string, details: Record<string, unknown> = {}) => ({ ...prerequisites, reason, elapsedMs: Math.round(performance.now() - started), avcAvailable: stats.avcAvailable, avcYuvAvailable: stats.avcYuvAvailable, ...details })
+  if (!enabled) return report('disabled-after-fallback')
+  if (!prerequisites.crossOriginIsolated) return report('not-cross-origin-isolated')
+  if (!prerequisites.sharedArrayBuffer) return report('shared-array-buffer-unavailable')
+  if (!prerequisites.videoDecoder) return report('video-decoder-unavailable')
   const control = new Int32Array(new SharedArrayBuffer(16))
   const pixels = new Uint8Array(new SharedArrayBuffer(64 * 1024 * 1024))
   const worker = new Worker(new URL('./avc.worker.ts', import.meta.url), { type: 'module', name: 'uniterm-avc' })
   codecWorker = worker
-  const ready = await new Promise<boolean>(resolve => {
-    const timer = setTimeout(() => resolve(false), 3000)
-    worker.onmessage = e => { clearTimeout(timer); stats.avcYuvAvailable = e.data.yuv === true; resolve(e.data.ready === true) }
-    worker.onerror = () => { clearTimeout(timer); resolve(false) }
+  const ready = await new Promise<{ ready: boolean; yuv?: boolean; baselineReason?: string; yuvReason?: string; reason?: string }>(resolve => {
+    const timer = setTimeout(() => resolve({ ready: false, reason: 'init-timeout' }), 3000)
+    worker.onmessage = e => { clearTimeout(timer); stats.avcYuvAvailable = e.data.yuv === true; resolve(e.data) }
+    worker.onerror = () => { clearTimeout(timer); resolve({ ready: false, reason: 'worker-load-error' }) }
     worker.postMessage({ method: 'init', control: control.buffer, pixels: pixels.buffer })
   })
-  if (!ready) { worker.terminate(); codecWorker = undefined; return }
+  if (ready.ready !== true) { worker.terminate(); codecWorker = undefined; return report(ready.reason || 'baseline-codec-unavailable', { baselineReason: ready.baselineReason, yuvReason: ready.yuvReason }) }
   stats.avcAvailable = true
   ;(globalThis as any).unitermAvcYuv = stats.avcYuvAvailable
   let timestamp = 0
@@ -102,7 +108,7 @@ async function setupAvc() {
     return [w, h, pixels.subarray(0,w*h*4)]
   })
   ;(globalThis as any).unitermDecodeAvc = (surface: number, _data: Uint8Array, yuv = false) => prepared.take(surface, yuv)
-
+  return report('ready', { baselineReason: ready.baselineReason, yuvReason: ready.yuvReason })
 }
 function errorText(e: any) {
   try { if (typeof e?.backtrace === 'function') return `kind=${e.kind()} ${e.backtrace()}` } catch {}
@@ -116,6 +122,7 @@ scope.onmessage = async ({ data: m }) => {
         const { options, extensions, callbacks, audioPort } = m.value
         // GPU surfaces are authoritative after ResetGraphics. Compatibility
         // fallback reconnects with canvas2d and leaves the CPU path unchanged.
+        let gpuReason = extensions.canvas2d === true ? 'disabled-after-fallback' : 'ready'
         if (extensions.canvas2d !== true) try {
           gpu = new GpuCompositor(([x,y,right,bottom]) => {
             gpuFrameReady = true
@@ -145,14 +152,20 @@ scope.onmessage = async ({ data: m }) => {
             }
           }
           gpu.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();stopped=true;event('workerError','RDP WebGL context lost')})
-        } catch { gpu=undefined }
+        } catch (error) { gpu=undefined; gpuReason = error instanceof Error ? error.message.replace(/[\r\n]/g, ' ').slice(0, 160) : 'initialization-failed' }
         await mod.default(); try { mod.setup('warn') } catch {}
         let audioPending = 0, lastAudioAt: number | undefined, lastAudioSource: number | undefined, lastAudioDuration = 0
         if (audioPort) {
           audioPort.onmessage = ({ data }: MessageEvent) => { if (data.type === 'consumed') audioPending = Math.max(0, audioPending - data.bytes) }
           audioPort.start()
         }
-        if (extensions.webcodecs_enabled !== false) await setupAvc()
+        let avc: Record<string, unknown>
+        try { avc = await setupAvc(extensions.webcodecs_enabled !== false) }
+        catch (error) {
+          event('rdp_diagnostic', { phase: 'worker-startup', asset: new URL(import.meta.url).pathname, gpuAvailable: !!gpu, gpuReason, avc: { reason: 'setup-error', errorName: error instanceof Error ? error.name : 'unknown' } })
+          throw error
+        }
+        event('rdp_diagnostic', { phase: 'worker-startup', asset: new URL(import.meta.url).pathname, gpuAvailable: !!gpu, gpuReason, avc })
         canvas = new OffscreenCanvas(options.size.width, options.size.height)
         const ctx = canvas.getContext('2d', { alpha: false })!
         const put = ctx.putImageData.bind(ctx)
@@ -170,6 +183,7 @@ scope.onmessage = async ({ data: m }) => {
         for (const [name, value] of Object.entries(options)) if (name !== 'size') (builder as any)[name](value)
         for (const [name, value] of Object.entries(extensions)) if (!['webcodecs_enabled', 'canvas2d'].includes(name)) builder.extension(new mod.Extension(name, value))
         for (const name of callbacks) {
+          if (name === 'rdp_diagnostic') continue
           if (name === 'cursor') { builder.setCursorStyleCallback((...args: any[]) => event(name, ...args)); builder.setCursorStyleCallbackContext(null) }
           else if (name === 'clipboardForce') builder.forceClipboardUpdateCallback(() => event(name))
           else if (name === 'clipboard') builder.remoteClipboardChangedCallback((data: any) => {
