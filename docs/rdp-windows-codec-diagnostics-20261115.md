@@ -82,6 +82,26 @@ and one-time codec observations. Targeted TypeScript checking passes for the
 three changed TypeScript modules. Independent review found no remaining
 blocking issue.
 
+## Router delivery
+
+Code commit: `723d91b4b7b29d56b9585385f50ee185383fd80b`.
+The Vite production build and ARM64 server build completed successfully; UPX
+integrity verification passed. The installed server SHA256 matches the build:
+`fe0ee9c52a49fd85c024950ef49629a24ae9e9c9e9db4f8f0fa759c64acc82e5`.
+The gateway binary is unchanged. Production `/health` reports OK after restart.
+No active connection to the affected Windows host was present during delivery.
+
+The NAS retains `uniterm-0.3.0-rc.6-723d91b4-arm64.tar.gz` (15,559,660 bytes),
+SHA256 `45c4133b18672c67d54b73d0bbb8517baf8c015b154ee528597fb588f2c5188e`.
+The rc.5 package is retained for rollback. Package metadata records
+`router-0.3.0-rc.6-rdp-diag-723d91b4`; the installer/gateway are reused from rc.5.
+
+A second bounded five-minute Windows watcher also ended with no active counter
+instance. No active reproduction had been captured by 18:43 +08. The deployment
+check establishes the installed binary and gateway health, not a new live RDP
+performance measurement. Reload/reconnect the browser to load the diagnostic
+assets; Windows sampling must be restarted alongside the next reproduction.
+
 ## References
 
 - [Microsoft AVC/H.264 event interpretation](https://techcommunity.microsoft.com/blog/microsoft-security-blog/remote-desktop-protocol-rdp-10-avch-264-improvements-in-windows-10-and-windows-s/249588)
