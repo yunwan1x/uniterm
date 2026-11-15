@@ -5,6 +5,7 @@ import { GpuCompositor } from './gpu-compositor'
 import { captureSnapshotBatch } from './snapshot-batch'
 import { watchCanvasReset } from './canvas-reset'
 import { PresentationTrace } from './presentation-trace'
+import { FlowTrace } from './flow-trace'
 import type { FramePatch } from './renderer'
 import * as mod from '@ys-ll/ironrdp-wasm'
 const scope = self as unknown as DedicatedWorkerGlobalScope
@@ -15,16 +16,25 @@ let hiddenPresentation = false, nextBackgroundSnapshot = 0
 let sentAt = 0, snapshotTimer: ReturnType<typeof setTimeout> | undefined
 let damage = new DesktopDamage(1)
 let trace = new PresentationTrace(false)
+let flow = new FlowTrace(trace), uninstallFlow = () => {}
+let websocketSerial = 0, websocketMessageSerial = 0, traceDrainSerial = 0
 let frameSerial = 0, inFlightFrameId = 0, updateSerial = 0, updatedAt = 0, rafSerial = 0
 let dirty = false, inFlight = false, snapshotting = false, stopped = false
 let codecWorker: Worker | undefined
 const stats = { gpuAvc420Frames: 0, gpuAvc444Frames: 0, gpuReadbacks: 0, gpuReadbackBytes: 0, gpuYuvAvailable: false, gpuYuvFrames: 0, gpuYuvMs: 0, maxGpuYuvMs: 0, worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, decodeMs: 0, snapshotMs: 0, maxSnapshotMs: 0, snapshotPixels: 0, fullSnapshotPixels: 0, ackWaitMs: 0, maxAckWaitMs: 0, canvasWriteMs: 0, maxCanvasWriteMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
-const snapshotStats = { snapshotRegions: 1, bufferCapacity: 1, snapshotPatches: 0, snapshotDiscarded: 0 }
+const snapshotStats = { snapshotRegions: 1, bufferCapacity: 1, snapshotPatches: 0, snapshotDiscarded: 0, flowTrace: false }
 const NativeWS = WebSocket
 ;(globalThis as any).WebSocket = class extends NativeWS {
   constructor(url: string | URL, protocols?: string | string[]) {
     super(url, protocols)
-    this.addEventListener('message', e => { stats.receivedBytes += e.data.byteLength ?? e.data.size ?? 0 })
+    const socketId = ++websocketSerial
+    // This is browser message delivery, not physical network arrival. Keep the
+    // gloo listener and its queueing/copy semantics untouched.
+    this.addEventListener('message', e => {
+      const bytes = e.data.byteLength ?? e.data.size ?? 0
+      stats.receivedBytes += bytes
+      if (flow.enabled) flow.messageDelivered(++websocketMessageSerial, socketId, bytes)
+    })
   }
 }
 // Worker RAF is not implemented by every browser; a cancellable timer is sufficient
@@ -174,7 +184,11 @@ scope.onmessage = async ({ data: m }) => {
         const { options, extensions, callbacks, audioPort } = m.value
         snapshotStats.snapshotRegions = extensions.presentation_regions === 4 ? 4 : 1
         damage = new DesktopDamage(snapshotStats.snapshotRegions)
-        trace.dispose(); trace = new PresentationTrace(extensions.presentation_trace === true)
+        uninstallFlow(); trace.dispose(); trace = new PresentationTrace(extensions.presentation_trace === true, extensions.presentation_trace === true && extensions.flow_trace === true ? 16384 : 4096)
+        traceDrainSerial = 0
+        flow = new FlowTrace(trace, extensions.flow_trace === true)
+        uninstallFlow = flow.install(globalThis as unknown as Record<string, unknown>)
+        snapshotStats.flowTrace = flow.enabled
         trace.startHeartbeat(50, 20)
         // GPU surfaces are authoritative after ResetGraphics. Compatibility
         // fallback reconnects with canvas2d and leaves the CPU path unchanged.
@@ -241,7 +255,7 @@ scope.onmessage = async ({ data: m }) => {
         }) as typeof ctx.putImageData
         const builder = new mod.SessionBuilder().desktopSize(new mod.DesktopSize(options.size.width, options.size.height)).renderCanvas(canvas as any)
         for (const [name, value] of Object.entries(options)) if (name !== 'size') (builder as any)[name](value)
-        for (const [name, value] of Object.entries(extensions)) if (!['webcodecs_enabled', 'canvas2d', 'presentation_regions', 'presentation_trace'].includes(name)) builder.extension(new mod.Extension(name, value))
+        for (const [name, value] of Object.entries(extensions)) if (!['webcodecs_enabled', 'canvas2d', 'presentation_regions', 'presentation_trace', 'flow_trace'].includes(name)) builder.extension(new mod.Extension(name, value))
         for (const name of callbacks) {
           if (name === 'rdp_diagnostic') continue
           if (name === 'cursor') { builder.setCursorStyleCallback((...args: any[]) => event(name, ...args)); builder.setCursorStyleCallbackContext(null) }
@@ -274,7 +288,7 @@ scope.onmessage = async ({ data: m }) => {
         try { session = await builder.connect() } finally { builder.free(); options.password = ''; options.authToken = '' }
         setInterval(() => {
           send({ type: 'stats', stats: { ...stats, ...snapshotStats, pendingFrames: Number(inFlight), dirty } })
-          if (trace.enabled) send({ type: 'presentationTrace', ...trace.drain() })
+          if (trace.enabled) send({ type: 'presentationTrace', drainId: ++traceDrainSerial, ...trace.drain() })
         }, 1000)
         break
       }

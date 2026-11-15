@@ -1,3 +1,4 @@
+import { acceptTraceDrain, resetTraceDrains, type TraceDrainCounters } from './trace-drain'
 import { DesktopRenderer } from './renderer'
 export const isWorker = true
 
@@ -37,6 +38,7 @@ export class SessionBuilder {
       const { audio_port: audioPort, ...extensions } = this.extensions
       extensions.presentation_regions = session.snapshotRegions
       extensions.presentation_trace = session.traceEnabled
+      extensions.flow_trace = session.flowEnabled
       await session.call('connect', { options: this.options, extensions, callbacks: Object.keys(this.callbacks), audioPort }, audioPort ? [audioPort] : [])
       return session
     } catch (e) { session.free(); throw e }
@@ -53,20 +55,22 @@ class WorkerSession {
   private renderer: DesktopRenderer
   readonly snapshotRegions: 1 | 4
   readonly traceEnabled: boolean
+  readonly flowEnabled: boolean
   constructor(canvas: HTMLCanvasElement, private callbacks: Record<string, Function>, canvas2d: boolean) {
-    let snapshotRegions: 1 | 4 = 1, traceEnabled = false
+    let snapshotRegions: 1 | 4 = 1, traceEnabled = false, flowEnabled = false
     const owner = canvas.ownerDocument?.defaultView
     try {
       snapshotRegions = owner?.sessionStorage.getItem('uniterm.rdp.snapshotRegions') === '4' ? 4 : 1
       traceEnabled = owner?.sessionStorage.getItem('uniterm.rdp.presentationTrace') === '1'
+      flowEnabled = traceEnabled && owner?.sessionStorage.getItem('uniterm.rdp.flowTrace') === '1'
     } catch { /* Session storage may be unavailable under browser policy. */ }
-    this.snapshotRegions = snapshotRegions; this.traceEnabled = traceEnabled
-    const host = owner as (Window & { __unitermRdpTrace?: Record<string, unknown>[]; __unitermRdpTraceDropped?: number }) | null
-    if (traceEnabled && host) { host.__unitermRdpTrace = []; host.__unitermRdpTraceDropped = 0 }
+    this.snapshotRegions = snapshotRegions; this.traceEnabled = traceEnabled; this.flowEnabled = flowEnabled
+    const host = owner as (Window & TraceDrainCounters & { __unitermRdpTrace?: Record<string, unknown>[]; __unitermRdpTraceDropped?: number; __unitermRdpTraceWorkerDropped?: number; __unitermRdpTraceMainDropped?: number; __unitermRdpTraceWorkerPeakBatch?: number; __unitermRdpTraceWorkerDrainedEvents?: number }) | null
+    if (traceEnabled && host) { host.__unitermRdpTrace = []; host.__unitermRdpTraceDropped = 0; host.__unitermRdpTraceWorkerDropped = 0; host.__unitermRdpTraceMainDropped = 0; host.__unitermRdpTraceWorkerPeakBatch = 0; host.__unitermRdpTraceWorkerDrainedEvents = 0; resetTraceDrains(host) }
     const appendTrace = (entry: Record<string, unknown>) => {
       if (!host?.__unitermRdpTrace) return
-      if (host.__unitermRdpTrace.length < 65536) host.__unitermRdpTrace.push(entry)
-      else host.__unitermRdpTraceDropped = (host.__unitermRdpTraceDropped ?? 0) + 1
+      if (host.__unitermRdpTrace.length < (flowEnabled ? 262144 : 65536)) host.__unitermRdpTrace.push(entry)
+      else { host.__unitermRdpTraceDropped = (host.__unitermRdpTraceDropped ?? 0) + 1; host.__unitermRdpTraceMainDropped = (host.__unitermRdpTraceMainDropped ?? 0) + 1 }
     }
     const trace = traceEnabled ? (stage: string, id: number, detail: Record<string, number> = {}) => appendTrace({ ...detail, stage, id, time: performance.timeOrigin + performance.now() }) : undefined
     try { this.renderer = new DesktopRenderer(canvas, frameId => {
@@ -83,6 +87,10 @@ class WorkerSession {
       }
       if (data.type === 'presentationTrace') {
         if (traceEnabled && host) {
+          acceptTraceDrain(host, data.drainId)
+          host.__unitermRdpTraceWorkerDropped = (host.__unitermRdpTraceWorkerDropped ?? 0) + (data.dropped ?? 0)
+          host.__unitermRdpTraceWorkerPeakBatch = Math.max(host.__unitermRdpTraceWorkerPeakBatch ?? 0, data.events.length)
+          host.__unitermRdpTraceWorkerDrainedEvents = (host.__unitermRdpTraceWorkerDrainedEvents ?? 0) + data.events.length
           for (const entry of data.events) appendTrace(entry)
           host.__unitermRdpTraceDropped = (host.__unitermRdpTraceDropped ?? 0) + (data.dropped ?? 0)
         }
