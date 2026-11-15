@@ -2,16 +2,24 @@
 import { DesktopDamage } from './damage'
 import { PreparedAvc } from './async-avc'
 import { GpuCompositor } from './gpu-compositor'
+import { captureSnapshotBatch } from './snapshot-batch'
+import { watchCanvasReset } from './canvas-reset'
+import { PresentationTrace } from './presentation-trace'
+import type { FramePatch } from './renderer'
 import * as mod from '@ys-ll/ironrdp-wasm'
 const scope = self as unknown as DedicatedWorkerGlobalScope
 let session: any, canvas: OffscreenCanvas
 let gpu: GpuCompositor | undefined, gpuFrameReady = false
+let canvasFrameReady = false
 let hiddenPresentation = false, nextBackgroundSnapshot = 0
 let sentAt = 0, snapshotTimer: ReturnType<typeof setTimeout> | undefined
-const damage = new DesktopDamage()
+let damage = new DesktopDamage(1)
+let trace = new PresentationTrace(false)
+let frameSerial = 0, inFlightFrameId = 0, updateSerial = 0, updatedAt = 0, rafSerial = 0
 let dirty = false, inFlight = false, snapshotting = false, stopped = false
 let codecWorker: Worker | undefined
 const stats = { gpuAvc420Frames: 0, gpuAvc444Frames: 0, gpuReadbacks: 0, gpuReadbackBytes: 0, gpuYuvAvailable: false, gpuYuvFrames: 0, gpuYuvMs: 0, maxGpuYuvMs: 0, worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, decodeMs: 0, snapshotMs: 0, maxSnapshotMs: 0, snapshotPixels: 0, fullSnapshotPixels: 0, ackWaitMs: 0, maxAckWaitMs: 0, canvasWriteMs: 0, maxCanvasWriteMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
+const snapshotStats = { snapshotRegions: 1, bufferCapacity: 1, snapshotPatches: 0, snapshotDiscarded: 0 }
 const NativeWS = WebSocket
 ;(globalThis as any).WebSocket = class extends NativeWS {
   constructor(url: string | URL, protocols?: string | string[]) {
@@ -21,10 +29,24 @@ const NativeWS = WebSocket
 }
 // Worker RAF is not implemented by every browser; a cancellable timer is sufficient
 // here because presentation on the document is still synchronized to its real RAF.
-;(globalThis as any).requestAnimationFrame = (f: Function) => setTimeout(() => f(performance.now()), 0)
+;(globalThis as any).requestAnimationFrame = (f: Function) => setTimeout(() => {
+  const id = ++rafSerial
+  trace.record('raf-task-start', id)
+  try { f(performance.now()) } finally { trace.record('raf-task-end', id) }
+}, 0)
 ;(globalThis as any).cancelAnimationFrame = clearTimeout
 const send = (value: any, transfer: Transferable[] = []) => scope.postMessage(value, transfer)
 const event = (name: string, ...args: any[]) => send({ type: 'event', name, args })
+function scheduleSnapshot() {
+  if (!snapshotTimer && !inFlight && !snapshotting && !stopped) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void snapshot() }, 0)
+}
+function changed() {
+  updateSerial++
+  if (trace.enabled) updatedAt = performance.timeOrigin + performance.now()
+  trace.record('damage', updateSerial)
+  if (dirty) stats.coalesced++
+  dirty = true; scheduleSnapshot()
+}
 async function snapshot() {
   if (!dirty || inFlight || snapshotting || stopped) return
   const delay = hiddenPresentation ? nextBackgroundSnapshot - performance.now() : 0
@@ -33,26 +55,53 @@ async function snapshot() {
     return
   }
   if (gpu?.active && !gpuFrameReady) return
+  if (!gpu?.active && !canvasFrameReady) return
   const source = gpu?.active ? gpu.canvas : canvas
-  let region = damage.take(source.width, source.height)
-  if (!region) { dirty = false; return }
+  let regions = damage.take(source.width, source.height)
+  if (!regions?.length) { dirty = false; return }
   const width = source.width, height = source.height
+  const generation = damage.generation
+  const id = ++frameSerial, includedSerial = updateSerial, includedAt = updatedAt
   dirty = false; snapshotting = true
   const started = performance.now()
+  let patches: FramePatch[] | null = null
+  const current = () => !stopped && source.width === width && source.height === height && damage.generation === generation
   try {
     // GPU surfaces retain the desktop; frame() redraws every mapped surface.
     // Transferring this completed output can discard its backing store safely.
     // The incremental Canvas2D framebuffer must keep its pixels between updates.
     const transferOutput = gpu?.active && typeof source.transferToImageBitmap === 'function'
-    if (transferOutput) region = { x: 0, y: 0, width, height }
-    const bitmap = transferOutput ? source.transferToImageBitmap() : await createImageBitmap(source, region.x, region.y, region.width, region.height)
+    if (transferOutput) regions = [{ x: 0, y: 0, width, height }]
+    if (trace.enabled) trace.record('snapshot-start', id, { updateSerial: includedSerial, updatedAt: includedAt, regions: regions.length, pixels: regions.reduce((sum, region) => sum + region.width * region.height, 0) })
+    if (transferOutput) {
+      if (trace.enabled) trace.record('bitmap-call-start', id, { index: 0 })
+      const bitmap = source.transferToImageBitmap()
+      if (trace.enabled) trace.record('bitmap-call-returned', id, { index: 0 })
+      if (trace.enabled) trace.record('bitmap-ready', id, { index: 0 })
+      patches = [{ bitmap, region: { x: 0, y: 0, width, height, desktopWidth: width, desktopHeight: height } }]
+    } else {
+      patches = await captureSnapshotBatch(source, regions, current, trace.enabled ? (stage, index) => trace.record(stage, id, { index }) : undefined)
+    }
     const elapsed = performance.now() - started
     stats.snapshotMs += elapsed; stats.maxSnapshotMs = Math.max(stats.maxSnapshotMs, elapsed)
-    stats.snapshotPixels += region.width * region.height; stats.fullSnapshotPixels += width * height
-    if (stopped) { bitmap.close(); return }
-    inFlight = true; sentAt = performance.now(); nextBackgroundSnapshot = sentAt + 100; stats.frames++
-    send({ type: 'frame', bitmap, region: { ...region, desktopWidth: width, desktopHeight: height } }, [bitmap])
-  } catch { stopped = true; session?.shutdown(); event('workerError', 'RDP worker snapshot failed') } finally { snapshotting = false }
+    if (!patches || !current()) {
+      patches?.forEach(patch => patch.bitmap.close()); patches = null
+      snapshotStats.snapshotDiscarded++
+      trace.record('snapshot-discarded', id)
+      if (!stopped) { damage.full(source.width, source.height); dirty = true }
+      return
+    }
+    stats.snapshotPixels += patches.reduce((sum, patch) => sum + patch.region.width * patch.region.height, 0)
+    stats.fullSnapshotPixels += width * height; snapshotStats.snapshotPatches += patches.length
+    trace.record('snapshot-ready', id)
+    inFlight = true; inFlightFrameId = id; sentAt = performance.now(); nextBackgroundSnapshot = sentAt + 100; stats.frames++
+    if (trace.enabled) trace.record('frame-sent', id, { updateSerial: includedSerial, updatedAt: includedAt })
+    send({ type: 'frame', patches, frameId: id, updateSerial: includedSerial, updatedAt: includedAt }, patches.map(patch => patch.bitmap))
+    patches = null
+  } catch {
+    patches?.forEach(patch => patch.bitmap.close())
+    stopped = true; trace.stopHeartbeat(); session?.shutdown(); event('workerError', 'RDP worker snapshot failed')
+  } finally { snapshotting = false; if (dirty) scheduleSnapshot() }
 }
 async function setupAvc(enabled = true): Promise<Record<string, unknown>> {
   const started = performance.now()
@@ -93,6 +142,7 @@ async function setupAvc(enabled = true): Promise<Record<string, unknown>> {
   ;(globalThis as any).unitermPrepareAvc = (requests: [number, Uint8Array, boolean][]) => prepared.prepare(requests, async (surface, data, yuv) => {
     if (pending) throw new Error('Concurrent AVC decode')
     const start = performance.now()
+    trace.record('decode-start', timestamp + 1)
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { pending = undefined; worker.terminate(); reject(new Error('AVC decoder timed out')) }, 2000)
       pending = { resolve, reject, timer }
@@ -100,6 +150,7 @@ async function setupAvc(enabled = true): Promise<Record<string, unknown>> {
     })
     const w = Atomics.load(control, 1), h = Atomics.load(control, 2)
     const elapsed = performance.now() - start
+    trace.record('decode-ready', timestamp)
     stats.decodeMs += elapsed; stats.maxDecodeMs = Math.max(stats.maxDecodeMs, elapsed); stats.avcFrames++
     if (yuv) {
       const ySize = w*h, cSize = Math.ceil(w/2)*Math.ceil(h/2)
@@ -115,11 +166,16 @@ function errorText(e: any) {
   return e instanceof Error ? e.message : String(e)
 }
 scope.onmessage = async ({ data: m }) => {
+  if (m.method === 'frameAck') trace.record('ack-received', m.frameId)
   try {
     let result: any
     switch (m.method) {
       case 'connect': {
         const { options, extensions, callbacks, audioPort } = m.value
+        snapshotStats.snapshotRegions = extensions.presentation_regions === 4 ? 4 : 1
+        damage = new DesktopDamage(snapshotStats.snapshotRegions)
+        trace.dispose(); trace = new PresentationTrace(extensions.presentation_trace === true)
+        trace.startHeartbeat(50, 20)
         // GPU surfaces are authoritative after ResetGraphics. Compatibility
         // fallback reconnects with canvas2d and leaves the CPU path unchanged.
         let gpuReason = extensions.canvas2d === true ? 'disabled-after-fallback' : 'ready'
@@ -127,8 +183,7 @@ scope.onmessage = async ({ data: m }) => {
           gpu = new GpuCompositor(([x,y,right,bottom]) => {
             gpuFrameReady = true
             damage.add(gpu!.canvas.width,gpu!.canvas.height,{width:right-x,height:bottom-y},x,y)
-            if(dirty)stats.coalesced++;dirty=true
-            if(!snapshotTimer&&!inFlight&&!snapshotting)snapshotTimer=setTimeout(()=>{snapshotTimer=undefined;void snapshot()},0)
+            changed()
           })
           stats.gpuYuvAvailable = true
           ;(globalThis as any).unitermGpuCommand = (name: string, ...args: any[]) => {
@@ -146,12 +201,12 @@ scope.onmessage = async ({ data: m }) => {
               }
               return result
             } catch(error) {
-              stopped=true;stats.gpuYuvAvailable=false
+              stopped=true;stats.gpuYuvAvailable=false;trace.stopHeartbeat()
               event('workerError','RDP WebGL compositor failed; canvas context fallback required')
               throw error
             }
           }
-          gpu.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();stopped=true;event('workerError','RDP WebGL context lost')})
+          gpu.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();stopped=true;trace.stopHeartbeat();event('workerError','RDP WebGL context lost')})
         } catch (error) { gpu=undefined; gpuReason = error instanceof Error ? error.message.replace(/[\r\n]/g, ' ').slice(0, 160) : 'initialization-failed' }
         await mod.default(); try { mod.setup('warn') } catch {}
         let audioPending = 0, lastAudioAt: number | undefined, lastAudioSource: number | undefined, lastAudioDuration = 0
@@ -167,21 +222,26 @@ scope.onmessage = async ({ data: m }) => {
         }
         event('rdp_diagnostic', { phase: 'worker-startup', asset: new URL(import.meta.url).pathname, gpuAvailable: !!gpu, gpuReason, avc })
         canvas = new OffscreenCanvas(options.size.width, options.size.height)
+        watchCanvasReset(canvas, () => {
+          canvasFrameReady = false
+          damage.full(canvas.width, canvas.height)
+        })
         const ctx = canvas.getContext('2d', { alpha: false })!
         const put = ctx.putImageData.bind(ctx)
         ctx.putImageData = ((...args: Parameters<typeof ctx.putImageData>) => {
           if(gpu?.active)throw new Error('RDP WebGL mixed graphics requires canvas context fallback')
           const started = performance.now()
-          put(...args)
+          trace.record('put-start', updateSerial + 1)
+          try { put(...args) } finally { trace.record('put-end', updateSerial + 1) }
           const elapsed = performance.now() - started
           stats.canvasWriteMs += elapsed; stats.maxCanvasWriteMs = Math.max(stats.maxCanvasWriteMs, elapsed)
+          canvasFrameReady = true
           damage.add(canvas.width, canvas.height, ...args)
-          if (dirty) stats.coalesced++; dirty = true
-          if (!snapshotTimer && !inFlight && !snapshotting) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void snapshot() }, 0)
+          changed()
         }) as typeof ctx.putImageData
         const builder = new mod.SessionBuilder().desktopSize(new mod.DesktopSize(options.size.width, options.size.height)).renderCanvas(canvas as any)
         for (const [name, value] of Object.entries(options)) if (name !== 'size') (builder as any)[name](value)
-        for (const [name, value] of Object.entries(extensions)) if (!['webcodecs_enabled', 'canvas2d'].includes(name)) builder.extension(new mod.Extension(name, value))
+        for (const [name, value] of Object.entries(extensions)) if (!['webcodecs_enabled', 'canvas2d', 'presentation_regions', 'presentation_trace'].includes(name)) builder.extension(new mod.Extension(name, value))
         for (const name of callbacks) {
           if (name === 'rdp_diagnostic') continue
           if (name === 'cursor') { builder.setCursorStyleCallback((...args: any[]) => event(name, ...args)); builder.setCursorStyleCallbackContext(null) }
@@ -212,10 +272,13 @@ scope.onmessage = async ({ data: m }) => {
           else builder.extension(new mod.Extension(name, (...args: any[]) => event(name, ...args)))
         }
         try { session = await builder.connect() } finally { builder.free(); options.password = ''; options.authToken = '' }
-        setInterval(() => send({ type: 'stats', stats: { ...stats, pendingFrames: Number(inFlight), dirty } }), 1000)
+        setInterval(() => {
+          send({ type: 'stats', stats: { ...stats, ...snapshotStats, pendingFrames: Number(inFlight), dirty } })
+          if (trace.enabled) send({ type: 'presentationTrace', ...trace.drain() })
+        }, 1000)
         break
       }
-      case 'run': { const term = await session.run(); result = term.reason(); term.free(); break }
+      case 'run': { const term = await session.run(); result = term.reason(); term.free(); trace.stopHeartbeat(); break }
       case 'inputs': {
         const tx = new mod.InputTransaction()
         for (const e of m.value) tx.addEvent((mod.DeviceEvent as any)[e.name](...e.args))
@@ -232,7 +295,7 @@ scope.onmessage = async ({ data: m }) => {
         break
       }
       case 'frameAck': {
-        if (!inFlight) break
+        if (!inFlight || m.frameId !== inFlightFrameId) break
         hiddenPresentation = m.hidden === true
         const elapsed = performance.now() - sentAt
         stats.ackWaitMs += elapsed; stats.maxAckWaitMs = Math.max(stats.maxAckWaitMs, elapsed)
@@ -243,6 +306,7 @@ scope.onmessage = async ({ data: m }) => {
     }
     if (m.id) send({ id: m.id, result })
   } catch (e) {
+    if (!m.id || m.method === 'connect' || m.method === 'run') trace.stopHeartbeat()
     if (m.id) send({ id: m.id, error: errorText(e) })
     else { stopped = true; session?.shutdown(); codecWorker?.terminate(); send({ type: 'event', name: 'workerError', args: [errorText(e)] }) }
   }

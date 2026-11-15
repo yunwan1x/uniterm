@@ -14,7 +14,16 @@ async function startup(options: { gate?: string; disabled?: boolean; ready?: obj
   vi.stubGlobal('isSecureContext', true); vi.stubGlobal('crossOriginIsolated', options.gate !== 'isolation')
   vi.stubGlobal('SharedArrayBuffer', options.gate === 'shared' ? undefined : SharedArrayBuffer)
   vi.stubGlobal('VideoDecoder', options.gate === 'decoder' ? undefined : class {})
-  vi.stubGlobal('OffscreenCanvas', class { getContext() { return { putImageData: vi.fn() } } })
+  vi.stubGlobal('OffscreenCanvas', class {
+    private backingWidth: number
+    private backingHeight: number
+    constructor(width: number, height: number) { this.backingWidth = width; this.backingHeight = height }
+    get width() { return this.backingWidth }
+    set width(value: number) { this.backingWidth = value }
+    get height() { return this.backingHeight }
+    set height(value: number) { this.backingHeight = value }
+    getContext() { return { putImageData: vi.fn() } }
+  })
   for (const name of ['requestAnimationFrame', 'cancelAnimationFrame', 'unitermAvcYuv', 'unitermPrepareAvc', 'unitermResetAvc', 'unitermDecodeAvc']) vi.stubGlobal(name, undefined)
   vi.stubGlobal('Worker', class {
     onmessage?: (event: any) => void; onerror?: () => void
