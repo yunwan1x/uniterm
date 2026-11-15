@@ -104,3 +104,20 @@ substitute static assets in place of a complete baseline service. Check actual
 AVC counters and dimensions; an idle or wrong desktop is not a passing test.
 Output contains metrics only, with no screenshots or recordings. Remove the
 temporary report directory after retaining at most the current concise result.
+
+## GPU synchronization and resource lifecycle
+
+`gpu-lifecycle-check.mjs` extends the pixel checks to framebuffer ownership,
+cross-surface and overlapping copies, cache eviction/reset, interleaved target
+and standalone YUV conversion, resize and context loss. Set
+`REMOTE_BROWSER_CDP` to use a dedicated hardware browser; otherwise it launches
+local Chromium. It creates and closes its own browser context.
+
+`gpu-sync-benchmark.mjs` compares current source against two baseline files at
+`frontend/rdp-sync-baseline/{gpu-compositor,yuv-gpu}.ts`. For example, extract
+those files from commit `232ba40e`, start Vite, and run with
+`PLAYWRIGHT_MODULE`, `REMOTE_BROWSER_CDP`, `UNITERM_RENDER_TEST_ORIGIN`, and
+optionally `RDP_BENCHMARK_RESULT`. It alternates variants, warms up six frames
+and measures twenty frames per round at 4K with 1, 16 and 64 regions. Timing
+includes upload, composition, transfer and bitmap disposal, not a live RDP
+connection. Remove `frontend/rdp-sync-baseline` after the comparison.

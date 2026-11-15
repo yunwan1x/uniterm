@@ -1,0 +1,536 @@
+{
+  "codeCommit": "560fd1ac6e94036973036e481d2a692ffdd78bd8",
+  "baselineCommit": "5e616c1509f9206de52688afa708ebf31dbe537f",
+  "resolution": [
+    3840,
+    2160
+  ],
+  "source": "isolated xrdp 0.10.6.1 animation/scroll/tone; fresh container each round",
+  "client": "Windows Edge157 Intel UHD ANGLE D3D11",
+  "metric": "canvas draw submissions, not monitor refreshes or unique source frames",
+  "synthetic": [
+    {
+      "variant": "baseline",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 41,
+      "p95Ms": 44,
+      "meanMs": 40.875,
+      "counters": {
+        "getError": 79,
+        "checkFramebufferStatus": 26,
+        "framebufferTexture2D": 27,
+        "getUniformLocation": 78
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 38.69999998807907,
+      "p95Ms": 41.6000000089407,
+      "meanMs": 38.690000000596044,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 42.29999999701977,
+      "p95Ms": 45.79999999701977,
+      "meanMs": 42.03999999836087,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 42.29999999701977,
+      "p95Ms": 49.3999999910593,
+      "meanMs": 42.749999997764824,
+      "counters": {
+        "getError": 79,
+        "checkFramebufferStatus": 26,
+        "framebufferTexture2D": 27,
+        "getUniformLocation": 78
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 45.20000000298023,
+      "p95Ms": 51.099999994039536,
+      "meanMs": 45.144999999552965,
+      "counters": {
+        "getError": 79,
+        "checkFramebufferStatus": 26,
+        "framebufferTexture2D": 27,
+        "getUniformLocation": 78
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 40.8999999910593,
+      "p95Ms": 47.1000000089407,
+      "meanMs": 41.33000000193715,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 40.70000000298023,
+      "p95Ms": 48.29999999701977,
+      "meanMs": 41.4650000013411,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 1,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 41.400000005960464,
+      "p95Ms": 49,
+      "meanMs": 42.40499999895692,
+      "counters": {
+        "getError": 79,
+        "checkFramebufferStatus": 26,
+        "framebufferTexture2D": 27,
+        "getUniformLocation": 78
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 46.1000000089407,
+      "p95Ms": 48.900000005960464,
+      "meanMs": 45.454999999701975,
+      "counters": {
+        "getError": 469,
+        "checkFramebufferStatus": 416,
+        "framebufferTexture2D": 417,
+        "getUniformLocation": 858
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 45.70000000298023,
+      "p95Ms": 56.599999994039536,
+      "meanMs": 46.339999998360874,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 47.69999998807907,
+      "p95Ms": 57.1000000089407,
+      "meanMs": 48.10999999865889,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 52.1000000089407,
+      "p95Ms": 57.70000000298023,
+      "meanMs": 52.304999998956916,
+      "counters": {
+        "getError": 469,
+        "checkFramebufferStatus": 416,
+        "framebufferTexture2D": 417,
+        "getUniformLocation": 858
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 51.20000000298023,
+      "p95Ms": 54.70000000298023,
+      "meanMs": 51.225,
+      "counters": {
+        "getError": 469,
+        "checkFramebufferStatus": 416,
+        "framebufferTexture2D": 417,
+        "getUniformLocation": 858
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 43.900000005960464,
+      "p95Ms": 54.30000001192093,
+      "meanMs": 44.225000000745055,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 43.400000005960464,
+      "p95Ms": 46.6000000089407,
+      "meanMs": 42.70000000074506,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 16,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 45.70000000298023,
+      "p95Ms": 51.20000000298023,
+      "meanMs": 46.559999998658895,
+      "counters": {
+        "getError": 469,
+        "checkFramebufferStatus": 416,
+        "framebufferTexture2D": 417,
+        "getUniformLocation": 858
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 59,
+      "p95Ms": 64,
+      "meanMs": 58.94999999850988,
+      "counters": {
+        "getError": 1717,
+        "checkFramebufferStatus": 1664,
+        "framebufferTexture2D": 1665,
+        "getUniformLocation": 3354
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 41.099999994039536,
+      "p95Ms": 47.099999994039536,
+      "meanMs": 41.729999997466805,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 42.099999994039536,
+      "p95Ms": 44.30000001192093,
+      "meanMs": 41.619999998807906,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 54.599999994039536,
+      "p95Ms": 59.3999999910593,
+      "meanMs": 54.04999999925494,
+      "counters": {
+        "getError": 1717,
+        "checkFramebufferStatus": 1664,
+        "framebufferTexture2D": 1665,
+        "getUniformLocation": 3354
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 56.5,
+      "p95Ms": 61.599999994039536,
+      "meanMs": 57.524999999254945,
+      "counters": {
+        "getError": 1717,
+        "checkFramebufferStatus": 1664,
+        "framebufferTexture2D": 1665,
+        "getUniformLocation": 3354
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 48.5,
+      "p95Ms": 50.70000000298023,
+      "meanMs": 48.44999999850988,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "candidate",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 48.400000005960464,
+      "p95Ms": 50.29999999701977,
+      "meanMs": 48.394999998807904,
+      "counters": {
+        "getError": 28,
+        "checkFramebufferStatus": 0,
+        "framebufferTexture2D": 0,
+        "getUniformLocation": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "regions": 64,
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A9) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "medianMs": 60.19999998807907,
+      "p95Ms": 64.90000000596046,
+      "meanMs": 60.37999999970198,
+      "counters": {
+        "getError": 1717,
+        "checkFramebufferStatus": 1664,
+        "framebufferTexture2D": 1665,
+        "getUniformLocation": 3354
+      }
+    }
+  ],
+  "live": [
+    {
+      "label": "gpu-sync-baseline-clean",
+      "elapsed": 13.53117999999225,
+      "drawSubmissionsPerSecond": 8.129372308997663,
+      "sourceFps": 43.290641074325954,
+      "p95GapMs": 180.65999999642372,
+      "maximumGapMs": 675.955000013113,
+      "delta": {
+        "frames": 103,
+        "avcFrames": 103,
+        "receivedBytes": 3047496,
+        "decodeMs": 2848.8500000089407,
+        "snapshotMs": 5592.219999969006,
+        "ackWaitMs": 3076.2999999523163,
+        "gpuAvc420Frames": 103,
+        "gpuAvc444Frames": 0,
+        "gpuReadbacks": 0,
+        "gpuYuvMs": 2045.7349999845028,
+        "audioPackets": 279
+      },
+      "newAudioUnderruns": 0,
+      "newAudioOverflows": 0,
+      "sourceAudioBefore": "running",
+      "sourceAudioAfter": "running",
+      "errors": []
+    },
+    {
+      "label": "gpu-sync-candidate-clean",
+      "elapsed": 13.24879999999702,
+      "drawSubmissionsPerSecond": 9.58577380593175,
+      "sourceFps": 43.75819123290481,
+      "p95GapMs": 134.85999999940395,
+      "maximumGapMs": 189.75,
+      "delta": {
+        "frames": 120,
+        "avcFrames": 120,
+        "receivedBytes": 3059858,
+        "decodeMs": 3242.879999935627,
+        "snapshotMs": 6188.615000069141,
+        "ackWaitMs": 3032.9749999940395,
+        "gpuAvc420Frames": 120,
+        "gpuAvc444Frames": 0,
+        "gpuReadbacks": 0,
+        "gpuYuvMs": 899.0549999326468,
+        "audioPackets": 279
+      },
+      "newAudioUnderruns": 0,
+      "newAudioOverflows": 0,
+      "sourceAudioBefore": "running",
+      "sourceAudioAfter": "running",
+      "errors": []
+    },
+    {
+      "label": "gpu-sync-baseline-clean-2",
+      "elapsed": 13.532980000004173,
+      "drawSubmissionsPerSecond": 8.941120137616599,
+      "sourceFps": 43.85964912251016,
+      "p95GapMs": 152.64499999582767,
+      "maximumGapMs": 209.54999999701977,
+      "delta": {
+        "frames": 127,
+        "avcFrames": 128,
+        "receivedBytes": 3234091,
+        "decodeMs": 4004.4800000339746,
+        "snapshotMs": 6069.189999982715,
+        "ackWaitMs": 3949.26000007987,
+        "gpuAvc420Frames": 128,
+        "gpuAvc444Frames": 0,
+        "gpuReadbacks": 0,
+        "gpuYuvMs": 2411.770000040531,
+        "audioPackets": 300
+      },
+      "newAudioUnderruns": 0,
+      "newAudioOverflows": 0,
+      "sourceAudioBefore": "running",
+      "sourceAudioAfter": "running",
+      "errors": []
+    },
+    {
+      "label": "gpu-sync-candidate-clean-2",
+      "elapsed": 13.223990000009536,
+      "drawSubmissionsPerSecond": 9.679378160442324,
+      "sourceFps": 44.598435117052645,
+      "p95GapMs": 135.9150000065565,
+      "maximumGapMs": 175.81999999284744,
+      "delta": {
+        "frames": 129,
+        "avcFrames": 129,
+        "receivedBytes": 3271088,
+        "decodeMs": 3464.3000000566244,
+        "snapshotMs": 6553.910000026226,
+        "ackWaitMs": 3028.724999934435,
+        "gpuAvc420Frames": 129,
+        "gpuAvc444Frames": 0,
+        "gpuReadbacks": 0,
+        "gpuYuvMs": 946.4999999552965,
+        "audioPackets": 301
+      },
+      "newAudioUnderruns": 0,
+      "newAudioOverflows": 0,
+      "sourceAudioBefore": "running",
+      "sourceAudioAfter": "running",
+      "errors": []
+    }
+  ],
+  "limitations": [
+    "Short Linux AVC420 samples do not establish Windows AVC444 performance or elimination of long stalls.",
+    "First clean baseline overlapped the end of an ARM build; the second pair ran after all compilation finished.",
+    "A candidate run with zero audio packets was excluded; source audio and actual PCM are required."
+  ],
+  "routerAcceptance": {
+    "label": "gpu-sync-router",
+    "elapsed": 13.311585000008344,
+    "drawFps": 9.164949177721775,
+    "sourceFps": 44.699826247603255,
+    "p95GapMs": 151.125,
+    "maximumGapMs": 648.5949999988079,
+    "delta": {
+      "frames": 124,
+      "avcFrames": 123,
+      "receivedBytes": 3253873,
+      "decodeMs": 3350.900000050664,
+      "snapshotMs": 6633.739999964833,
+      "ackWaitMs": 2947.769999951124,
+      "gpuAvc420Frames": 123,
+      "gpuAvc444Frames": 0,
+      "gpuReadbacks": 0,
+      "gpuYuvMs": 804.3950001448393,
+      "audioPackets": 302
+    },
+    "errors": [],
+    "newAudioUnderruns": 0,
+    "newAudioOverflows": 0,
+    "keyboardF8": true
+  },
+  "deployedServerSha256": "821c11ef829baf7b4e060c0e0be0ebc72cc9216e707ed8ad4f114d6be4973eb0",
+  "nativeDiagnostic": {
+    "client": "FreeRDP 2.11.7 / Xvfb / AVC420 / fake audio sink",
+    "timestampBasis": "Python monotonic time on line receipt from a line-buffered pipe",
+    "elapsed": 12.000107818996185,
+    "desktop": ":10",
+    "sourceBefore": {
+      "frame": 381,
+      "time": 8917.200000047684,
+      "audio": "running",
+      "width": 3840,
+      "height": 1990,
+      "visibility": "visible",
+      "keys": []
+    },
+    "sourceAfter": {
+      "frame": 952,
+      "time": 21327.200000047684,
+      "audio": "running",
+      "width": 3840,
+      "height": 1990,
+      "visibility": "visible",
+      "keys": []
+    },
+    "sourceFps": 46.011281224818696,
+    "startFrame": {
+      "count": 0,
+      "perSecond": 0.0,
+      "p95GapMs": null,
+      "maximumGapMs": null
+    },
+    "endFrame": {
+      "count": 0,
+      "perSecond": 0.0,
+      "p95GapMs": null,
+      "maximumGapMs": null
+    },
+    "h264Metablock": {
+      "count": 456,
+      "perSecond": 37.99965857624641,
+      "p95GapMs": 70.51529500313336,
+      "maximumGapMs": 120.0259460019879
+    },
+    "counterMeaning": "AVC420 H264_METABLOCK parser events; not EndFrame events, physical refreshes, or visible FPS",
+    "limitations": [
+      "FreeRDP 2.11.7 installed build does not emit StartFrame/EndFrame debug messages",
+      "Interarrival gaps are measured when a Python reader receives line-buffered log output, not at physical presentation",
+      "Native client runs in root Xvfb and connects directly to the NAS bridge; browser/Windows transport and presentation differ",
+      "The first native run used inconsistent FreeRDP wall-clock timestamp fields; only this second monotonic-timestamp run is retained for gap measurements"
+    ]
+  }
+}
