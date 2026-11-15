@@ -1,5 +1,8 @@
+diff --git a/.github/pr-automation/fetch-pr-evidence.sh b/.github/pr-automation/fetch-pr-evidence.sh
+old mode 100755
+new mode 100644
 diff --git a/Cargo.lock b/Cargo.lock
-index bd2558e..a7db36b 100644
+index bd2558ee..a7db36b6 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -3794,10 +3794,13 @@ dependencies = [
@@ -17,7 +20,7 @@ index bd2558e..a7db36b 100644
   "ironrdp-svc",
   "ironrdp-vmconnect",
 diff --git a/crates/ironrdp-cliprdr/src/lib.rs b/crates/ironrdp-cliprdr/src/lib.rs
-index c820a67..ac3e6d2 100644
+index c820a672..ac3e6d27 100644
 --- a/crates/ironrdp-cliprdr/src/lib.rs
 +++ b/crates/ironrdp-cliprdr/src/lib.rs
 @@ -1887,7 +1887,13 @@ impl<R: Role> SvcProcessor for Cliprdr<R> {
@@ -36,7 +39,7 @@ index c820a67..ac3e6d2 100644
                  if !self
                      .capabilities
 diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
-index 672a149..d2f42e8 100644
+index 672a1494..d2f42e87 100644
 --- a/crates/ironrdp-connector/src/connection_finalization.rs
 +++ b/crates/ironrdp-connector/src/connection_finalization.rs
 @@ -267,7 +267,34 @@ impl Sequence for ConnectionFinalizationSequence {
@@ -76,7 +79,7 @@ index 672a149..d2f42e8 100644
  
                  (Written::Nothing, next_state)
 diff --git a/crates/ironrdp-egfx/src/avc444.rs b/crates/ironrdp-egfx/src/avc444.rs
-index d5fc245..2089a41 100644
+index d5fc2459..2089a41e 100644
 --- a/crates/ironrdp-egfx/src/avc444.rs
 +++ b/crates/ironrdp-egfx/src/avc444.rs
 @@ -118,6 +118,10 @@ impl Yuv444Frame {
@@ -91,7 +94,7 @@ index d5fc245..2089a41 100644
      pub fn allocated_bytes(&self) -> usize {
          self.y.len() + self.u.len() + self.v.len()
 diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
-index a4392fa..3ab27de 100644
+index a4392fa4..3ab27de5 100644
 --- a/crates/ironrdp-egfx/src/client.rs
 +++ b/crates/ironrdp-egfx/src/client.rs
 @@ -59,7 +59,7 @@
@@ -409,7 +412,7 @@ index a4392fa..3ab27de 100644
          width: u32,
          height: u32,
 diff --git a/crates/ironrdp-egfx/src/compositor.rs b/crates/ironrdp-egfx/src/compositor.rs
-index 00a0216..721a9c7 100644
+index 00a02164..721a9c70 100644
 --- a/crates/ironrdp-egfx/src/compositor.rs
 +++ b/crates/ironrdp-egfx/src/compositor.rs
 @@ -308,6 +308,10 @@ impl Compositor {
@@ -424,7 +427,7 @@ index 00a0216..721a9c7 100644
          self.small_bitmap_cache = small;
      }
 diff --git a/crates/ironrdp-egfx/src/decode.rs b/crates/ironrdp-egfx/src/decode.rs
-index 1adc2fe..9206640 100644
+index 1adc2fed..92066406 100644
 --- a/crates/ironrdp-egfx/src/decode.rs
 +++ b/crates/ironrdp-egfx/src/decode.rs
 @@ -143,6 +143,9 @@ impl Yuv420Frame {
@@ -447,7 +450,7 @@ index 1adc2fe..9206640 100644
      /// (4-byte BE length prefix), into an RGBA bitmap.
      ///
 diff --git a/crates/ironrdp-rdpsnd/src/client.rs b/crates/ironrdp-rdpsnd/src/client.rs
-index ab62dde..a7000af 100644
+index ab62dde2..a7000af2 100644
 --- a/crates/ironrdp-rdpsnd/src/client.rs
 +++ b/crates/ironrdp-rdpsnd/src/client.rs
 @@ -823,6 +823,11 @@ impl Rdpsnd {
@@ -479,8 +482,11 @@ index ab62dde..a7000af 100644
 +        assert!(!options.intersects(ChannelOptions::PRI_MED | ChannelOptions::PRI_LOW | ChannelOptions::COMPRESS | ChannelOptions::COMPRESS_RDP));
 +    }
 +}
+diff --git a/crates/ironrdp-replay-client/scripts/runtests.ps1 b/crates/ironrdp-replay-client/scripts/runtests.ps1
+old mode 100755
+new mode 100644
 diff --git a/crates/ironrdp-session/src/active_stage.rs b/crates/ironrdp-session/src/active_stage.rs
-index c988921..fc31eac 100644
+index c9889218..fc31eacb 100644
 --- a/crates/ironrdp-session/src/active_stage.rs
 +++ b/crates/ironrdp-session/src/active_stage.rs
 @@ -318,6 +318,32 @@ impl ActiveStage {
@@ -529,7 +535,7 @@ index c988921..fc31eac 100644
          composite_graphics_updates(image, gfx.drain_output().into_iter().map(|u| (u.region, u.data)))?;
      Ok(CompositedGraphics {
 diff --git a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
-index 2d65a12..a281702 100644
+index 2d65a124..a281702f 100644
 --- a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 +++ b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 @@ -246,3 +246,30 @@ fn expire_via_format_list_transitions_state() {
@@ -564,7 +570,7 @@ index 2d65a12..a281702 100644
 +    }
 +}
 diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
-index c964d7c..c2cee18 100644
+index c964d7ce..c2cee187 100644
 --- a/crates/ironrdp-web/Cargo.toml
 +++ b/crates/ironrdp-web/Cargo.toml
 @@ -18,6 +18,7 @@ test = false
@@ -587,7 +593,7 @@ index c964d7c..c2cee18 100644
  ironrdp-futures.path = "../ironrdp-futures"
 diff --git a/crates/ironrdp-web/src/audio.rs b/crates/ironrdp-web/src/audio.rs
 new file mode 100644
-index 0000000..d43d8f5
+index 00000000..d43d8f5c
 --- /dev/null
 +++ b/crates/ironrdp-web/src/audio.rs
 @@ -0,0 +1,156 @@
@@ -748,7 +754,7 @@ index 0000000..d43d8f5
 +    }
 +}
 diff --git a/crates/ironrdp-web/src/canvas.rs b/crates/ironrdp-web/src/canvas.rs
-index 30ba5be..a867c9e 100644
+index 30ba5be7..a867c9e0 100644
 --- a/crates/ironrdp-web/src/canvas.rs
 +++ b/crates/ironrdp-web/src/canvas.rs
 @@ -5,16 +5,17 @@ use anyhow::anyhow;
@@ -812,7 +818,7 @@ index 30ba5be..a867c9e 100644
      {
 diff --git a/crates/ironrdp-web/src/capture.rs b/crates/ironrdp-web/src/capture.rs
 new file mode 100644
-index 0000000..e63e544
+index 00000000..e63e5444
 --- /dev/null
 +++ b/crates/ironrdp-web/src/capture.rs
 @@ -0,0 +1,348 @@
@@ -1166,7 +1172,7 @@ index 0000000..e63e544
 +}
 diff --git a/crates/ironrdp-web/src/gpu.rs b/crates/ironrdp-web/src/gpu.rs
 new file mode 100644
-index 0000000..b2998b9
+index 00000000..b2998b99
 --- /dev/null
 +++ b/crates/ironrdp-web/src/gpu.rs
 @@ -0,0 +1,65 @@
@@ -1235,8 +1241,117 @@ index 0000000..b2998b9
 +        call!("yuvBitmap",id,1u32,stride as u32,rows as u32,y,u,v,rects(regions)).and_then(|v|v.as_bool()).unwrap_or(false)
 +    }
 +}
+diff --git a/crates/ironrdp-web/src/graphics_scheduler.rs b/crates/ironrdp-web/src/graphics_scheduler.rs
+new file mode 100644
+index 00000000..6164e13f
+--- /dev/null
++++ b/crates/ironrdp-web/src/graphics_scheduler.rs
+@@ -0,0 +1,103 @@
++//! Drain buffered network traffic before graphics without a timer per command.
++//! A receive budget forces graphics progress during continuous network traffic.
++use std::future::poll_fn;
++use std::task::Poll;
++
++pub(crate) enum Work<T> {
++    Network(T),
++    Graphics,
++}
++
++#[derive(Default)]
++pub(crate) struct ReceiveBudget {
++    milliseconds: f64,
++    pdus: usize,
++}
++
++impl ReceiveBudget {
++    pub(crate) fn received(&mut self, milliseconds: f64) {
++        self.milliseconds += milliseconds.max(0.0);
++        self.pdus = self.pdus.saturating_add(1);
++    }
++
++    pub(crate) fn graphics_processed(&mut self) {
++        *self = Self::default();
++    }
++
++    pub(crate) fn prioritize_graphics(&self, pending_count: usize, pending_bytes: usize) -> bool {
++        self.milliseconds >= 4.0 || self.pdus >= 32 || pending_count >= 512 || pending_bytes >= 16 * 1024 * 1024
++    }
++}
++
++pub(crate) async fn next_work<T>(
++    network: impl Future<Output = T>,
++    graphics_ready: bool,
++    prioritize_graphics: bool,
++) -> Work<T> {
++    futures_util::pin_mut!(network);
++    poll_fn(move |cx| {
++        if graphics_ready && prioritize_graphics {
++            return Poll::Ready(Work::Graphics);
++        }
++        if let Poll::Ready(frame) = network.as_mut().poll(cx) {
++            return Poll::Ready(Work::Network(frame));
++        }
++        if graphics_ready { Poll::Ready(Work::Graphics) } else { Poll::Pending }
++    }).await
++}
++
++#[cfg(test)]
++mod tests {
++    use futures_util::{FutureExt as _, future};
++    use super::*;
++
++    // oracle: regression 2026-11-15 router RDP frame drops during scrolling and playback.
++    #[test]
++    fn idle_network_does_not_delay_ready_graphics() {
++        // This must complete on the first poll: no browser timer or further
++        // network packet should be necessary to process an idle final EndFrame.
++        assert!(matches!(next_work(future::pending::<()>(), true, false).now_or_never(), Some(Work::Graphics)));
++    }
++
++    // oracle: mutant graphics starving already buffered audio.
++    #[test]
++    fn buffered_network_and_audio_are_received_before_normal_graphics() {
++        assert!(matches!(next_work(future::ready(41), true, false).now_or_never(), Some(Work::Network(41))));
++    }
++
++    // oracle: mutant unbounded receive traffic starving graphics.
++    #[test]
++    fn exhausted_budget_services_graphics_before_ready_network() {
++        let network = future::poll_fn::<(), _>(|_| panic!("network must not be polled ahead of urgent graphics"));
++        assert!(matches!(next_work(network, true, true).now_or_never(), Some(Work::Graphics)));
++    }
++
++    // oracle: mutant a pending decode blocking network reception.
++    #[test]
++    fn pending_decode_does_not_prevent_network_progress() {
++        assert!(matches!(next_work(future::ready(42), false, true).now_or_never(), Some(Work::Network(42))));
++        assert!(next_work(future::pending::<()>(), false, true).now_or_never().is_none());
++    }
++
++    // oracle: mutant clock rounding allowing unlimited receives without graphics progress.
++    #[test]
++    fn coarse_clocks_cannot_starve_graphics_and_processing_resets_budget() {
++        let mut budget = ReceiveBudget::default();
++        for _ in 0..31 { budget.received(0.0); }
++        assert!(!budget.prioritize_graphics(1, 1));
++        budget.received(0.0);
++        assert!(budget.prioritize_graphics(1, 1));
++        budget.graphics_processed();
++        assert!(!budget.prioritize_graphics(1, 1));
++        budget.received(4.0);
++        assert!(budget.prioritize_graphics(1, 1));
++    }
++
++    // oracle: mutant queue growth failing to trigger graphics progress.
++    #[test]
++    fn queue_high_water_marks_force_progress_without_waiting_for_clock_budget() {
++        let budget = ReceiveBudget::default();
++        assert!(budget.prioritize_graphics(512, 1));
++        assert!(budget.prioritize_graphics(1, 16 * 1024 * 1024));
++    }
++}
 diff --git a/crates/ironrdp-web/src/image.rs b/crates/ironrdp-web/src/image.rs
-index 2df63ef..592e3ca 100644
+index 2df63efc..592e3caa 100644
 --- a/crates/ironrdp-web/src/image.rs
 +++ b/crates/ironrdp-web/src/image.rs
 @@ -5,82 +5,111 @@ use ironrdp::session::image::DecodedImage;
@@ -1410,10 +1525,10 @@ index 2df63ef..592e3ca 100644
      }
  }
 diff --git a/crates/ironrdp-web/src/lib.rs b/crates/ironrdp-web/src/lib.rs
-index 664e42e..0f48eb4 100644
+index 664e42e6..157eb3b4 100644
 --- a/crates/ironrdp-web/src/lib.rs
 +++ b/crates/ironrdp-web/src/lib.rs
-@@ -15,13 +15,20 @@ extern crate getrandom2 as _;
+@@ -15,13 +15,21 @@ extern crate getrandom2 as _;
  extern crate getrandom4 as _;
  extern crate time as _;
  
@@ -1422,6 +1537,7 @@ index 664e42e..0f48eb4 100644
  mod canvas;
 +mod webcodecs;
 +mod gpu;
++mod graphics_scheduler;
  mod clipboard;
  mod error;
  mod image;
@@ -1436,7 +1552,7 @@ index 664e42e..0f48eb4 100644
  
 diff --git a/crates/ironrdp-web/src/presentation.rs b/crates/ironrdp-web/src/presentation.rs
 new file mode 100644
-index 0000000..4b7ac68
+index 00000000..4b7ac686
 --- /dev/null
 +++ b/crates/ironrdp-web/src/presentation.rs
 @@ -0,0 +1,152 @@
@@ -1594,7 +1710,7 @@ index 0000000..4b7ac68
 +}
 diff --git a/crates/ironrdp-web/src/render_benchmark.rs b/crates/ironrdp-web/src/render_benchmark.rs
 new file mode 100644
-index 0000000..8e53069
+index 00000000..8e530699
 --- /dev/null
 +++ b/crates/ironrdp-web/src/render_benchmark.rs
 @@ -0,0 +1,140 @@
@@ -1739,7 +1855,7 @@ index 0000000..8e53069
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac63029..5c39999 100644
+index ac630290..95e4aa87 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
 @@ -1,3 +1,5 @@
@@ -1962,7 +2078,7 @@ index ac63029..5c39999 100644
      set_cursor_style_callback: js_sys::Function,
      set_cursor_style_callback_context: JsValue,
  
-@@ -742,7 +828,14 @@ impl iron_remote_desktop::Session for Session {
+@@ -742,7 +828,15 @@ impl iron_remote_desktop::Session for Session {
          let mut requested_resize = None;
  
          // Reused across frames so per-region extraction doesn't allocate on every draw.
@@ -1971,17 +2087,23 @@ index ac63029..5c39999 100644
 +        let mut damage = Damage::default();
 +        let mut animation_frame = None;
 +        let mut processing_slice_ms = 0.0;
-+        let mut receive_work_ms = 0.0;
++        let mut processing_slice_events = 0usize;
++        let mut receive_budget = crate::graphics_scheduler::ReceiveBudget::default();
 +        let mut graphics_prepare = None;
 +        let mut graphics_prepared = false;
  
          // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
          let activation_factory = connection_result.activation_factory;
-@@ -763,17 +856,99 @@ impl iron_remote_desktop::Session for Session {
+@@ -763,17 +857,66 @@ impl iron_remote_desktop::Session for Session {
          let mut cleanup_interval = IntervalStream::new(5_000).fuse();
  
          let disconnect_reason = 'outer: loop {
 -            let outputs = select! {
+-                frame = framed.read_pdu().fuse() => {
+-                    let (action, payload) = frame.context("read frame")?;
+-                    trace!(?action, frame_length = payload.len(), "Frame received");
+-
+-                    active_stage.process(&mut image, action, &payload, framed.last_read_at())?
 +            // Keep connector finalization synchronous: it has no graphics pump.
 +            // Once this loop owns the channel, network receipt can defer decoding.
 +            if let Some(mut gfx) = active_stage.get_dvc_mut::<GraphicsPipelineClient>() {
@@ -1997,25 +2119,8 @@ index ac63029..5c39999 100644
 +            let processing_started;
 +            let (pending_count, pending_bytes) = active_stage.pending_graphics_work();
 +            let pending_graphics = pending_count != 0;
-+            let service_graphics = receive_work_ms >= 4.0 || pending_bytes >= 16 * 1024 * 1024 || pending_count >= 512;
++            let service_graphics = receive_budget.prioritize_graphics(pending_count, pending_bytes);
 +            let outputs = select_biased! {
-+                _ = async {
-+                    if pending_graphics && graphics_prepared { if !service_graphics { gloo_timers::future::sleep(Duration::ZERO).await; } }
-+                    else { futures_util::future::pending::<()>().await; }
-+                }.fuse() => {
-+                    processing_started = js_sys::Date::now();
-+                    receive_work_ms = 0.0;
-+                    let outputs = active_stage.process_pending_graphics(&mut image)?;
-+                    graphics_prepared = false;
-+                    if active_stage.get_dvc::<GraphicsPipelineClient>().is_some_and(|gfx| gfx.processor().externally_composited()) {
-+                        damage.clear(); animation_frame = None;
-+                    }
-+                    if framebuffer_dimensions != (image.width(), image.height()) {
-+                        damage.clear();
-+                        framebuffer_dimensions = (image.width(), image.height());
-+                    }
-+                    outputs
-+                }
 +                decoded = async {
 +                    match graphics_prepare.as_mut() {
 +                        Some(future) => future.await,
@@ -2027,23 +2132,6 @@ index ac63029..5c39999 100644
 +                    graphics_prepare = None;
 +                    graphics_prepared = true;
 +                    Vec::new()
-+                }
-                 frame = framed.read_pdu().fuse() => {
-+                    processing_started = js_sys::Date::now();
-                     let (action, payload) = frame.context("read frame")?;
-                     trace!(?action, frame_length = payload.len(), "Frame received");
- 
--                    active_stage.process(&mut image, action, &payload, framed.last_read_at())?
-+                    let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
-+                    receive_work_ms += js_sys::Date::now() - processing_started;
-+                    if !pending_graphics { graphics_prepared = false; }
-+                    if framebuffer_dimensions != (image.width(), image.height()) {
-+                        // ResetGraphics may resize without DeactivateAll. Discard rectangles
-+                        // from the old extent before the next animation callback reads pixels.
-+                        damage.clear();
-+                        framebuffer_dimensions = (image.width(), image.height());
-+                    }
-+                    outputs
 +                }
 +                _ = wait_for_frame(&mut animation_frame).fuse() => {
 +                    processing_started = js_sys::Date::now();
@@ -2079,7 +2167,7 @@ index ac63029..5c39999 100644
                          RdpInputEvent::Cliprdr(message) => {
                              if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                                  if let Some(svc_messages) = match message {
-@@ -949,6 +1124,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -949,6 +1092,7 @@ impl iron_remote_desktop::Session for Session {
                      }
                  }
                  _ = cleanup_interval.next() => {
@@ -2087,8 +2175,46 @@ index ac63029..5c39999 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -971,6 +1147,36 @@ impl iron_remote_desktop::Session for Session {
+@@ -969,8 +1113,74 @@ impl iron_remote_desktop::Session for Session {
+                         Vec::new()
+                     }
                  }
++                work = crate::graphics_scheduler::next_work(
++                    framed.read_pdu(), pending_graphics && graphics_prepared, service_graphics,
++                ).fuse() => {
++                    match work {
++                        crate::graphics_scheduler::Work::Graphics => {
++                            processing_started = js_sys::Date::now();
++                            receive_budget.graphics_processed();
++                            let outputs = active_stage.process_pending_graphics(&mut image)?;
++                            graphics_prepared = false;
++                            if active_stage.get_dvc::<GraphicsPipelineClient>().is_some_and(|gfx| gfx.processor().externally_composited()) {
++                                damage.clear(); animation_frame = None;
++                            }
++                            if framebuffer_dimensions != (image.width(), image.height()) {
++                                damage.clear();
++                                framebuffer_dimensions = (image.width(), image.height());
++                            }
++                            outputs
++                        }
++                        crate::graphics_scheduler::Work::Network(frame) => {
++                            processing_started = js_sys::Date::now();
++                            let (action, payload) = frame.context("read frame")?;
++                            trace!(?action, frame_length = payload.len(), "Frame received");
++        
++                            let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
++                            receive_budget.received(js_sys::Date::now() - processing_started);
++                            if !pending_graphics { graphics_prepared = false; }
++                            if framebuffer_dimensions != (image.width(), image.height()) {
++                                // ResetGraphics may resize without DeactivateAll. Discard rectangles
++                                // from the old extent before the next animation callback reads pixels.
++                                damage.clear();
++                                framebuffer_dimensions = (image.width(), image.height());
++                            }
++                            outputs
++                        }
++                    }
++                }
              };
  
 +            // RDPSND callbacks run during process(). Forward all decoded PCM
@@ -2124,7 +2250,7 @@ index ac63029..5c39999 100644
              for out in outputs {
                  match out {
                      ActiveStageOutput::ResponseFrame(frame) => {
-@@ -979,10 +1185,10 @@ impl iron_remote_desktop::Session for Session {
+@@ -979,10 +1189,10 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -2139,7 +2265,7 @@ index ac63029..5c39999 100644
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1300,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1304,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -2148,7 +2274,7 @@ index ac63029..5c39999 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1387,16 @@ impl iron_remote_desktop::Session for Session {
+@@ -1179,6 +1391,19 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -2158,14 +2284,17 @@ index ac63029..5c39999 100644
 +            // Buffered PDUs may all be immediately ready. Yield to the browser
 +            // periodically so RAF and input tasks can run even during a burst.
 +            processing_slice_ms += js_sys::Date::now() - processing_started;
-+            if processing_slice_ms >= 8.0 {
++            processing_slice_events += 1;
++            // Bound bursts even when each event is below the browser clock precision.
++            if processing_slice_ms >= 8.0 || processing_slice_events >= 64 {
 +                gloo_timers::future::sleep(Duration::ZERO).await;
 +                processing_slice_ms = 0.0;
++                processing_slice_events = 0;
 +            }
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1278,6 +1496,36 @@ impl iron_remote_desktop::Session for Session {
+@@ -1278,6 +1503,36 @@ impl iron_remote_desktop::Session for Session {
          // to keep the iron-remote-desktop trait surface protocol-agnostic.
          iron_remote_desktop::extension_match! {
              match ext;
@@ -2202,7 +2331,7 @@ index ac63029..5c39999 100644
              |request_file_contents: JsValue| {
                  let obj = into_object(request_file_contents)?;
                  let stream_id = get_u32(&obj, "stream_id")?;
-@@ -1517,6 +1765,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1517,6 +1772,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -2225,7 +2354,7 @@ index ac63029..5c39999 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1788,7 @@ fn build_config(
+@@ -1524,6 +1795,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -2233,7 +2362,7 @@ index ac63029..5c39999 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1840,7 @@ fn build_config(
+@@ -1575,7 +1847,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -2242,7 +2371,7 @@ index ac63029..5c39999 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -1647,6 +1912,11 @@ struct ConnectParams {
+@@ -1647,6 +1919,11 @@ struct ConnectParams {
      vmconnect: Option<String>,
      kdc_proxy_url: Option<String>,
      clipboard_backend: Option<WasmClipboardBackend>,
@@ -2254,7 +2383,7 @@ index ac63029..5c39999 100644
      printer_backend: Option<WasmPrinterBackend>,
      printer_device_id: u32,
      printer_name: String,
-@@ -1699,6 +1969,11 @@ async fn connect(
+@@ -1699,6 +1976,11 @@ async fn connect(
          vmconnect,
          kdc_proxy_url,
          clipboard_backend,
@@ -2266,7 +2395,7 @@ index ac63029..5c39999 100644
          printer_backend,
          printer_device_id,
          printer_name,
-@@ -1712,30 +1987,45 @@ async fn connect(
+@@ -1712,30 +1994,45 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -2321,7 +2450,7 @@ index ac63029..5c39999 100644
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2335,41 @@ mod tests {
+@@ -2045,10 +2342,41 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -2363,7 +2492,7 @@ index ac63029..5c39999 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2939,22 @@ mod tests {
+@@ -2618,3 +2946,22 @@ mod tests {
          }
      }
  }
@@ -2388,10 +2517,10 @@ index ac63029..5c39999 100644
 +}
 diff --git a/crates/ironrdp-web/src/webcodecs.rs b/crates/ironrdp-web/src/webcodecs.rs
 new file mode 100644
-index 0000000..37ec6d9
+index 00000000..b60af652
 --- /dev/null
 +++ b/crates/ironrdp-web/src/webcodecs.rs
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,91 @@
 +//! Async preparation owns decoding; synchronous engine calls consume prepared pictures only.
 +use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder, Yuv420Frame};
 +use wasm_bindgen::{JsCast, JsValue};
@@ -2405,6 +2534,14 @@ index 0000000..37ec6d9
 +    js_sys::Reflect::get(&global, &name.into())?
 +        .dyn_into::<js_sys::Function>()?
 +        .apply(&global, args)
++}
++// The bridge already returns Uint8Array views. Constructing a new Uint8Array
++// from a typed array clones it in JS before to_vec copies it into WASM again.
++// Type-check the existing view and keep only the necessary owned WASM copy.
++fn copy_plane(value: JsValue) -> DecoderResult<Vec<u8>> {
++    value.dyn_into::<js_sys::Uint8Array>()
++        .map(|plane| plane.to_vec())
++        .map_err(|_| DecoderError::msg("invalid WebCodecs pixel plane"))
 +}
 +pub(crate) fn decoder() -> Option<Box<dyn H264Decoder>> {
 +    #[cfg(target_arch = "wasm32")]
@@ -2427,7 +2564,7 @@ index 0000000..37ec6d9
 +        let a = js_sys::Array::from(&result);
 +        let width = a.get(0).as_f64().unwrap_or_default() as u32;
 +        let height = a.get(1).as_f64().unwrap_or_default() as u32;
-+        let pixels = js_sys::Uint8Array::new(&a.get(2)).to_vec();
++        let pixels = copy_plane(a.get(2))?;
 +        if width == 0 || height == 0 || u64::from(width) * u64::from(height) * 4 != pixels.len() as u64 {
 +            return Err(DecoderError::msg("Invalid WebCodecs frame extent"));
 +        }
@@ -2449,9 +2586,9 @@ index 0000000..37ec6d9
 +        }
 +        let (width, height) = (width as u16, height as u16);
 +        Yuv420Frame::new(width, height,
-+            js_sys::Uint8Array::new(&a.get(2)).to_vec(), usize::from(width),
-+            js_sys::Uint8Array::new(&a.get(3)).to_vec(),
-+            js_sys::Uint8Array::new(&a.get(4)).to_vec(), usize::from(width.div_ceil(2)))
++            copy_plane(a.get(2))?, usize::from(width),
++            copy_plane(a.get(3))?,
++            copy_plane(a.get(4))?, usize::from(width.div_ceil(2)))
 +    }
 +    fn reset(&mut self) {
 +        let _ = invoke("unitermResetAvc", &js_sys::Array::new());

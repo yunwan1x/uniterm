@@ -34,13 +34,18 @@ async function snapshot() {
   }
   if (gpu?.active && !gpuFrameReady) return
   const source = gpu?.active ? gpu.canvas : canvas
-  const region = damage.take(source.width, source.height)
+  let region = damage.take(source.width, source.height)
   if (!region) { dirty = false; return }
   const width = source.width, height = source.height
   dirty = false; snapshotting = true
   const started = performance.now()
   try {
-    const bitmap = await createImageBitmap(source, region.x, region.y, region.width, region.height)
+    // GPU surfaces retain the desktop; frame() redraws every mapped surface.
+    // Transferring this completed output can discard its backing store safely.
+    // The incremental Canvas2D framebuffer must keep its pixels between updates.
+    const transferOutput = gpu?.active && typeof source.transferToImageBitmap === 'function'
+    if (transferOutput) region = { x: 0, y: 0, width, height }
+    const bitmap = transferOutput ? source.transferToImageBitmap() : await createImageBitmap(source, region.x, region.y, region.width, region.height)
     const elapsed = performance.now() - started
     stats.snapshotMs += elapsed; stats.maxSnapshotMs = Math.max(stats.maxSnapshotMs, elapsed)
     stats.snapshotPixels += region.width * region.height; stats.fullSnapshotPixels += width * height
