@@ -49,17 +49,17 @@ class WorkerSession {
   private dead = false
   private renderer: DesktopRenderer
   constructor(canvas: HTMLCanvasElement, private callbacks: Record<string, Function>, canvas2d: boolean) {
-    try { this.renderer = new DesktopRenderer(canvas, () => this.post({ method: 'frameAck' }), () => this.fail(new Error('RDP WebGL context lost')), canvas2d ? 'canvas2d' : 'auto') }
+    try { this.renderer = new DesktopRenderer(canvas, () => this.post({ method: 'frameAck', hidden: canvas.ownerDocument.hidden }), () => this.fail(new Error('RDP WebGL context lost')), canvas2d ? 'canvas2d' : 'auto') }
     catch (e) { this.worker.terminate(); throw e }
     this.worker.onmessage = ({ data }) => {
-      if (data.type === 'frame') { this.renderer.frame(data.bitmap); return }
+      if (data.type === 'frame') { this.renderer.frame(data.bitmap, data.region); return }
       if (data.type === 'event') {
         if (data.name === 'workerError') { this.fail(new Error(data.args[0])); return }
         if (data.name === 'clipboard') { const c = new ClipboardData(); c.entries = data.args[0]; data.args = [c] }
         this.callbacks[data.name]?.(...data.args); return
       }
       if (data.type === 'stats') {
-        canvas.dataset.rdpStats = JSON.stringify({ ...data.stats, renderer: this.renderer.mode })
+        canvas.dataset.rdpStats = JSON.stringify({ ...data.stats, renderer: this.renderer.mode, presentation: this.renderer.stats })
         return
       }
       const p = this.pending.get(data.id); if (!p) return

@@ -1,12 +1,14 @@
 /// <reference lib="webworker" />
+import { DesktopDamage } from './damage'
 import * as mod from '@ys-ll/ironrdp-wasm'
 const scope = self as unknown as DedicatedWorkerGlobalScope
 let session: any, canvas: OffscreenCanvas
-let sentAt = 0, nextSnapshot = 0, snapshotTimer: ReturnType<typeof setTimeout> | undefined
-let interval = 16
+let hiddenPresentation = false, nextBackgroundSnapshot = 0
+let sentAt = 0, snapshotTimer: ReturnType<typeof setTimeout> | undefined
+const damage = new DesktopDamage()
 let dirty = false, inFlight = false, snapshotting = false, stopped = false
 let codecWorker: Worker | undefined
-const stats = { worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
+const stats = { worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, decodeMs: 0, snapshotMs: 0, maxSnapshotMs: 0, snapshotPixels: 0, fullSnapshotPixels: 0, ackWaitMs: 0, maxAckWaitMs: 0, canvasWriteMs: 0, maxCanvasWriteMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
 const NativeWS = WebSocket
 ;(globalThis as any).WebSocket = class extends NativeWS {
   constructor(url: string | URL, protocols?: string | string[]) {
@@ -22,14 +24,24 @@ const send = (value: any, transfer: Transferable[] = []) => scope.postMessage(va
 const event = (name: string, ...args: any[]) => send({ type: 'event', name, args })
 async function snapshot() {
   if (!dirty || inFlight || snapshotting || stopped) return
-  const delay = nextSnapshot - performance.now()
-  if (delay > 0) { if (!snapshotTimer) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void snapshot() }, delay); return }
+  const delay = hiddenPresentation ? nextBackgroundSnapshot - performance.now() : 0
+  if (delay > 0) {
+    if (!snapshotTimer) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void snapshot() }, delay)
+    return
+  }
+  const region = damage.take(canvas.width, canvas.height)
+  if (!region) { dirty = false; return }
+  const width = canvas.width, height = canvas.height
   dirty = false; snapshotting = true
+  const started = performance.now()
   try {
-    const bitmap = await createImageBitmap(canvas)
+    const bitmap = await createImageBitmap(canvas, region.x, region.y, region.width, region.height)
+    const elapsed = performance.now() - started
+    stats.snapshotMs += elapsed; stats.maxSnapshotMs = Math.max(stats.maxSnapshotMs, elapsed)
+    stats.snapshotPixels += region.width * region.height; stats.fullSnapshotPixels += width * height
     if (stopped) { bitmap.close(); return }
-    inFlight = true; sentAt = performance.now(); nextSnapshot = sentAt + interval; stats.frames++
-    send({ type: 'frame', bitmap }, [bitmap])
+    inFlight = true; sentAt = performance.now(); nextBackgroundSnapshot = sentAt + 100; stats.frames++
+    send({ type: 'frame', bitmap, region: { ...region, desktopWidth: width, desktopHeight: height } }, [bitmap])
   } catch { stopped = true; session?.shutdown(); event('workerError', 'RDP worker snapshot failed') } finally { snapshotting = false }
 }
 async function setupAvc() {
@@ -63,7 +75,8 @@ async function setupAvc() {
       throw new Error('AVC decoder failed')
     }
     const w = Atomics.load(control, 1), h = Atomics.load(control, 2)
-    stats.maxDecodeMs = Math.max(stats.maxDecodeMs, performance.now() - start); stats.avcFrames++
+    const elapsed = performance.now() - start
+    stats.decodeMs += elapsed; stats.maxDecodeMs = Math.max(stats.maxDecodeMs, elapsed); stats.avcFrames++
     if(yuv) {
       const ySize=w*h,cSize=Math.ceil(w/2)*Math.ceil(h/2)
       return [w,h,pixels.subarray(0,ySize),pixels.subarray(ySize,ySize+cSize),pixels.subarray(ySize+cSize,ySize+2*cSize)]
@@ -92,8 +105,13 @@ scope.onmessage = async ({ data: m }) => {
         const ctx = canvas.getContext('2d', { alpha: false })!
         const put = ctx.putImageData.bind(ctx)
         ctx.putImageData = ((...args: Parameters<typeof ctx.putImageData>) => {
-          put(...args); if (dirty) stats.coalesced++; dirty = true
-          setTimeout(() => void snapshot(), 0)
+          const started = performance.now()
+          put(...args)
+          const elapsed = performance.now() - started
+          stats.canvasWriteMs += elapsed; stats.maxCanvasWriteMs = Math.max(stats.maxCanvasWriteMs, elapsed)
+          damage.add(canvas.width, canvas.height, ...args)
+          if (dirty) stats.coalesced++; dirty = true
+          if (!snapshotTimer && !inFlight && !snapshotting) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void snapshot() }, 0)
         }) as typeof ctx.putImageData
         const builder = new mod.SessionBuilder().desktopSize(new mod.DesktopSize(options.size.width, options.size.height)).renderCanvas(canvas as any)
         for (const [name, value] of Object.entries(options)) if (name !== 'size') (builder as any)[name](value)
@@ -127,7 +145,7 @@ scope.onmessage = async ({ data: m }) => {
           else builder.extension(new mod.Extension(name, (...args: any[]) => event(name, ...args)))
         }
         try { session = await builder.connect() } finally { builder.free(); options.password = ''; options.authToken = '' }
-        setInterval(() => send({ type: 'stats', stats: { ...stats, pendingFrames: Number(inFlight), dirty, interval } }), 1000)
+        setInterval(() => send({ type: 'stats', stats: { ...stats, pendingFrames: Number(inFlight), dirty } }), 1000)
         break
       }
       case 'run': { const term = await session.run(); result = term.reason(); term.free(); break }
@@ -146,7 +164,15 @@ scope.onmessage = async ({ data: m }) => {
         finally { c.free() }
         break
       }
-      case 'frameAck': interval = Math.max(16, Math.min(100, interval * 0.8 + (performance.now() - sentAt) * 0.2)); inFlight = false; void snapshot(); break
+      case 'frameAck': {
+        if (!inFlight) break
+        hiddenPresentation = m.hidden === true
+        const elapsed = performance.now() - sentAt
+        stats.ackWaitMs += elapsed; stats.maxAckWaitMs = Math.max(stats.maxAckWaitMs, elapsed)
+        // The document RAF already paces presentation. Adding an ACK-derived
+        // delay here counts protocol-worker congestion as display time twice.
+        inFlight = false; void snapshot(); break
+      }
     }
     if (m.id) send({ id: m.id, result })
   } catch (e) {

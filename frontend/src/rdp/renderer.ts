@@ -1,4 +1,5 @@
-/** One complete worker snapshot per display frame. No dependent RDP deltas are discarded. */
+export interface FrameRegion { x: number; y: number; width: number; height: number; desktopWidth: number; desktopHeight: number }
+/** Bounded worker damage snapshots; protocol deltas are always decoded in order. */
 export class DesktopRenderer {
   private gl: WebGL2RenderingContext | null = null
   private ctx: CanvasRenderingContext2D | null = null
@@ -6,7 +7,8 @@ export class DesktopRenderer {
   private program: WebGLProgram | null = null
   private textureWidth = 0
   private textureHeight = 0
-  private pending: ImageBitmap | null = null
+  private pending: { bitmap: ImageBitmap; region?: FrameRegion; receivedAt: number } | null = null
+  readonly stats = { frames: 0, drawMs: 0, maxDrawMs: 0, rafWaitMs: 0, maxRafWaitMs: 0 }
   private raf = 0
   private stopped = false
   private owner: Window
@@ -55,7 +57,7 @@ export class DesktopRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
   }
-  frame(bitmap: ImageBitmap) {
+  frame(bitmap: ImageBitmap, region?: FrameRegion) {
     if (this.stopped) { bitmap.close(); return }
     if (this.doc !== this.canvas.ownerDocument) {
       this.owner.cancelAnimationFrame(this.raf); this.raf = 0
@@ -64,30 +66,44 @@ export class DesktopRenderer {
       this.owner = this.doc.defaultView ?? window
       this.doc.addEventListener('visibilitychange', this.visibility)
     }
-    this.pending?.close(); this.pending = bitmap
+    // Complete frames supersede each other, but a damage patch must never
+    // overwrite a queued patch. Normally the worker has only one in flight.
+    if (this.pending?.region) this.flush()
+    else this.pending?.bitmap.close()
+    this.pending = { bitmap, region, receivedAt: performance.now() }
     if (this.doc.hidden) this.flush()
     else this.schedule()
   }
   private schedule() { if (this.pending && !this.raf) this.raf = this.owner.requestAnimationFrame(() => { this.raf = 0; this.flush() }) }
   private flush() {
-    const bitmap = this.pending; if (!bitmap) return
+    const pending = this.pending; if (!pending) return
     this.pending = null
+    const { bitmap, region, receivedAt } = pending
+    const width = region?.desktopWidth ?? bitmap.width, height = region?.desktopHeight ?? bitmap.height
+    const x = region?.x ?? 0, y = region?.y ?? 0
+    const started = performance.now(), wait = started - receivedAt
+    this.stats.rafWaitMs += wait; this.stats.maxRafWaitMs = Math.max(this.stats.maxRafWaitMs, wait)
     try {
-      if (this.canvas.width !== bitmap.width) this.canvas.width = bitmap.width
-      if (this.canvas.height !== bitmap.height) this.canvas.height = bitmap.height
+      if (this.canvas.width !== width) this.canvas.width = width
+      if (this.canvas.height !== height) this.canvas.height = height
       if (this.gl) {
         const gl = this.gl
-        gl.viewport(0, 0, bitmap.width, bitmap.height)
-        if (this.textureWidth !== bitmap.width || this.textureHeight !== bitmap.height) {
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
-          this.textureWidth = bitmap.width; this.textureHeight = bitmap.height
-        } else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
+        gl.viewport(0, 0, width, height)
+        if (this.textureWidth !== width || this.textureHeight !== height) {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+          this.textureWidth = width; this.textureHeight = height
+        }
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
         gl.drawArrays(gl.TRIANGLES, 0, 3)
-      } else this.ctx!.drawImage(bitmap, 0, 0)
-    } finally { bitmap.close(); this.ack() }
+      } else this.ctx!.drawImage(bitmap, x, y)
+    } finally {
+      const elapsed = performance.now() - started
+      this.stats.frames++; this.stats.drawMs += elapsed; this.stats.maxDrawMs = Math.max(this.stats.maxDrawMs, elapsed)
+      bitmap.close(); this.ack()
+    }
   }
   dispose() {
-    this.stopped = true; this.owner.cancelAnimationFrame(this.raf); this.pending?.close(); this.pending = null
+    this.stopped = true; this.owner.cancelAnimationFrame(this.raf); this.pending?.bitmap.close(); this.pending = null
     this.canvas.removeEventListener('webglcontextlost', this.contextLost)
     this.doc.removeEventListener('visibilitychange', this.visibility)
     if (this.gl) { this.gl.deleteTexture(this.texture); this.gl.deleteProgram(this.program) }

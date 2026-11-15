@@ -18,7 +18,25 @@ window.renderTest = async (mode) => {
  const size=[canvas.width,canvas.height];r.dispose();const dead=await createImageBitmap(source);r.frame(dead);
  return {mode:r.mode,samples,acks,size,closedAfterDispose:dead.width===0,timings};
 };
-window.avcTest = async(bytes) => {
+window.damageTest = async (mode) => {
+ const canvas=document.createElement('canvas');document.body.append(canvas);
+ let done, samples;
+ const r=new DesktopRenderer(canvas,()=>{done?.();done=undefined},()=>{throw Error('context lost')},mode);
+ const gl=canvas.getContext('webgl2');
+ const points=[[5,5],[33,43],[86,66],[310,230]];
+ if(gl){const draw=gl.drawArrays.bind(gl);gl.drawArrays=(...args)=>{draw(...args);samples=points.map(([x,y])=>{const b=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,b);return [...b]})}}
+ const source=new OffscreenCanvas(320,240), ctx=source.getContext('2d');
+ ctx.fillStyle='#123456';ctx.fillRect(0,0,320,240);
+ const send=async(x,y,w,h)=>{const bitmap=await createImageBitmap(source,x,y,w,h);await new Promise(resolve=>{done=resolve;r.frame(bitmap,{x,y,width:w,height:h,desktopWidth:source.width,desktopHeight:source.height})})};
+ await send(0,0,320,240);
+ ctx.fillStyle='#ff0000';ctx.fillRect(30,40,10,10);await send(30,40,10,10);
+ ctx.fillStyle='#00ff00';ctx.fillRect(80,60,10,10);await send(80,60,10,10);
+ if(!gl)samples=points.map(([x,y])=>[...canvas.getContext('2d').getImageData(x,y,1,1).data]);
+ const result={mode:r.mode,samples,size:[canvas.width,canvas.height],frames:r.stats.frames};
+ source.width=160;source.height=120;ctx.fillStyle='#abcdef';ctx.fillRect(0,0,160,120);await send(0,0,160,120);
+ result.resized=[canvas.width,canvas.height];r.dispose();canvas.remove();return result;
+};
+window.avcTest = async(bytes, yuv=false) => {
  const worker=new Worker(new URL('/src/rdp/avc.worker.ts',location.href),{type:'module'});
  const control=new Int32Array(new SharedArrayBuffer(16));const pixels=new Uint8Array(new SharedArrayBuffer(64*64*4));
  const ready=await new Promise(resolve=>{worker.onmessage=e=>resolve(e.data.ready);worker.postMessage({method:'init',control:control.buffer,pixels:pixels.buffer})});
@@ -26,7 +44,7 @@ window.avcTest = async(bytes) => {
  const inputs=[...bytes.map(data=>({surface:0,data})),...bytes.map(data=>({surface:1,data})),{reset:true,surface:0,data:bytes[0]},{surface:2,data:[1,2,3]}];
  for(let i=0;i<inputs.length;i++){
  if(inputs[i].reset)worker.postMessage({method:'reset'});
- Atomics.store(control,0,0);worker.postMessage({method:'decode',surface:inputs[i].surface,data:new Uint8Array(inputs[i].data),timestamp:i+1});
+ Atomics.store(control,0,0);worker.postMessage({method:'decode',surface:inputs[i].surface,data:new Uint8Array(inputs[i].data),yuv,timestamp:i+1});
  const start=performance.now();while(!Atomics.load(control,0)&&performance.now()-start<2500)await new Promise(r=>setTimeout(r,2));
  results.push({status:Atomics.load(control,0),width:control[1],height:control[2],nonzero:pixels.some(v=>v>0)});
  }

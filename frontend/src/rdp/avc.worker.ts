@@ -26,7 +26,8 @@ async function probeYuv(): Promise<boolean> {
     const complete=(ok:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);try{decoder.close()}catch{};resolve(ok)}
     const decoder=new VideoDecoder({output:async frame=>{
       try {
-        const width=frame.codedWidth,height=frame.codedHeight,rect={x:0,y:0,width,height}
+        const rect=frame.visibleRect ?? {x:0,y:0,width:frame.codedWidth,height:frame.codedHeight}
+        const width=rect.width,height=rect.height
         const source=new Uint8Array(frame.allocationSize({rect})),out=new Uint8Array(width*height+2*Math.ceil(width/2)*Math.ceil(height/2))
         const layout=await frame.copyTo(source,{rect})
         packYuv420(source,frame.format,layout,width,height,out)
@@ -64,10 +65,12 @@ scope.onmessage = async ({ data: m }) => {
         output: async frame => {
           try {
             if (active?.done || frame.timestamp !== active?.timestamp) throw new Error('Delayed AVC picture')
-            const width = frame.codedWidth, height = frame.codedHeight
+            // Decoders can expose padded coded rows outside the visible picture.
+            // Return the visible H.264 picture, not codec allocation dimensions.
+            const rect = frame.visibleRect ?? { x: 0, y: 0, width: frame.codedWidth, height: frame.codedHeight }
+            const width = rect.width, height = rect.height
             const size = width * height * 4
             if (size > pixels.length || width < 1 || height < 1) throw new Error('AVC picture too large')
-            const rect = { x: 0, y: 0, width, height }
             if (active.yuv) {
               const required=frame.allocationSize({rect})
               if(required>pixels.length)throw new Error('YUV allocation too large')
