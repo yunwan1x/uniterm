@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.12.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.15.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -55,7 +55,7 @@ credential-handling paths are unchanged.
 ## Rebuild production package
 
 Prerequisites: Git, Node 22+, npm, Rust with wasm32-unknown-unknown target,
-`wasm-bindgen-cli` **0.2.129**. This build was validated with rustc 1.99.0.
+`wasm-bindgen-cli` **0.2.129**. The uniterm.15 build was validated with rustc 1.99.1.
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.129 --locked
@@ -250,3 +250,14 @@ WebCodecs YUV extraction still copies data; this is not a zero-copy pipeline.
 See `../../docs/rdp-async-gpu-surfaces-20261115.md` for architecture, tests,
 matched-codec live results and limitations. GPU pixel harnesses print results
 without retaining screenshots or per-round acceptance snapshots.
+
+## Bounded graphics polling and transferred GPU snapshots (uniterm.15)
+
+Ready graphics commands no longer wait for a separate zero-delay timer after
+buffered network traffic has drained. Receive/time/count budgets preserve audio,
+input and graphics progress. WebCodecs plane extraction avoids an intermediate
+typed-array clone; completed GPU output uses full-frame bitmap transfer while
+Canvas2D keeps cropped incremental snapshots.
+
+See `../../docs/rdp-pacing-20261115.md` for regression coverage, live measurements,
+remaining frame-rate limits and the ARM64 artifact.
