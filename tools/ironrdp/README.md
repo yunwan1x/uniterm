@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.17.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.18.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -55,7 +55,7 @@ credential-handling paths are unchanged.
 ## Rebuild production package
 
 Prerequisites: Git, Node 22+, npm, Rust with wasm32-unknown-unknown target,
-`wasm-bindgen-cli` **0.2.129**. The uniterm.17 build was validated with rustc 1.99.1.
+`wasm-bindgen-cli` **0.2.129**. The uniterm.18 build was validated with rustc 1.99.1.
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.129 --locked
@@ -71,7 +71,34 @@ point to a clean checkout; it must not contain the patch already. `RUST_TOOLCHAI
 can pin an installed Rust toolchain. The benchmark feature is excluded from the
 production tarball.
 
+The same portable Rust source is built twice: ordinary release code and release
+code with `-C target-feature=+simd128`. The package entry point validates a small
+SIMD module before no-argument initialization and fetches only the selected
+engine. Unsupported engines keep the scalar path. Explicit initializer inputs
+and `initSync` retain their original behavior; download or initialization errors
+are propagated rather than retried as an unrelated capability failure.
+
+Build tooling installs pinned WABT and Acorn development dependencies. Packaging
+checks the complete scalar binary with SIMD disabled, rejects relaxed SIMD,
+and compares generated bindings, declarations, snippets and resolved import/export
+signatures before sharing one JavaScript binding file. Only generated
+`shim_idx` values inside actual JavaScript comments may differ. The runtime
+package adds no dependencies. `CARGO_TARGET_DIR` and `IRONRDP_SIMD_TARGET_DIR`
+can select separate compilation caches. Use `RUSTFLAGS`, not
+`CARGO_ENCODED_RUSTFLAGS`; the script preserves the JavaScript randomness backend
+when adding the SIMD compiler flag.
+
+The package wrapper applies to both the RDP Worker and main-thread fallback.
+The graphics protocol, color formulas and presentation queue are unchanged.
+
 ## Regression tests and browser replay
+
+The package tooling has independent loader, ABI guard and packager regressions:
+
+```sh
+npm --prefix tools/ironrdp ci --include=dev --ignore-scripts
+npm --prefix tools/ironrdp test
+```
 
 In the patched IronRDP checkout:
 

@@ -1,0 +1,13 @@
+{
+  "name": "uniterm-ironrdp-dual-package-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "acorn": "8.15.0",
+    "wabt": "1.0.37"
+  }
+}
