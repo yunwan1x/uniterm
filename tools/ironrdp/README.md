@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.16.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.17.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -55,7 +55,7 @@ credential-handling paths are unchanged.
 ## Rebuild production package
 
 Prerequisites: Git, Node 22+, npm, Rust with wasm32-unknown-unknown target,
-`wasm-bindgen-cli` **0.2.129**. The uniterm.16 build was validated with rustc 1.99.1.
+`wasm-bindgen-cli` **0.2.129**. The uniterm.17 build was validated with rustc 1.99.1.
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.129 --locked
@@ -281,3 +281,20 @@ In the same NAS Chromium Worker, direct conversion benchmarks measured 1080p
 at 8.65 to 6.55 ms and 4K at 35.20 to 26.60 ms (median batch-normalized times).
 These isolate color conversion and exclude network, decoding, composition and
 display scheduling; they do not establish an end-to-end frame rate.
+
+## Lazy GPU bridge arguments (uniterm.17)
+
+The Web graphics handler now resolves the JavaScript GPU command bridge before
+constructing its command arguments. Canvas2D sessions without that bridge skip
+an unused RGBA typed-array copy and rectangle/point allocations. A registered
+bridge still receives reset/create/map commands before it becomes active; this
+is a presence check, not an active-renderer gate. Lookup and callback failures
+retain their previous optional-result semantics, and bridge removal/replacement
+takes effect on the next command.
+
+The real-WASM regression fixture in `gpu-bridge-regression/` sends uncompressed
+EGFX PDUs through the public channel processor and checks actual typed-array
+copies, explicit pixel bytes, rectangles, command order, inactive bootstrap,
+per-call lookup and exception behavior. The old implementation fails four of
+eight checks; this revision passes all eight. The fixture does not validate a
+physical GPU driver. Live performance measurements are documented separately.
