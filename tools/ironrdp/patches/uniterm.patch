@@ -1336,7 +1336,7 @@ index 00000000..e63e5444
 +}
 diff --git a/crates/ironrdp-web/src/gpu.rs b/crates/ironrdp-web/src/gpu.rs
 new file mode 100644
-index 00000000..b2998b99
+index 00000000..c95872e4
 --- /dev/null
 +++ b/crates/ironrdp-web/src/gpu.rs
 @@ -0,0 +1,65 @@
@@ -1350,16 +1350,16 @@ index 00000000..b2998b99
 +use wasm_bindgen::{JsCast, JsValue};
 +
 +pub(crate) struct WebGraphicsHandler;
-+fn command(name: &str, args: &js_sys::Array) -> Option<JsValue> {
++fn command(name: &str, args: impl FnOnce() -> js_sys::Array) -> Option<JsValue> {
 +    let global=js_sys::global();
 +    let function=js_sys::Reflect::get(&global,&"unitermGpuCommand".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
-+    let all=js_sys::Array::new();all.push(&name.into());for arg in args.iter(){all.push(&arg);}
++    let all=js_sys::Array::new();all.push(&name.into());for arg in args().iter(){all.push(&arg);}
 +    function.apply(&global,&all).ok()
 +}
 +macro_rules! call {
 +    ($name:expr $(,$value:expr)* $(,)?) => {{
 +        #[cfg(target_arch="wasm32")]
-+        { let args=js_sys::Array::new();$(args.push(&JsValue::from($value));)* command($name,&args) }
++        { command($name, || { let args=js_sys::Array::new();$(args.push(&JsValue::from($value));)* args }) }
 +        #[cfg(not(target_arch="wasm32"))]
 +        { None::<JsValue> }
 +    }};
