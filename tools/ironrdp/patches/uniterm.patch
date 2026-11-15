@@ -79,7 +79,7 @@ index 672a1494..d2f42e87 100644
  
                  (Written::Nothing, next_state)
 diff --git a/crates/ironrdp-egfx/src/avc444.rs b/crates/ironrdp-egfx/src/avc444.rs
-index d5fc2459..2089a41e 100644
+index d5fc2459..7ca3faea 100644
 --- a/crates/ironrdp-egfx/src/avc444.rs
 +++ b/crates/ironrdp-egfx/src/avc444.rs
 @@ -118,6 +118,10 @@ impl Yuv444Frame {
@@ -93,6 +93,77 @@ index d5fc2459..2089a41e 100644
      /// Bytes this picture holds.
      pub fn allocated_bytes(&self) -> usize {
          self.y.len() + self.u.len() + self.v.len()
+@@ -196,20 +200,58 @@ impl Yuv444Frame {
+         if !(left < right && top < bottom) {
+             return Vec::new();
+         }
+-        let mut rgba = Vec::with_capacity((right - left) * (bottom - top) * 4);
+-        for row in top..bottom {
++        let row_bytes = (right - left) * 4;
++        let mut rgba = vec![0; row_bytes * (bottom - top)];
++        for (row, mut output) in (top..bottom).zip(rgba.chunks_exact_mut(row_bytes)) {
+             let line = row * self.stride;
+-            for col in left..right {
+-                let at = line + col;
+-                let (mut u, mut v) = (self.u[at], self.v[at]);
+-                if row % 2 == 0 && col % 2 == 0 {
+-                    // The block's other three samples are inside the padded planes: `stride` and
+-                    // `rows` are even, and so are `row` and `col`.
+-                    let below = at + self.stride;
+-                    u = reverse_filter(u, self.u[at + 1], self.u[below], self.u[below + 1]);
+-                    v = reverse_filter(v, self.v[at + 1], self.v[below], self.v[below + 1]);
++            if row % 2 == 1 {
++                let start = line + left;
++                let end = line + right;
++                for (((pixel, &y), &u), &v) in output
++                    .chunks_exact_mut(4)
++                    .zip(&self.y[start..end])
++                    .zip(&self.u[start..end])
++                    .zip(&self.v[start..end])
++                {
++                    pixel.copy_from_slice(&yuv_to_rgba(y, u, v));
+                 }
+-                rgba.extend_from_slice(&yuv_to_rgba(self.y[at], u, v));
++                continue;
++            }
++
++            // An odd leading column has no reverse filter. The remaining pairs
++            // then start on absolute even columns, regardless of the crop origin.
++            let paired_left = left.next_multiple_of(2);
++            if left % 2 == 1 {
++                let at = line + left;
++                output[..4].copy_from_slice(&yuv_to_rgba(self.y[at], self.u[at], self.v[at]));
++                output = &mut output[4..];
++            }
++            let paired_right = right & !1;
++            let (pairs, tail) = output.split_at_mut((paired_right - paired_left) * 4);
++            let start = line + paired_left;
++            let end = line + paired_right;
++            let pixels = pairs
++                .chunks_exact_mut(8)
++                .zip(self.y[start..end].chunks_exact(2))
++                .zip(self.u[start..end].chunks_exact(2))
++                .zip(self.v[start..end].chunks_exact(2))
++                .zip(self.u[start + self.stride..end + self.stride].chunks_exact(2))
++                .zip(self.v[start + self.stride..end + self.stride].chunks_exact(2));
++            for (((((pixel, y), u), v), u_below), v_below) in pixels {
++                let even_u = reverse_filter(u[0], u[1], u_below[0], u_below[1]);
++                let even_v = reverse_filter(v[0], v[1], v_below[0], v_below[1]);
++                pixel[..4].copy_from_slice(&yuv_to_rgba(y[0], even_u, even_v));
++                pixel[4..].copy_from_slice(&yuv_to_rgba(y[1], u[1], v[1]));
++            }
++
++            // An unpaired final even column still needs its neighbour outside
++            // the crop (and possibly the visible picture), in padded storage.
++            if !tail.is_empty() {
++                let at = line + paired_right;
++                let below = at + self.stride;
++                let u = reverse_filter(self.u[at], self.u[at + 1], self.u[below], self.u[below + 1]);
++                let v = reverse_filter(self.v[at], self.v[at + 1], self.v[below], self.v[below + 1]);
++                tail.copy_from_slice(&yuv_to_rgba(self.y[at], u, v));
+             }
+         }
+         rgba
 diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
 index a4392fa4..3ab27de5 100644
 --- a/crates/ironrdp-egfx/src/client.rs
@@ -568,6 +639,99 @@ index 2d65a124..a281702f 100644
 +            assert!(messages.is_empty(), "request must reach the backend, not fail for lock zero");
 +        }
 +    }
++}
+diff --git a/crates/ironrdp-testsuite-core/tests/egfx/avc444.rs b/crates/ironrdp-testsuite-core/tests/egfx/avc444.rs
+index 9b96c4ef..a333daec 100644
+--- a/crates/ironrdp-testsuite-core/tests/egfx/avc444.rs
++++ b/crates/ironrdp-testsuite-core/tests/egfx/avc444.rs
+@@ -754,3 +754,88 @@ fn a_decoder_without_yuv_planes_advertises_no_avc444() {
+         ]
+     );
+ }
++
++/// A cropped 3x3 picture whose final chroma block extends into the coded padding.
++/// The auxiliary view is packed from MS-RDPEGFX 3.3.8.3.2 B4 to B7, without using `split`.
++fn fixed_chroma_picture() -> Yuv444Frame {
++    const U: [[u8; 4]; 4] = [
++        [128, 107, 128, 118],
++        [118, 130, 135, 100],
++        [128, 120, 128, 118],
++        [110, 125, 118, 117],
++    ];
++    const V: [[u8; 4]; 4] = [
++        [128, 135, 128, 135],
++        [138, 140, 125, 153],
++        [128, 133, 128, 139],
++        [140, 142, 138, 138],
++    ];
++    let main = Yuv420Frame::new(16, 16, vec![100; 256], 16, vec![128; 64], vec![128; 64], 8)
++        .expect("main view");
++    let (mut y, mut u, mut v) = (vec![128; 256], vec![128; 64], vec![128; 64]);
++    for row in 0..2 {
++        // B4 and B5 carry the odd chroma rows in the auxiliary luma plane.
++        y[row * 16..row * 16 + 4].copy_from_slice(&U[2 * row + 1]);
++        y[(row + 8) * 16..(row + 8) * 16 + 4].copy_from_slice(&V[2 * row + 1]);
++        // B6 and B7 carry the odd columns of the even chroma rows.
++        for col in 0..2 {
++            u[row * 8 + col] = U[2 * row][2 * col + 1];
++            v[row * 8 + col] = V[2 * row][2 * col + 1];
++        }
++    }
++    let auxiliary = Yuv420Frame::new(16, 16, y, 16, u, v, 8).expect("auxiliary view");
++    let rect = ExclusiveRectangle {
++        left: 0,
++        top: 0,
++        right: 3,
++        bottom: 3,
++    };
++    let mut picture = Yuv444Frame::new(3, 3);
++    picture.apply_main_view(&main, core::slice::from_ref(&rect));
++    picture.apply_auxiliary_view(Avc444Layout::V1, &auxiliary, core::slice::from_ref(&rect));
++    picture
++}
++
++// oracle: spec MS-RDPEGFX §3.3.8.3.1
++// oracle: spec MS-RDPEGFX §3.3.8.3.2
++#[test]
++fn an_odd_crop_keeps_absolute_chroma_parity_and_padded_neighbours() {
++    let picture = fixed_chroma_picture();
++    let rect = ExclusiveRectangle {
++        left: 1,
++        top: 1,
++        right: 3,
++        bottom: 3,
++    };
++    // The first three pixels use (U,V)=(130,140), (135,125), (120,133).
++    // At (2,2), padded neighbours recover U=4*128-118-118-117=159 and
++    // V=4*128-139-138-138=97; neither reconstruction may stop at the crop edge.
++    // With Y=100, the specification's inverse matrix gives these exact RGBA bytes.
++    assert_eq!(
++        picture.to_rgba(&rect),
++        [118, 94, 103, 255, 95, 100, 112, 255, 107, 99, 85, 255, 51, 108, 157, 255],
++    );
++}
++
++// oracle: spec MS-RDPEGFX §3.3.8.3.1
++// oracle: spec MS-RDPEGFX §3.3.8.3.2
++#[rstest]
++#[case::neither_component(0, 0, [100, 100, 100, 255])]
++#[case::u_only(2, 0, [100, 94, 157, 255])]
++#[case::v_only(0, 2, [51, 114, 100, 255])]
++fn reverse_chroma_cutoff_is_applied_independently_to_u_and_v(
++    #[case] left: u16,
++    #[case] top: u16,
++    #[case] expected: [u8; 4],
++) {
++    let picture = fixed_chroma_picture();
++    // U/V reconstructions differ from 128 by (29,29), (31,29), and (29,31).
++    // Only the components that differ by 31 are used in the inverse color matrix.
++    let rect = ExclusiveRectangle {
++        left,
++        top,
++        right: left + 1,
++        bottom: top + 1,
++    };
++    assert_eq!(picture.to_rgba(&rect), expected, "pixel ({left}, {top})");
 +}
 diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
 index c964d7ce..c2cee187 100644

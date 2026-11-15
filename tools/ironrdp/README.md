@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.15.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.16.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -55,7 +55,7 @@ credential-handling paths are unchanged.
 ## Rebuild production package
 
 Prerequisites: Git, Node 22+, npm, Rust with wasm32-unknown-unknown target,
-`wasm-bindgen-cli` **0.2.129**. The uniterm.15 build was validated with rustc 1.99.1.
+`wasm-bindgen-cli` **0.2.129**. The uniterm.16 build was validated with rustc 1.99.1.
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.129 --locked
@@ -261,3 +261,23 @@ Canvas2D keeps cropped incremental snapshots.
 
 See `../../docs/rdp-pacing-20261115.md` for regression coverage, live measurements,
 remaining frame-rate limits and the ARM64 artifact.
+
+## AVC444 CPU color conversion (uniterm.16)
+
+The CPU converter allocates the RGBA output once and writes complete rows.
+Odd rows use contiguous pixel slices; even rows process two pixels together,
+with separate handling for an odd crop origin or an unpaired final column.
+Reverse filtering still uses absolute picture coordinates and padded neighbours
+outside the visible crop. Color coefficients, clamping and the existing threshold
+are preserved. The implementation uses safe scalar Rust without SIMD requirements.
+
+The complete AVC444 test module passes 25 cases, including exact expected pixels
+for odd crop origins, odd picture edges and independent U/V reverse filtering.
+The baseline and updated converter also match across 17,550 browser WASM checks
+covering AVC444/V2, clipping and separate incremental main/auxiliary updates.
+An independent integer oracle checks 201,438 pixels.
+
+In the same NAS Chromium Worker, direct conversion benchmarks measured 1080p
+at 8.65 to 6.55 ms and 4K at 35.20 to 26.60 ms (median batch-normalized times).
+These isolate color conversion and exclude network, decoding, composition and
+display scheduling; they do not establish an end-to-end frame rate.
