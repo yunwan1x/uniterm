@@ -1,14 +1,17 @@
 /// <reference lib="webworker" />
 import { DesktopDamage } from './damage'
+import { PreparedAvc } from './async-avc'
+import { GpuCompositor } from './gpu-compositor'
 import * as mod from '@ys-ll/ironrdp-wasm'
 const scope = self as unknown as DedicatedWorkerGlobalScope
 let session: any, canvas: OffscreenCanvas
+let gpu: GpuCompositor | undefined, gpuFrameReady = false
 let hiddenPresentation = false, nextBackgroundSnapshot = 0
 let sentAt = 0, snapshotTimer: ReturnType<typeof setTimeout> | undefined
 const damage = new DesktopDamage()
 let dirty = false, inFlight = false, snapshotting = false, stopped = false
 let codecWorker: Worker | undefined
-const stats = { worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, decodeMs: 0, snapshotMs: 0, maxSnapshotMs: 0, snapshotPixels: 0, fullSnapshotPixels: 0, ackWaitMs: 0, maxAckWaitMs: 0, canvasWriteMs: 0, maxCanvasWriteMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
+const stats = { gpuAvc420Frames: 0, gpuAvc444Frames: 0, gpuReadbacks: 0, gpuReadbackBytes: 0, gpuYuvAvailable: false, gpuYuvFrames: 0, gpuYuvMs: 0, maxGpuYuvMs: 0, worker: true, frames: 0, coalesced: 0, avcFrames: 0, avcAvailable: false, avcYuvAvailable: false, receivedBytes: 0, maxDecodeMs: 0, decodeMs: 0, snapshotMs: 0, maxSnapshotMs: 0, snapshotPixels: 0, fullSnapshotPixels: 0, ackWaitMs: 0, maxAckWaitMs: 0, canvasWriteMs: 0, maxCanvasWriteMs: 0, audioPackets: 0, maxAudioDispatchGapMs: 0, maxAudioSourceGapMs: 0, maxAudioSourceJitterMs: 0 }
 const NativeWS = WebSocket
 ;(globalThis as any).WebSocket = class extends NativeWS {
   constructor(url: string | URL, protocols?: string | string[]) {
@@ -29,13 +32,15 @@ async function snapshot() {
     if (!snapshotTimer) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void snapshot() }, delay)
     return
   }
-  const region = damage.take(canvas.width, canvas.height)
+  if (gpu?.active && !gpuFrameReady) return
+  const source = gpu?.active ? gpu.canvas : canvas
+  const region = damage.take(source.width, source.height)
   if (!region) { dirty = false; return }
-  const width = canvas.width, height = canvas.height
+  const width = source.width, height = source.height
   dirty = false; snapshotting = true
   const started = performance.now()
   try {
-    const bitmap = await createImageBitmap(canvas, region.x, region.y, region.width, region.height)
+    const bitmap = await createImageBitmap(source, region.x, region.y, region.width, region.height)
     const elapsed = performance.now() - started
     stats.snapshotMs += elapsed; stats.maxSnapshotMs = Math.max(stats.maxSnapshotMs, elapsed)
     stats.snapshotPixels += region.width * region.height; stats.fullSnapshotPixels += width * height
@@ -60,29 +65,39 @@ async function setupAvc() {
   stats.avcAvailable = true
   ;(globalThis as any).unitermAvcYuv = stats.avcYuvAvailable
   let timestamp = 0
-  ;(globalThis as any).unitermResetAvc = () => worker.postMessage({ method: 'reset' })
-  ;(globalThis as any).unitermDecodeAvc = (surface: number, data: Uint8Array, yuv = false) => {
-    Atomics.store(control, 0, 0)
-    worker.postMessage({ method: 'decode', surface, data, yuv, timestamp: ++timestamp })
+  const prepared = new PreparedAvc()
+  let pending: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | undefined
+  worker.onmessage = ({ data }) => {
+    if (data.method !== 'decoded' || !pending) return
+    const completion = pending; pending = undefined; clearTimeout(completion.timer)
+    if (data.timestamp !== timestamp || data.status !== 1) completion.reject(new Error('WebCodecs AVC decode failed'))
+    else completion.resolve()
+  }
+  worker.onerror = () => { if (pending) { clearTimeout(pending.timer); pending.reject(new Error('AVC worker failed')); pending = undefined } }
+  ;(globalThis as any).unitermResetAvc = () => {
+    prepared.clear()
+    if (pending) { clearTimeout(pending.timer); pending.reject(new Error('AVC preparation cancelled')); pending = undefined }
+    worker.postMessage({ method: 'reset' })
+  }
+  ;(globalThis as any).unitermPrepareAvc = (requests: [number, Uint8Array, boolean][]) => prepared.prepare(requests, async (surface, data, yuv) => {
+    if (pending) throw new Error('Concurrent AVC decode')
     const start = performance.now()
-    // Never wait on the UI thread. Timeout ends the session instead of showing stale pixels.
-    const result = Atomics.wait(control, 0, 0, 2000)
-    if (result === 'timed-out' || Atomics.load(control, 0) !== 1) {
-      // EGFX tolerates individual corrupt updates, so a Rust decode error alone
-      // would leave a negotiated-but-unusable AVC session displaying stale pixels.
-      stopped = true; worker.terminate()
-      event('workerError', 'WebCodecs AVC decode failed')
-      throw new Error('AVC decoder failed')
-    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { pending = undefined; worker.terminate(); reject(new Error('AVC decoder timed out')) }, 2000)
+      pending = { resolve, reject, timer }
+      worker.postMessage({ method: 'decode', surface, data, yuv, timestamp: ++timestamp })
+    })
     const w = Atomics.load(control, 1), h = Atomics.load(control, 2)
     const elapsed = performance.now() - start
     stats.decodeMs += elapsed; stats.maxDecodeMs = Math.max(stats.maxDecodeMs, elapsed); stats.avcFrames++
-    if(yuv) {
-      const ySize=w*h,cSize=Math.ceil(w/2)*Math.ceil(h/2)
-      return [w,h,pixels.subarray(0,ySize),pixels.subarray(ySize,ySize+cSize),pixels.subarray(ySize+cSize,ySize+2*cSize)]
+    if (yuv) {
+      const ySize = w*h, cSize = Math.ceil(w/2)*Math.ceil(h/2)
+      return [w, h, pixels.subarray(0,ySize), pixels.subarray(ySize,ySize+cSize), pixels.subarray(ySize+cSize,ySize+2*cSize)]
     }
-    return [w, h, pixels.subarray(0, w * h * 4)]
-  }
+    return [w, h, pixels.subarray(0,w*h*4)]
+  })
+  ;(globalThis as any).unitermDecodeAvc = (surface: number, _data: Uint8Array, yuv = false) => prepared.take(surface, yuv)
+
 }
 function errorText(e: any) {
   try { if (typeof e?.backtrace === 'function') return `kind=${e.kind()} ${e.backtrace()}` } catch {}
@@ -93,8 +108,40 @@ scope.onmessage = async ({ data: m }) => {
     let result: any
     switch (m.method) {
       case 'connect': {
-        await mod.default(); try { mod.setup('warn') } catch {}
         const { options, extensions, callbacks, audioPort } = m.value
+        // GPU surfaces are authoritative after ResetGraphics. Compatibility
+        // fallback reconnects with canvas2d and leaves the CPU path unchanged.
+        if (extensions.canvas2d !== true) try {
+          gpu = new GpuCompositor(([x,y,right,bottom]) => {
+            gpuFrameReady = true
+            damage.add(gpu!.canvas.width,gpu!.canvas.height,{width:right-x,height:bottom-y},x,y)
+            if(dirty)stats.coalesced++;dirty=true
+            if(!snapshotTimer&&!inFlight&&!snapshotting)snapshotTimer=setTimeout(()=>{snapshotTimer=undefined;void snapshot()},0)
+          })
+          stats.gpuYuvAvailable = true
+          ;(globalThis as any).unitermGpuCommand = (name: string, ...args: any[]) => {
+            if(name === 'active')return gpu?.active === true
+            if(name === 'reset')gpuFrameReady = false
+            const started = performance.now()
+            try {
+              const methods: Record<string,Function> = Object.fromEntries(['reset','create','remove','map','bitmap','frame','close','fill','copy','store','restore','evict','readSurface','yuvBitmap'].map(name=>[name,(gpu as any)[name].bind(gpu)]))
+              const method = methods[name];if(!method)throw new Error('Unknown GPU command')
+              const result=method(...args)
+              if(name === "readSurface" && result instanceof Uint8Array){stats.gpuReadbacks++;stats.gpuReadbackBytes+=result.byteLength}
+              if(name === 'yuvBitmap'){
+                if(args[1]===0)stats.gpuAvc420Frames++;else stats.gpuAvc444Frames++
+                const elapsed=performance.now()-started;stats.gpuYuvFrames++;stats.gpuYuvMs+=elapsed;stats.maxGpuYuvMs=Math.max(stats.maxGpuYuvMs,elapsed)
+              }
+              return result
+            } catch(error) {
+              stopped=true;stats.gpuYuvAvailable=false
+              event('workerError','RDP WebGL compositor failed; canvas context fallback required')
+              throw error
+            }
+          }
+          gpu.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();stopped=true;event('workerError','RDP WebGL context lost')})
+        } catch { gpu=undefined }
+        await mod.default(); try { mod.setup('warn') } catch {}
         let audioPending = 0, lastAudioAt: number | undefined, lastAudioSource: number | undefined, lastAudioDuration = 0
         if (audioPort) {
           audioPort.onmessage = ({ data }: MessageEvent) => { if (data.type === 'consumed') audioPending = Math.max(0, audioPending - data.bytes) }
@@ -105,6 +152,7 @@ scope.onmessage = async ({ data: m }) => {
         const ctx = canvas.getContext('2d', { alpha: false })!
         const put = ctx.putImageData.bind(ctx)
         ctx.putImageData = ((...args: Parameters<typeof ctx.putImageData>) => {
+          if(gpu?.active)throw new Error('RDP WebGL mixed graphics requires canvas context fallback')
           const started = performance.now()
           put(...args)
           const elapsed = performance.now() - started

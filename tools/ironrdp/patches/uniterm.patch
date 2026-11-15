@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index bd2558ee..a7db36b6 100644
+index bd2558e..a7db36b 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -3794,10 +3794,13 @@ dependencies = [
@@ -17,7 +17,7 @@ index bd2558ee..a7db36b6 100644
   "ironrdp-svc",
   "ironrdp-vmconnect",
 diff --git a/crates/ironrdp-cliprdr/src/lib.rs b/crates/ironrdp-cliprdr/src/lib.rs
-index c820a672..ac3e6d27 100644
+index c820a67..ac3e6d2 100644
 --- a/crates/ironrdp-cliprdr/src/lib.rs
 +++ b/crates/ironrdp-cliprdr/src/lib.rs
 @@ -1887,7 +1887,13 @@ impl<R: Role> SvcProcessor for Cliprdr<R> {
@@ -36,7 +36,7 @@ index c820a672..ac3e6d27 100644
                  if !self
                      .capabilities
 diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
-index 672a1494..d2f42e87 100644
+index 672a149..d2f42e8 100644
 --- a/crates/ironrdp-connector/src/connection_finalization.rs
 +++ b/crates/ironrdp-connector/src/connection_finalization.rs
 @@ -267,7 +267,34 @@ impl Sequence for ConnectionFinalizationSequence {
@@ -75,8 +75,23 @@ index 672a1494..d2f42e87 100644
                  };
  
                  (Written::Nothing, next_state)
+diff --git a/crates/ironrdp-egfx/src/avc444.rs b/crates/ironrdp-egfx/src/avc444.rs
+index d5fc245..2089a41 100644
+--- a/crates/ironrdp-egfx/src/avc444.rs
++++ b/crates/ironrdp-egfx/src/avc444.rs
+@@ -118,6 +118,10 @@ impl Yuv444Frame {
+             + plane // V
+     }
+ 
++    /// Padded planes used by an accelerated color converter. The caller must
++    /// apply the AVC444 reverse chroma filter, including samples outside rect.
++    pub fn planes(&self) -> (&[u8], &[u8], &[u8], usize, usize) { (&self.y, &self.u, &self.v, self.stride, self.rows) }
++
+     /// Bytes this picture holds.
+     pub fn allocated_bytes(&self) -> usize {
+         self.y.len() + self.u.len() + self.v.len()
 diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
-index a4392fa4..b92367d9 100644
+index a4392fa..3ab27de 100644
 --- a/crates/ironrdp-egfx/src/client.rs
 +++ b/crates/ironrdp-egfx/src/client.rs
 @@ -59,7 +59,7 @@
@@ -88,7 +103,21 @@ index a4392fa4..b92367d9 100644
  
  use ironrdp_core::{Decode as _, ReadCursor, impl_as_any};
  use ironrdp_dvc::{DvcClientProcessor, DvcMessage, DvcProcessor};
-@@ -447,6 +447,9 @@ enum ClientState {
+@@ -250,6 +250,13 @@ pub struct BitmapUpdate {
+ /// All methods have default no-op implementations so you only need
+ /// to override the ones relevant to your use case.
+ pub trait GraphicsPipelineHandler: Send {
++    /// A renderer may retain native YUV surfaces and bypass CPU RGBA conversion.
++    fn on_yuv420(&mut self, _surface: u16, _picture: &crate::decode::Yuv420Frame, _dest: &ExclusiveRectangle, _regions: &[ExclusiveRectangle]) -> bool { false }
++    fn on_yuv444(&mut self, _surface: u16, _picture: &Yuv444Frame, _regions: &[ExclusiveRectangle]) -> bool { false }
++    fn externally_composited(&self) -> bool { false }
++    /// Synchronizes a rare CPU read-modify-write codec, such as Alpha.
++    fn read_surface(&mut self, _surface: u16) -> Option<Vec<u8>> { None }
++
+     /// Returns the capability sets to advertise to the server
+     ///
+     /// The default advertises every version from 10.7 down to 10 with AVC444, then V8.1
+@@ -447,6 +454,9 @@ enum ClientState {
  /// [MS-RDPEGFX]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/da5c75f9-cd99-450c-98c4-014a496942b0
  pub struct GraphicsPipelineClient {
      handler: Box<dyn GraphicsPipelineHandler>,
@@ -98,7 +127,7 @@ index a4392fa4..b92367d9 100644
      h264_decoder: Option<Box<dyn H264Decoder>>,
      /// Combined AVC444 picture of each surface, kept between updates so a luma-only or
      /// chroma-only update combines with what earlier ones left.
-@@ -494,6 +497,9 @@ impl GraphicsPipelineClient {
+@@ -494,6 +504,9 @@ impl GraphicsPipelineClient {
      pub fn new(handler: Box<dyn GraphicsPipelineHandler>, h264_decoder: Option<Box<dyn H264Decoder>>) -> Self {
          Self {
              handler,
@@ -108,7 +137,7 @@ index a4392fa4..b92367d9 100644
              h264_decoder,
              avc444_frames: BTreeMap::new(),
              clearcodec_decoder: None,
-@@ -532,6 +538,30 @@ impl GraphicsPipelineClient {
+@@ -532,6 +545,54 @@ impl GraphicsPipelineClient {
          self
      }
  
@@ -124,9 +153,33 @@ index a4392fa4..b92367d9 100644
 +
 +    pub fn enable_deferred_processing(&mut self) { self.deferred = true; }
 +
++    pub fn externally_composited(&self) -> bool { self.handler.externally_composited() }
++
 +    pub fn has_pending(&self) -> bool { !self.pending_pdus.is_empty() }
 +
 +    pub fn pending_work(&self) -> (usize, usize) { (self.pending_pdus.len(), self.pending_bytes) }
++
++    /// Encoded pictures of the next command, in decoder order. Preparing these
++    /// asynchronously must not pop the command or acknowledge its frame.
++    pub fn pending_h264_chunks(&self) -> PduResult<Vec<(u16, Vec<u8>, bool)>> {
++        let Some((GfxPdu::WireToSurface1(wire), _)) = self.pending_pdus.front() else { return Ok(Vec::new()) };
++        let Some(decoder) = self.h264_decoder.as_ref() else { return Ok(Vec::new()) };
++        let yuv = decoder.supports_yuv420();
++        let mut cursor = ReadCursor::new(&wire.bitmap_data);
++        match wire.codec_id {
++            Codec1Type::Avc420 => {
++                let stream = Avc420BitmapStream::decode(&mut cursor).map_err(|e| decode_err!(e))?;
++                Ok(vec![(wire.surface_id, stream.data.to_vec(), yuv)])
++            }
++            Codec1Type::Avc444 | Codec1Type::Avc444v2 if yuv => {
++                let stream = Avc444BitmapStream::decode(&mut cursor).map_err(|e| decode_err!(e))?;
++                let mut chunks = vec![(wire.surface_id, stream.stream1.data.to_vec(), true)];
++                if let Some(second) = stream.stream2 { chunks.push((wire.surface_id, second.data.to_vec(), true)); }
++                Ok(chunks)
++            }
++            _ => Ok(Vec::new()),
++        }
++    }
 +
 +    pub fn process_pending(&mut self) -> PduResult<Vec<DvcMessage>> {
 +        let Some((pdu, bytes)) = self.pending_pdus.pop_front() else { return Ok(Vec::new()) };
@@ -139,7 +192,7 @@ index a4392fa4..b92367d9 100644
      // ========================================================================
      // State Queries
      // ========================================================================
-@@ -686,13 +716,24 @@ impl GraphicsPipelineClient {
+@@ -686,13 +747,24 @@ impl GraphicsPipelineClient {
          {
              let mut cursor = ReadCursor::new(self.decompressed_buffer.as_slice());
              while !cursor.is_empty() {
@@ -166,7 +219,7 @@ index a4392fa4..b92367d9 100644
              let pdu_responses = self.handle_pdu(pdu)?;
              responses.extend(pdu_responses);
          }
-@@ -1244,6 +1285,8 @@ impl GraphicsPipelineClient {
+@@ -1244,10 +1316,15 @@ impl GraphicsPipelineClient {
              return Ok(());
          };
  
@@ -175,7 +228,15 @@ index a4392fa4..b92367d9 100644
          // A decoder returning YUV planes is converted with the transform MS-RDPEGFX
          // specifies, whatever matrix it would convert with itself.
          let frame = if decoder.supports_yuv420() {
-@@ -1392,6 +1435,7 @@ impl GraphicsPipelineClient {
+-            decoder.decode_yuv420(stream.data).map(|picture| picture.to_rgba())
++            let picture = decoder.decode_yuv420(stream.data).map_err(|e| pdu_other_err!("H.264 decode", source: e))?;
++            if picture.width() >= dest_rect.right-dest_rect.left && picture.height() >= dest_rect.bottom-dest_rect.top
++                && self.handler.on_yuv420(surface_id, &picture, dest_rect, &stream.rectangles) { return Ok(()); }
++            Ok(picture.to_rgba())
+         } else {
+             decoder.decode(stream.data)
+         }
+@@ -1392,6 +1469,7 @@ impl GraphicsPipelineClient {
              .map(|surface| (surface.width, surface.height))
              .ok_or_else(|| pdu_other_err!("unknown surface in WireToSurface1"))?;
  
@@ -183,7 +244,44 @@ index a4392fa4..b92367d9 100644
          trace!(surface_id, ?codec_id, encoding = ?stream.encoding, "AVC444 update");
          let (main, auxiliary) = match stream.encoding {
              Encoding::LUMA => (Some(&stream.stream1), None),
-@@ -1977,6 +2021,7 @@ impl DvcProcessor for GraphicsPipelineClient {
+@@ -1446,6 +1524,12 @@ impl GraphicsPipelineClient {
+             frame.apply_auxiliary_view(layout, view, &auxiliary.rectangles);
+         }
+ 
++        let gpu_regions: Vec<ExclusiveRectangle> = main.into_iter().chain(auxiliary).flat_map(|stream| stream.rectangles.iter())
++            .filter_map(|rect| {
++                let clipped = ExclusiveRectangle { left: rect.left, top: rect.top, right: rect.right.min(width), bottom: rect.bottom.min(height) };
++                (clipped.left < clipped.right && clipped.top < clipped.bottom).then_some(clipped)
++            }).collect();
++        if self.handler.on_yuv444(surface_id, frame, &gpu_regions) { return Ok(()); }
+         let mut painted = BTreeSet::new();
+         for rect in main
+             .into_iter()
+@@ -1720,6 +1804,13 @@ impl GraphicsPipelineClient {
+     /// [MS-RDPEGFX]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/da5c75f9-cd99-450c-98c4-014a496942b0
+     /// [3.3.5.1]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/3fdfcd8d-ec4f-4b7a-8e0d-0385a840ec81
+     fn decode_alpha(&mut self, surface_id: u16, dest_rect: &ExclusiveRectangle, bitmap_data: &[u8]) -> PduResult<()> {
++        if self.handler.externally_composited()
++            && let Some(surface) = self.surfaces.get(&surface_id)
++            && let Some(pixels) = self.handler.read_surface(surface_id)
++            && pixels.len() == usize::from(surface.width)*usize::from(surface.height)*4 {
++            self.compositor.apply_bitmap(surface_id, &ExclusiveRectangle {left:0,top:0,right:surface.width,bottom:surface.height}, &pixels);
++        }
++
+         let composited = self
+             .compositor
+             .apply_alpha(surface_id, dest_rect, bitmap_data)
+@@ -1951,7 +2042,8 @@ impl GraphicsPipelineClient {
+         self.progressive_decoder.end_frame();
+ 
+         // Commit the frame's compositor deltas so `drain_output` can surface them.
+-        self.compositor.end_frame();
++        if self.handler.externally_composited() { self.compositor.discard_frame(); }
++        else { self.compositor.end_frame(); }
+ 
+         self.handler.on_frame_complete(frame_id);
+ 
+@@ -1977,6 +2069,7 @@ impl DvcProcessor for GraphicsPipelineClient {
      }
  
      fn start(&mut self, _channel_id: u32) -> PduResult<Vec<DvcMessage>> {
@@ -191,7 +289,7 @@ index a4392fa4..b92367d9 100644
          self.state = ClientState::WaitingForConfirm;
          if let Some(decoder) = self.h264_decoder.as_mut()
              && !decoder.wait_until_ready()
-@@ -2019,6 +2064,7 @@ impl DvcProcessor for GraphicsPipelineClient {
+@@ -2019,6 +2112,7 @@ impl DvcProcessor for GraphicsPipelineClient {
      }
  
      fn close(&mut self, _channel_id: u32) {
@@ -199,7 +297,7 @@ index a4392fa4..b92367d9 100644
          self.save_persistent_cache();
          self.restart_channel_state();
          self.state = ClientState::Closed;
-@@ -2196,6 +2242,66 @@ mod tests {
+@@ -2196,6 +2290,66 @@ mod tests {
  
      use super::*;
  
@@ -266,11 +364,80 @@ index a4392fa4..b92367d9 100644
      struct TestHandler;
      impl GraphicsPipelineHandler for TestHandler {
          fn on_capabilities_confirmed(&mut self, _caps: &CapabilitySet) {}
+@@ -3542,6 +3696,43 @@ mod tests {
+     /// requested size where every pixel encodes its own coordinate as
+     /// `R = x & 0xFF`, `G = y & 0xFF`, `B = 0`, `A = 0xFF`. This lets a test
+     /// assert *which* source pixel landed in a destination region.
++    #[test]
++    fn native_yuv_renderer_keeps_avc_off_the_cpu_rgba_path() {
++        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
++        struct Decoder;
++        impl H264Decoder for Decoder {
++            fn decode(&mut self, _: &[u8]) -> crate::decode::DecoderResult<crate::decode::DecodedFrame> { panic!("unexpected RGBA decode") }
++            fn supports_yuv420(&self) -> bool { true }
++            fn decode_yuv420(&mut self, _: &[u8]) -> crate::decode::DecoderResult<crate::decode::Yuv420Frame> {
++                crate::decode::Yuv420Frame::new(16,16,vec![100;256],16,vec![128;64],vec![128;64],8)
++            }
++        }
++        struct Handler(Arc<AtomicUsize>);
++        impl GraphicsPipelineHandler for Handler {
++            fn externally_composited(&self) -> bool { true }
++            fn on_yuv420(&mut self, surface:u16, picture:&crate::decode::Yuv420Frame, _: &ExclusiveRectangle, regions:&[ExclusiveRectangle]) -> bool {
++                assert_eq!(surface, 5);assert_eq!(picture.luma_row(0).unwrap(), &[100;16]);assert_eq!(regions.len(),1);
++                self.0.fetch_add(1,Ordering::Relaxed);true
++            }
++            fn on_bitmap_updated(&mut self, _: &BitmapUpdate) { panic!("unexpected CPU RGBA bitmap") }
++        }
++        let seen=Arc::new(AtomicUsize::new(0));
++        let mut client=GraphicsPipelineClient::new(Box::new(Handler(seen.clone())),Some(Box::new(Decoder))).with_deferred_processing();
++        let region=ExclusiveRectangle {left:0,top:0,right:16,bottom:16};
++        queue_deferred(&mut client,&[
++            GfxPdu::CreateSurface(crate::pdu::CreateSurfacePdu {surface_id:5,width:16,height:16,pixel_format:PixelFormat::XRgb}),
++            GfxPdu::WireToSurface1(crate::pdu::WireToSurface1Pdu {surface_id:5,codec_id:Codec1Type::Avc420,pixel_format:PixelFormat::XRgb,destination_rectangle:region.clone(),bitmap_data:encode_avc420_wire(&[region])}),
++            GfxPdu::EndFrame(crate::pdu::EndFramePdu {frame_id:55}),
++        ]).unwrap();
++        assert!(client.pending_h264_chunks().unwrap().is_empty());
++        client.process_pending().unwrap();
++        let chunks=client.pending_h264_chunks().unwrap();assert_eq!(chunks,vec![(5,vec![0],true)]);
++        assert_eq!(seen.load(Ordering::Relaxed),0);assert_eq!(client.total_frames_decoded(),0);
++        client.process_pending().unwrap();assert_eq!(seen.load(Ordering::Relaxed),1);assert_eq!(client.total_frames_decoded(),0);
++        let replies=client.process_pending().unwrap();assert_eq!(replies.len(),1);assert_eq!(client.total_frames_decoded(),1);
++        assert!(client.drain_output().is_empty());
++    }
++
+     struct CoordinateDecoder {
+         width: u32,
+         height: u32,
+diff --git a/crates/ironrdp-egfx/src/compositor.rs b/crates/ironrdp-egfx/src/compositor.rs
+index 00a0216..721a9c7 100644
+--- a/crates/ironrdp-egfx/src/compositor.rs
++++ b/crates/ironrdp-egfx/src/compositor.rs
+@@ -308,6 +308,10 @@ impl Compositor {
+     }
+ 
+     /// Apply the bitmap cache size the server confirmed (MS-RDPEGFX 3.3.1.4).
++    /// External renderers own the completed frame; avoid materializing CPU
++    /// RGBA output deltas which would immediately be discarded.
++    pub(crate) fn discard_frame(&mut self) { self.frame.clear(); self.ready.clear(); self.ready_windows.clear(); }
++
+     pub(crate) fn set_small_bitmap_cache(&mut self, small: bool) {
+         self.small_bitmap_cache = small;
+     }
 diff --git a/crates/ironrdp-egfx/src/decode.rs b/crates/ironrdp-egfx/src/decode.rs
-index 1adc2fed..58205d65 100644
+index 1adc2fe..9206640 100644
 --- a/crates/ironrdp-egfx/src/decode.rs
 +++ b/crates/ironrdp-egfx/src/decode.rs
-@@ -304,6 +304,8 @@ pub type DecoderResult<T> = Result<T, DecoderError>;
+@@ -143,6 +143,9 @@ impl Yuv420Frame {
+         })
+     }
+ 
++    /// Plane storage and strides, for converters which can consume native layout.
++    pub fn planes(&self) -> (&[u8], &[u8], &[u8], usize, usize) { (&self.y, &self.u, &self.v, self.luma_stride, self.chroma_stride) }
++
+     /// Picture width in pixels.
+     pub fn width(&self) -> u16 {
+         self.width
+@@ -304,6 +307,8 @@ pub type DecoderResult<T> = Result<T, DecoderError>;
  /// }
  /// ```
  pub trait H264Decoder: Send {
@@ -280,7 +447,7 @@ index 1adc2fed..58205d65 100644
      /// (4-byte BE length prefix), into an RGBA bitmap.
      ///
 diff --git a/crates/ironrdp-rdpsnd/src/client.rs b/crates/ironrdp-rdpsnd/src/client.rs
-index ab62dde2..a7000af2 100644
+index ab62dde..a7000af 100644
 --- a/crates/ironrdp-rdpsnd/src/client.rs
 +++ b/crates/ironrdp-rdpsnd/src/client.rs
 @@ -823,6 +823,11 @@ impl Rdpsnd {
@@ -313,7 +480,7 @@ index ab62dde2..a7000af2 100644
 +    }
 +}
 diff --git a/crates/ironrdp-session/src/active_stage.rs b/crates/ironrdp-session/src/active_stage.rs
-index c9889218..ddbfab0f 100644
+index c988921..fc31eac 100644
 --- a/crates/ironrdp-session/src/active_stage.rs
 +++ b/crates/ironrdp-session/src/active_stage.rs
 @@ -318,6 +318,32 @@ impl ActiveStage {
@@ -349,8 +516,20 @@ index c9889218..ddbfab0f 100644
      /// Drains the client-side EGFX compositor: follows a pending `ResetGraphics`, composites
      /// each completed-frame output region into `image` and records its damage.
      ///
+@@ -1206,6 +1232,11 @@ pub fn composite_graphics_pipeline(
+     if let Some((width, height)) = output_reset {
+         image.reset_preserving_pointer(width, height)?;
+     }
++    if gfx.externally_composited() {
++        let _ = gfx.drain_output();
++        let _ = gfx.drain_window_updates();
++        return Ok(CompositedGraphics { reset:false, region:None, regions:Vec::new(), window_updates:Vec::new() });
++    }
+     let (region, regions) =
+         composite_graphics_updates(image, gfx.drain_output().into_iter().map(|u| (u.region, u.data)))?;
+     Ok(CompositedGraphics {
 diff --git a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
-index 2d65a124..a281702f 100644
+index 2d65a12..a281702 100644
 --- a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 +++ b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 @@ -246,3 +246,30 @@ fn expire_via_format_list_transitions_state() {
@@ -385,7 +564,7 @@ index 2d65a124..a281702f 100644
 +    }
 +}
 diff --git a/crates/ironrdp-web/Cargo.toml b/crates/ironrdp-web/Cargo.toml
-index c964d7ce..c2cee187 100644
+index c964d7c..c2cee18 100644
 --- a/crates/ironrdp-web/Cargo.toml
 +++ b/crates/ironrdp-web/Cargo.toml
 @@ -18,6 +18,7 @@ test = false
@@ -408,7 +587,7 @@ index c964d7ce..c2cee187 100644
  ironrdp-futures.path = "../ironrdp-futures"
 diff --git a/crates/ironrdp-web/src/audio.rs b/crates/ironrdp-web/src/audio.rs
 new file mode 100644
-index 00000000..d43d8f5c
+index 0000000..d43d8f5
 --- /dev/null
 +++ b/crates/ironrdp-web/src/audio.rs
 @@ -0,0 +1,156 @@
@@ -569,7 +748,7 @@ index 00000000..d43d8f5c
 +    }
 +}
 diff --git a/crates/ironrdp-web/src/canvas.rs b/crates/ironrdp-web/src/canvas.rs
-index 30ba5be7..a867c9e0 100644
+index 30ba5be..a867c9e 100644
 --- a/crates/ironrdp-web/src/canvas.rs
 +++ b/crates/ironrdp-web/src/canvas.rs
 @@ -5,16 +5,17 @@ use anyhow::anyhow;
@@ -633,7 +812,7 @@ index 30ba5be7..a867c9e0 100644
      {
 diff --git a/crates/ironrdp-web/src/capture.rs b/crates/ironrdp-web/src/capture.rs
 new file mode 100644
-index 00000000..e63e5444
+index 0000000..e63e544
 --- /dev/null
 +++ b/crates/ironrdp-web/src/capture.rs
 @@ -0,0 +1,348 @@
@@ -985,8 +1164,79 @@ index 00000000..e63e5444
 +        assert_eq!(state.lock().unwrap().requested(), 0);
 +    }
 +}
+diff --git a/crates/ironrdp-web/src/gpu.rs b/crates/ironrdp-web/src/gpu.rs
+new file mode 100644
+index 0000000..b2998b9
+--- /dev/null
++++ b/crates/ironrdp-web/src/gpu.rs
+@@ -0,0 +1,65 @@
++//! GPU handler keeps native YUV through presentation. Only Alpha's rare CPU
++//! read-modify-write path requests a readback; normal video does not.
++use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler, Surface};
++use ironrdp_egfx::decode::Yuv420Frame;
++use ironrdp_egfx::avc444::Yuv444Frame;
++use ironrdp_egfx::pdu::*;
++use ironrdp_pdu::geometry::ExclusiveRectangle;
++use wasm_bindgen::{JsCast, JsValue};
++
++pub(crate) struct WebGraphicsHandler;
++fn command(name: &str, args: &js_sys::Array) -> Option<JsValue> {
++    let global=js_sys::global();
++    let function=js_sys::Reflect::get(&global,&"unitermGpuCommand".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
++    let all=js_sys::Array::new();all.push(&name.into());for arg in args.iter(){all.push(&arg);}
++    function.apply(&global,&all).ok()
++}
++macro_rules! call {
++    ($name:expr $(,$value:expr)* $(,)?) => {{
++        #[cfg(target_arch="wasm32")]
++        { let args=js_sys::Array::new();$(args.push(&JsValue::from($value));)* command($name,&args) }
++        #[cfg(not(target_arch="wasm32"))]
++        { None::<JsValue> }
++    }};
++}
++fn rect(r:&ExclusiveRectangle)->js_sys::Array {
++    [r.left,r.top,r.right,r.bottom].into_iter().map(JsValue::from).collect()
++}
++fn rects(rs:&[ExclusiveRectangle])->js_sys::Array { rs.iter().map(|r|JsValue::from(rect(r))).collect() }
++fn points(ps:&[Point])->js_sys::Array { ps.iter().map(|p|JsValue::from([p.x,p.y].into_iter().map(JsValue::from).collect::<js_sys::Array>())).collect() }
++fn planes(y:&[u8],u:&[u8],v:&[u8])->[js_sys::Uint8Array;3] { [y,u,v].map(js_sys::Uint8Array::from) }
++impl GraphicsPipelineHandler for WebGraphicsHandler {
++    fn externally_composited(&self)->bool {call!("active").and_then(|v|v.as_bool()).unwrap_or(false)}
++    fn on_reset_graphics(&mut self,width:u32,height:u32){call!("reset",width,height);}
++    fn on_surface_created(&mut self,s:&Surface){call!("create",s.id,s.width,s.height);}
++    fn on_surface_deleted(&mut self,id:u16){call!("remove",id);}
++    fn on_surface_mapped(&mut self,id:u16,x:u32,y:u32){call!("map",id,x,y);}
++    fn on_map_surface_to_scaled_output(&mut self,p:&MapSurfaceToScaledOutputPdu){call!("map",p.surface_id,p.output_origin_x,p.output_origin_y,p.target_width,p.target_height);}
++    fn on_bitmap_updated(&mut self,p:&BitmapUpdate){call!("bitmap",p.surface_id,rect(&p.destination_rectangle),js_sys::Uint8Array::from(p.data.as_slice()));}
++    fn on_frame_complete(&mut self,_id:u32){call!("frame");}
++    fn on_close(&mut self){call!("close");}
++    fn on_solid_fill(&mut self,p:&SolidFillPdu){let c=&p.fill_pixel;call!("fill",p.surface_id,[c.r,c.g,c.b,255].into_iter().map(JsValue::from).collect::<js_sys::Array>(),rects(&p.rectangles));}
++    fn on_surface_to_surface(&mut self,p:&SurfaceToSurfacePdu){call!("copy",p.source_surface_id,p.destination_surface_id,rect(&p.source_rectangle),points(&p.destination_points));}
++    fn on_surface_to_cache(&mut self,p:&SurfaceToCachePdu){call!("store",p.surface_id,p.cache_slot,rect(&p.source_rectangle));}
++    fn on_cache_to_surface(&mut self,p:&CacheToSurfacePdu){call!("restore",p.cache_slot,p.surface_id,points(&p.destination_points));}
++    fn on_evict_cache_entry(&mut self,p:&EvictCacheEntryPdu){call!("evict",p.cache_slot);}
++    fn read_surface(&mut self,id:u16)->Option<Vec<u8>> {let result=call!("readSurface",id)?;result.is_instance_of::<js_sys::Uint8Array>().then(||js_sys::Uint8Array::new(&result).to_vec())}
++    fn on_yuv420(&mut self,id:u16,p:&Yuv420Frame,dest:&ExclusiveRectangle,regions:&[ExclusiveRectangle])->bool {
++        if !self.externally_composited(){return false;}
++        let (y,u,v,ys,cs)=p.planes();
++        if ys!=usize::from(p.width()) || cs!=usize::from(p.width().div_ceil(2)){return false;}
++        let [y,u,v]=planes(y,u,v);
++        let areas=js_sys::Array::new();
++        if regions.is_empty(){let area=rect(dest);area.push(&0.into());area.push(&0.into());areas.push(&area);}
++        else {for r in regions {
++            let r=ExclusiveRectangle {left:r.left,top:r.top,right:r.right.min(p.width()),bottom:r.bottom.min(p.height())};
++            if r.left<r.right && r.top<r.bottom{areas.push(&rect(&r));}
++        }}
++        call!("yuvBitmap",id,0u32,p.width(),p.height(),y,u,v,areas).and_then(|v|v.as_bool()).unwrap_or(false)
++    }
++    fn on_yuv444(&mut self,id:u16,p:&Yuv444Frame,regions:&[ExclusiveRectangle])->bool {
++        if !self.externally_composited(){return false;}
++        let (y,u,v,stride,rows)=p.planes();let [y,u,v]=planes(y,u,v);
++        call!("yuvBitmap",id,1u32,stride as u32,rows as u32,y,u,v,rects(regions)).and_then(|v|v.as_bool()).unwrap_or(false)
++    }
++}
 diff --git a/crates/ironrdp-web/src/image.rs b/crates/ironrdp-web/src/image.rs
-index 2df63efc..592e3caa 100644
+index 2df63ef..592e3ca 100644
 --- a/crates/ironrdp-web/src/image.rs
 +++ b/crates/ironrdp-web/src/image.rs
 @@ -5,82 +5,111 @@ use ironrdp::session::image::DecodedImage;
@@ -1160,10 +1410,10 @@ index 2df63efc..592e3caa 100644
      }
  }
 diff --git a/crates/ironrdp-web/src/lib.rs b/crates/ironrdp-web/src/lib.rs
-index 664e42e6..00358f26 100644
+index 664e42e..0f48eb4 100644
 --- a/crates/ironrdp-web/src/lib.rs
 +++ b/crates/ironrdp-web/src/lib.rs
-@@ -15,13 +15,19 @@ extern crate getrandom2 as _;
+@@ -15,13 +15,20 @@ extern crate getrandom2 as _;
  extern crate getrandom4 as _;
  extern crate time as _;
  
@@ -1171,6 +1421,7 @@ index 664e42e6..00358f26 100644
 +mod capture;
  mod canvas;
 +mod webcodecs;
++mod gpu;
  mod clipboard;
  mod error;
  mod image;
@@ -1185,7 +1436,7 @@ index 664e42e6..00358f26 100644
  
 diff --git a/crates/ironrdp-web/src/presentation.rs b/crates/ironrdp-web/src/presentation.rs
 new file mode 100644
-index 00000000..4b7ac686
+index 0000000..4b7ac68
 --- /dev/null
 +++ b/crates/ironrdp-web/src/presentation.rs
 @@ -0,0 +1,152 @@
@@ -1343,7 +1594,7 @@ index 00000000..4b7ac686
 +}
 diff --git a/crates/ironrdp-web/src/render_benchmark.rs b/crates/ironrdp-web/src/render_benchmark.rs
 new file mode 100644
-index 00000000..8e530699
+index 0000000..8e53069
 --- /dev/null
 +++ b/crates/ironrdp-web/src/render_benchmark.rs
 @@ -0,0 +1,140 @@
@@ -1488,15 +1739,16 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..dd4545c4 100644
+index ac63029..5c39999 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
++use crate::gpu::WebGraphicsHandler;
 +use crate::capture::{Capture, CaptureMessages};
  use core::cell::RefCell;
  use core::net::{Ipv4Addr, SocketAddrV4};
  use core::num::NonZeroU32;
-@@ -5,6 +6,7 @@ use core::time::Duration;
+@@ -5,6 +7,7 @@ use core::time::Duration;
  use std::borrow::Cow;
  use std::rc::Rc;
  
@@ -1504,7 +1756,7 @@ index ac630290..dd4545c4 100644
  use crate::canvas::Canvas;
  use crate::clipboard;
  use crate::clipboard::{ClipboardData, FileMetadata, WasmClipboard, WasmClipboardBackend, WasmClipboardBackendMessage};
-@@ -12,12 +14,13 @@ use crate::error::IronError;
+@@ -12,12 +15,13 @@ use crate::error::IronError;
  use crate::image::extract_partial_image;
  use crate::input::InputTransaction;
  use crate::network_client::WasmNetworkClient;
@@ -1519,7 +1771,7 @@ index ac630290..dd4545c4 100644
  use gloo_net::websocket;
  use gloo_net::websocket::futures::WebSocket;
  use gloo_timers::future::IntervalStream;
-@@ -34,12 +37,13 @@ use ironrdp::graphics::image_processing::PixelFormat;
+@@ -34,12 +38,13 @@ use ironrdp::graphics::image_processing::PixelFormat;
  use ironrdp::pdu::input::fast_path::FastPathInputEvent;
  use ironrdp::pdu::rdp::capability_sets::{BitmapCodecs, client_codecs_capabilities};
  use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
@@ -1530,11 +1782,11 @@ index ac630290..dd4545c4 100644
  use ironrdp::session::image::DecodedImage;
  use ironrdp::session::{ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
  use ironrdp_core::WriteBuf;
-+use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
++use ironrdp_egfx::client::GraphicsPipelineClient;
  use ironrdp_futures::{FramedWrite, single_sequence_step_read};
  use rgb::AsPixels as _;
  use tap::prelude::*;
-@@ -95,12 +99,19 @@ struct SessionBuilderInner {
+@@ -95,12 +100,19 @@ struct SessionBuilderInner {
      printer_device_id: Option<u32>,
      printer_driver_name: Option<String>,
  
@@ -1554,7 +1806,7 @@ index ac630290..dd4545c4 100644
  }
  
  impl Default for SessionBuilderInner {
-@@ -141,12 +152,19 @@ impl Default for SessionBuilderInner {
+@@ -141,12 +153,19 @@ impl Default for SessionBuilderInner {
              printer_device_id: None,
              printer_driver_name: None,
  
@@ -1574,7 +1826,7 @@ index ac630290..dd4545c4 100644
          }
      }
  }
-@@ -291,12 +309,37 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -291,12 +310,37 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              |vmconnect: String| { self.0.borrow_mut().vmconnect = Some(vmconnect) };
              |kdc_proxy_url: String| { self.0.borrow_mut().kdc_proxy_url = Some(kdc_proxy_url) };
              |display_control: bool| { self.0.borrow_mut().use_display_control = display_control };
@@ -1612,7 +1864,7 @@ index ac630290..dd4545c4 100644
              |outbound_message_size_limit: f64| {
                  let limit = if outbound_message_size_limit >= 0.0 && outbound_message_size_limit <= f64::from(u32::MAX) {
                      #[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-@@ -405,6 +448,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -405,6 +449,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name,
              outbound_message_size_limit,
              legacy_graphics,
@@ -1620,7 +1872,7 @@ index ac630290..dd4545c4 100644
              security,
          );
  
-@@ -450,6 +494,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -450,6 +495,7 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              printer_driver_name = inner.printer_driver_name.clone();
              outbound_message_size_limit = inner.outbound_message_size_limit;
              legacy_graphics = inner.legacy_graphics;
@@ -1628,7 +1880,7 @@ index ac630290..dd4545c4 100644
              security = SecurityConfig {
                  enable_credssp: inner.enable_credssp,
                  enable_standard_rdp_security: inner.enable_standard_rdp_security,
-@@ -473,13 +518,41 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -473,13 +519,41 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              client_name.clone(),
              desktop_size,
              legacy_graphics,
@@ -1670,7 +1922,7 @@ index ac630290..dd4545c4 100644
  
          let clipboard = remote_clipboard_changed_callback.clone().map(|callback| {
              WasmClipboard::new(
-@@ -566,6 +639,11 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -566,6 +640,11 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
              vmconnect,
              kdc_proxy_url,
              clipboard_backend: clipboard.as_ref().map(|clip| clip.backend()),
@@ -1682,7 +1934,7 @@ index ac630290..dd4545c4 100644
              printer_backend,
              printer_device_id,
              printer_name,
-@@ -584,6 +662,9 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
+@@ -584,6 +663,9 @@ impl iron_remote_desktop::SessionBuilder for SessionBuilder {
          spawn_local(writer_task(writer_rx, rdp_writer, outbound_message_size_limit));
  
          Ok(Session {
@@ -1692,7 +1944,7 @@ index ac630290..dd4545c4 100644
              desktop_size: connection_result.desktop_size,
              input_database: RefCell::new(ironrdp::input::Database::new()),
              writer_tx,
-@@ -606,6 +687,7 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
+@@ -606,6 +688,7 @@ pub(crate) type FastPathInputEvents = smallvec::SmallVec<[FastPathInputEvent; 2]
  
  #[derive(Debug)]
  pub(crate) enum RdpInputEvent {
@@ -1700,7 +1952,7 @@ index ac630290..dd4545c4 100644
      Cliprdr(ClipboardMessage),
      ClipboardBackend(WasmClipboardBackendMessage),
      /// Printer backend → event loop: a print job finished and its bytes are
-@@ -638,6 +720,9 @@ pub(crate) struct Session {
+@@ -638,6 +721,9 @@ pub(crate) struct Session {
      input_events_tx: mpsc::UnboundedSender<RdpInputEvent>,
  
      render_canvas: HtmlCanvasElement,
@@ -1710,7 +1962,7 @@ index ac630290..dd4545c4 100644
      set_cursor_style_callback: js_sys::Function,
      set_cursor_style_callback_context: JsValue,
  
-@@ -742,7 +827,12 @@ impl iron_remote_desktop::Session for Session {
+@@ -742,7 +828,14 @@ impl iron_remote_desktop::Session for Session {
          let mut requested_resize = None;
  
          // Reused across frames so per-region extraction doesn't allocate on every draw.
@@ -1720,10 +1972,12 @@ index ac630290..dd4545c4 100644
 +        let mut animation_frame = None;
 +        let mut processing_slice_ms = 0.0;
 +        let mut receive_work_ms = 0.0;
++        let mut graphics_prepare = None;
++        let mut graphics_prepared = false;
  
          // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
          let activation_factory = connection_result.activation_factory;
-@@ -763,17 +853,75 @@ impl iron_remote_desktop::Session for Session {
+@@ -763,17 +856,99 @@ impl iron_remote_desktop::Session for Session {
          let mut cleanup_interval = IntervalStream::new(5_000).fuse();
  
          let disconnect_reason = 'outer: loop {
@@ -1733,23 +1987,46 @@ index ac630290..dd4545c4 100644
 +            if let Some(mut gfx) = active_stage.get_dvc_mut::<GraphicsPipelineClient>() {
 +                gfx.processor_mut().enable_deferred_processing();
 +            }
++            if !graphics_prepared && graphics_prepare.is_none() {
++                let chunks = active_stage.get_dvc::<GraphicsPipelineClient>()
++                    .map(|gfx| gfx.processor().pending_h264_chunks()).transpose().context("prepare next graphics command")?.unwrap_or_default();
++                graphics_prepare = crate::webcodecs::prepare(chunks)
++                    .map_err(|_| anyhow::anyhow!("could not prepare AVC pictures"))?;
++                graphics_prepared = graphics_prepare.is_none();
++            }
 +            let processing_started;
 +            let (pending_count, pending_bytes) = active_stage.pending_graphics_work();
 +            let pending_graphics = pending_count != 0;
 +            let service_graphics = receive_work_ms >= 4.0 || pending_bytes >= 16 * 1024 * 1024 || pending_count >= 512;
 +            let outputs = select_biased! {
 +                _ = async {
-+                    if pending_graphics { if !service_graphics { gloo_timers::future::sleep(Duration::ZERO).await; } }
++                    if pending_graphics && graphics_prepared { if !service_graphics { gloo_timers::future::sleep(Duration::ZERO).await; } }
 +                    else { futures_util::future::pending::<()>().await; }
 +                }.fuse() => {
 +                    processing_started = js_sys::Date::now();
 +                    receive_work_ms = 0.0;
 +                    let outputs = active_stage.process_pending_graphics(&mut image)?;
++                    graphics_prepared = false;
++                    if active_stage.get_dvc::<GraphicsPipelineClient>().is_some_and(|gfx| gfx.processor().externally_composited()) {
++                        damage.clear(); animation_frame = None;
++                    }
 +                    if framebuffer_dimensions != (image.width(), image.height()) {
 +                        damage.clear();
 +                        framebuffer_dimensions = (image.width(), image.height());
 +                    }
 +                    outputs
++                }
++                decoded = async {
++                    match graphics_prepare.as_mut() {
++                        Some(future) => future.await,
++                        None => futures_util::future::pending::<Result<JsValue, JsValue>>().await,
++                    }
++                }.fuse() => {
++                    processing_started = js_sys::Date::now();
++                    decoded.map_err(|_| anyhow::anyhow!("asynchronous AVC decode failed"))?;
++                    graphics_prepare = None;
++                    graphics_prepared = true;
++                    Vec::new()
 +                }
                  frame = framed.read_pdu().fuse() => {
 +                    processing_started = js_sys::Date::now();
@@ -1759,6 +2036,7 @@ index ac630290..dd4545c4 100644
 -                    active_stage.process(&mut image, action, &payload, framed.last_read_at())?
 +                    let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
 +                    receive_work_ms += js_sys::Date::now() - processing_started;
++                    if !pending_graphics { graphics_prepared = false; }
 +                    if framebuffer_dimensions != (image.width(), image.height()) {
 +                        // ResetGraphics may resize without DeactivateAll. Discard rectangles
 +                        // from the old extent before the next animation callback reads pixels.
@@ -1801,7 +2079,7 @@ index ac630290..dd4545c4 100644
                          RdpInputEvent::Cliprdr(message) => {
                              if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                                  if let Some(svc_messages) = match message {
-@@ -949,6 +1097,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -949,6 +1124,7 @@ impl iron_remote_desktop::Session for Session {
                      }
                  }
                  _ = cleanup_interval.next() => {
@@ -1809,7 +2087,7 @@ index ac630290..dd4545c4 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -971,6 +1120,36 @@ impl iron_remote_desktop::Session for Session {
+@@ -971,6 +1147,36 @@ impl iron_remote_desktop::Session for Session {
                  }
              };
  
@@ -1846,7 +2124,7 @@ index ac630290..dd4545c4 100644
              for out in outputs {
                  match out {
                      ActiveStageOutput::ResponseFrame(frame) => {
-@@ -979,10 +1158,7 @@ impl iron_remote_desktop::Session for Session {
+@@ -979,10 +1185,10 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -1854,11 +2132,14 @@ index ac630290..dd4545c4 100644
 -                        gui.draw(draw_buffer.filled_mut(), region)
 -                            .context("draw updated region")?;
 -                        draw_buffer.clear();
++                        if active_stage.get_dvc::<GraphicsPipelineClient>().is_some_and(|gfx| gfx.processor().externally_composited()) {
++                            return Err(anyhow::anyhow!("RDP WebGL mixed graphics requires canvas context fallback").into());
++                        }
 +                        damage.add(region);
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1270,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1300,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -1867,7 +2148,7 @@ index ac630290..dd4545c4 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1357,16 @@ impl iron_remote_desktop::Session for Session {
+@@ -1179,6 +1387,16 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -1884,7 +2165,7 @@ index ac630290..dd4545c4 100644
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1278,6 +1466,36 @@ impl iron_remote_desktop::Session for Session {
+@@ -1278,6 +1496,36 @@ impl iron_remote_desktop::Session for Session {
          // to keep the iron-remote-desktop trait surface protocol-agnostic.
          iron_remote_desktop::extension_match! {
              match ext;
@@ -1921,7 +2202,7 @@ index ac630290..dd4545c4 100644
              |request_file_contents: JsValue| {
                  let obj = into_object(request_file_contents)?;
                  let stream_id = get_u32(&obj, "stream_id")?;
-@@ -1517,6 +1735,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1517,6 +1765,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -1944,7 +2225,7 @@ index ac630290..dd4545c4 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1758,7 @@ fn build_config(
+@@ -1524,6 +1788,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -1952,7 +2233,7 @@ index ac630290..dd4545c4 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1810,7 @@ fn build_config(
+@@ -1575,7 +1840,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -1961,7 +2242,7 @@ index ac630290..dd4545c4 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -1647,6 +1882,11 @@ struct ConnectParams {
+@@ -1647,6 +1912,11 @@ struct ConnectParams {
      vmconnect: Option<String>,
      kdc_proxy_url: Option<String>,
      clipboard_backend: Option<WasmClipboardBackend>,
@@ -1973,7 +2254,7 @@ index ac630290..dd4545c4 100644
      printer_backend: Option<WasmPrinterBackend>,
      printer_device_id: u32,
      printer_name: String,
-@@ -1699,6 +1939,11 @@ async fn connect(
+@@ -1699,6 +1969,11 @@ async fn connect(
          vmconnect,
          kdc_proxy_url,
          clipboard_backend,
@@ -1985,7 +2266,7 @@ index ac630290..dd4545c4 100644
          printer_backend,
          printer_device_id,
          printer_name,
-@@ -1712,30 +1957,45 @@ async fn connect(
+@@ -1712,30 +1987,45 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -2040,7 +2321,7 @@ index ac630290..dd4545c4 100644
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2305,41 @@ mod tests {
+@@ -2045,10 +2335,41 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -2082,17 +2363,10 @@ index ac630290..dd4545c4 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2909,29 @@ mod tests {
+@@ -2618,3 +2939,22 @@ mod tests {
          }
      }
  }
-+
-+struct WebGraphicsHandler;
-+impl GraphicsPipelineHandler for WebGraphicsHandler {
-+    fn on_frame_complete(&mut self, frame_id: u32) {
-+        trace!(frame_id, "Web EGFX frame complete");
-+    }
-+}
 +
 +// GFX requires 32-bit color. Keep the compatibility path's existing 16-bit
 +// preference when the experimental pipeline is disabled.
@@ -2114,12 +2388,11 @@ index ac630290..dd4545c4 100644
 +}
 diff --git a/crates/ironrdp-web/src/webcodecs.rs b/crates/ironrdp-web/src/webcodecs.rs
 new file mode 100644
-index 00000000..f31c6687
+index 0000000..37ec6d9
 --- /dev/null
 +++ b/crates/ironrdp-web/src/webcodecs.rs
-@@ -0,0 +1,64 @@
-+//! The JS bridge runs only in a dedicated worker. Its nested WebCodecs worker
-+//! completes one picture before waking this synchronous protocol decoder.
+@@ -0,0 +1,83 @@
++//! Async preparation owns decoding; synchronous engine calls consume prepared pictures only.
 +use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder, Yuv420Frame};
 +use wasm_bindgen::{JsCast, JsValue};
 +
@@ -2148,7 +2421,8 @@ index 00000000..f31c6687
 +    fn decode(&mut self, data: &[u8]) -> DecoderResult<DecodedFrame> {
 +        let args = js_sys::Array::new();
 +        args.push(&self.surface.into());
-+        args.push(&js_sys::Uint8Array::from(data));
++        let _ = data; // Encoded bytes were already submitted during async preparation.
++        args.push(&JsValue::UNDEFINED);
 +        let result = invoke("unitermDecodeAvc", &args).map_err(|_| DecoderError::msg("WebCodecs AVC decode failed"))?;
 +        let a = js_sys::Array::from(&result);
 +        let width = a.get(0).as_f64().unwrap_or_default() as u32;
@@ -2163,7 +2437,8 @@ index 00000000..f31c6687
 +    fn decode_yuv420(&mut self, data: &[u8]) -> DecoderResult<Yuv420Frame> {
 +        let args = js_sys::Array::new();
 +        args.push(&self.surface.into());
-+        args.push(&js_sys::Uint8Array::from(data));
++        let _ = data; // Encoded bytes were already submitted during async preparation.
++        args.push(&JsValue::UNDEFINED);
 +        args.push(&JsValue::TRUE);
 +        let result = invoke("unitermDecodeAvc", &args).map_err(|_| DecoderError::msg("WebCodecs YUV decode failed"))?;
 +        let a = js_sys::Array::from(&result);
@@ -2182,3 +2457,21 @@ index 00000000..f31c6687
 +        let _ = invoke("unitermResetAvc", &js_sys::Array::new());
 +    }
 +}
++
++/// Starts preparation without borrowing the graphics engine across an await.
++/// The JS queue owns at most the two pictures of one AVC444 command.
++pub(crate) fn prepare(chunks: Vec<(u16, Vec<u8>, bool)>) -> Result<Option<wasm_bindgen_futures::JsFuture>, JsValue> {
++    if chunks.is_empty() { return Ok(None); }
++    let requests = js_sys::Array::new();
++    for (surface, data, yuv) in chunks {
++        let request = js_sys::Array::new();
++        request.push(&surface.into());
++        request.push(&js_sys::Uint8Array::from(data.as_slice()));
++        request.push(&JsValue::from_bool(yuv));
++        requests.push(&request);
++    }
++    let args = js_sys::Array::new(); args.push(&requests);
++    let promise = invoke("unitermPrepareAvc", &args)?.dyn_into::<js_sys::Promise>()?;
++    Ok(Some(wasm_bindgen_futures::JsFuture::from(promise)))
++}
++

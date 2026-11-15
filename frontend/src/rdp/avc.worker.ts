@@ -1,13 +1,20 @@
 /// <reference lib="webworker" />
 import { packYuv420 } from './yuv420'
-// One request at a time. Output is copied before signalling the protocol worker.
+// One request at a time. Message completion never blocks the protocol worker.
 const scope = self as unknown as DedicatedWorkerGlobalScope
 const decoders = new Map<number, { decoder: VideoDecoder; codec: string; timestamp: number }>()
 let control: Int32Array, pixels: Uint8Array
 let rawYuv = new Uint8Array(0)
-let active: { timestamp: number; done: boolean; yuv: boolean } | null = null
-function finish(status: number) { if (active?.done) return; if (active) active.done = true; Atomics.store(control, 0, status); Atomics.notify(control, 0) }
-function reset() { for (const d of decoders.values()) d.decoder.close(); decoders.clear() }
+let active: { timestamp: number; surface: number; done: boolean; yuv: boolean } | null = null
+function finish(status: number) {
+  if (!active || active.done) return
+  active.done = true
+  Atomics.store(control, 0, status)
+  // Keep notification for standalone decoder probes; production awaits a message.
+  Atomics.notify(control, 0)
+  scope.postMessage({ method: 'decoded', status, timestamp: active.timestamp })
+}
+function reset() { active = null; rawYuv = new Uint8Array(0); for (const d of decoders.values()) d.decoder.close(); decoders.clear() }
 function nalUnits(data: Uint8Array) {
   const starts: { offset: number; payload: number }[] = []
   for (let i = 0; i + 3 < data.length; i++) {
@@ -50,7 +57,7 @@ scope.onmessage = async ({ data: m }) => {
   }
   if (m.method === 'reset') { reset(); return }
   if (m.method !== 'decode') return
-  active = { timestamp: m.timestamp, done: false, yuv: m.yuv === true }
+  active = { timestamp: m.timestamp, surface: m.surface, done: false, yuv: m.yuv === true }
   try {
     const nals = nalUnits(m.data)
     const sps = nals.find(n => (n[0] & 31) === 7)
@@ -63,6 +70,7 @@ scope.onmessage = async ({ data: m }) => {
       if (!state && decoders.size >= 16) throw new Error('Too many AVC surfaces')
       const decoder = new VideoDecoder({
         output: async frame => {
+          const request = active
           try {
             if (active?.done || frame.timestamp !== active?.timestamp) throw new Error('Delayed AVC picture')
             // Decoders can expose padded coded rows outside the visible picture.
@@ -75,14 +83,21 @@ scope.onmessage = async ({ data: m }) => {
               const required=frame.allocationSize({rect})
               if(required>pixels.length)throw new Error('YUV allocation too large')
               if(rawYuv.length<required)rawYuv=new Uint8Array(required)
-              const layout=await frame.copyTo(rawYuv,{rect})
-              packYuv420(rawYuv,frame.format,layout,width,height,pixels)
-            } else await frame.copyTo(pixels, { format: 'RGBA', rect })
+              const source = rawYuv
+              const layout=await frame.copyTo(source,{rect})
+              if (active !== request) return
+              packYuv420(source,frame.format,layout,width,height,pixels)
+            } else {
+              const source = new Uint8Array(size)
+              await frame.copyTo(source, { format: 'RGBA', rect })
+              if (active !== request) return
+              pixels.set(source)
+            }
             Atomics.store(control, 1, width); Atomics.store(control, 2, height)
             finish(1)
-          } catch { finish(-1) } finally { frame.close() }
+          } catch { if (active === request) finish(-1) } finally { frame.close() }
         },
-        error: () => finish(-1),
+        error: () => { if (active?.surface === m.surface && decoders.get(m.surface)?.decoder === decoder) finish(-1) },
       })
       decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'no-preference' })
       state = { decoder, codec, timestamp: 0 }; decoders.set(m.surface, state)

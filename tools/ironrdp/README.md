@@ -231,3 +231,22 @@ AVC444 preferred: sustained tone, natural YouTube audio and a concurrent moving
 the measured scrolling intervals. Mixed legacy graphics still had underruns.
 The router now runs rc.3, and audio reserve limits are unchanged. See
 `../../router-plugin/output/rdp-acceptance.json` for measurements and limits.
+
+
+## Async decode and persistent GPU surfaces (uniterm.14)
+
+The session retains asynchronous WebCodecs preparation while it continues to
+receive network/audio/input traffic. Ordered commands and EndFrame ACKs are
+preserved, with only one command / two AVC444 pictures prepared at once.
+
+Hardware WebGL2 clients keep surfaces, copy operations and the volatile bitmap
+cache on the GPU. AVC420 color conversion and AVC444 reverse chroma/color
+conversion draw directly into those surfaces, avoiding the previous full RGBA
+CPU conversion/composition/readback path. Software clients keep the CPU renderer;
+context loss and mixed legacy graphics reconnect through the compatibility path.
+The Alpha codec may explicitly read a surface back for CPU read-modify-write.
+WebCodecs YUV extraction still copies data; this is not a zero-copy pipeline.
+
+See `../../docs/rdp-async-gpu-surfaces-20261115.md` for architecture, tests,
+matched-codec live results and limitations. GPU pixel harnesses print results
+without retaining screenshots or per-round acceptance snapshots.
