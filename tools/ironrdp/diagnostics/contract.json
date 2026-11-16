@@ -1,0 +1,114 @@
+{
+  "status": "isolated diagnostic implementation and one bounded valid live capture completed; production unchanged",
+  "switches": {
+    "presentationTrace": "uniterm.rdp.presentationTrace=1",
+    "flowTrace": "uniterm.rdp.flowTrace=1",
+    "flowRequiresBoth": true,
+    "runtimeEcho": "stats.flowTrace",
+    "default": "off; no JS callback installed"
+  },
+  "buffers": {
+    "worker": 16384,
+    "main": 262144,
+    "drainIntervalMs": 1000,
+    "invalidIf": "overflow>0 or drainGaps>0 or required spans incomplete",
+    "flowDisabledWorker": 4096,
+    "flowDisabledMain": 65536,
+    "dropSources": "total plus separate Worker/main dropped counters; Worker maximum drained batch and main retained peak recorded"
+  },
+  "clock": {
+    "eventTime": "session Worker performance.timeOrigin + performance.now() for Rust callback and websocket-delivered events",
+    "mainEvents": "main document epoch ms; recorded timeOrigin",
+    "crossHost": "source/calibration request brackets; not exact source frame identity"
+  },
+  "ids": {
+    "display": "existing snapshot/draw/local ACK batch ID",
+    "decode": "existing AVC request ID",
+    "rust": "loop sequence, async prepare-completed uses preparation loop ID",
+    "websocket": "separate delivery sequence plus socketId"
+  },
+  "stages": {
+    "ws-message-delivered": "existing stats listener ran; prior to separate gloo listener; bytes only",
+    "rdp-loop-state": "pending_count/bytes and prepared/preparing/priority bits before select",
+    "prepare-call-start/end": "synchronous pending H264 chunk extraction/copy and prepare call; end.ok before error propagation",
+    "prepare-completed": "async preparation future selected; end.ok before error propagation",
+    "rdp-network-selected": "next_work selected successfully parsed/framed PDU; payload byte count",
+    "network-process-start/end": "active_stage.process; end includes success and pending queue state",
+    "graphics-process-start/end": "process_pending_graphics; end includes success and pending queue state",
+    "canvas-render-start/end": "wait_for_frame continuation including resize/extract_partial_image/gui.draw; end.ok before error propagation",
+    "rdp-damage-enqueued": "GraphicsUpdate added to Rust damage accumulator",
+    "response-enqueued": "generic outgoing ResponseFrame accepted by writer queue, not a parsed protocol ACK",
+    "response-enqueue-failed": "same queue operation rejected"
+  },
+  "existingStages": [
+    "decode-start",
+    "decode-ready",
+    "damage",
+    "put-start",
+    "put-end",
+    "snapshot-start",
+    "bitmap-call-start",
+    "bitmap-call-returned",
+    "snapshot-ready",
+    "frame-sent",
+    "main-received",
+    "draw-start",
+    "draw-end",
+    "ack-sent",
+    "ack-received",
+    "worker-lag"
+  ],
+  "limits": [
+    "WebSocket event delivery is not physical wire arrival.",
+    "gloo copy/queue/framing/scheduling can merge or split data; no 1:1 mapping between WebSocket events, PDUs, pictures and display batches.",
+    "read_pdu elapsed wait would include waiting and parsing; it is not labeled CPU time.",
+    "Response writer queue is not server receipt and not protocol FrameAcknowledge.",
+    "Existing ack-sent/ack-received are local main/Worker display acknowledgements.",
+    "Trace spans are wall time, not attributed CPU samples.",
+    "Enabled hooks add overhead and may affect scheduling; newly observed stalls cannot retroactively explain old runs.",
+    "No payload, credential, URL or screen/audio content is logged by flow events.",
+    "prepare-completed timestamps future selection, not the earliest completion of its underlying Promise.",
+    "Loop-state to the next stage can include select waiting and unrelated JavaScript scheduling."
+  ],
+  "releaseAb": {
+    "app": "same diagnostics JS with flow off, presentation trace on, snapshotRegions=1, bufferCapacity=1",
+    "variants": [
+      "release package17 scalar",
+      "release package18 auto SIMD"
+    ],
+    "required": "actual worker resource URL plus fetched SHA256 before/after every round; never substitute hook WASM for release timing"
+  },
+  "localChecks": {
+    "flowAssertions": 19,
+    "drainAssertions": 9,
+    "drainRestartRegression": true,
+    "frontendSuites": 12,
+    "frontendTests": 87,
+    "strictTargetedTsc": true,
+    "rustReleaseBuild": true,
+    "capacitySuites": 3,
+    "capacityTests": 14
+  },
+  "overflowAttempt": {
+    "file": "../uniterm-simd-live/flow-video.json",
+    "valid": false,
+    "originalWorkerCapacity": 4096,
+    "originalMainCapacity": 65536,
+    "totalDropped": 36968,
+    "mainRetained": 65536,
+    "dropSourceLimitation": "Original build reported only aggregate drops, so exact split cannot be recovered from retained events. Main reached its limit; Worker was also limited to 4096 per drain. No causal stall inference from this truncated trace."
+  },
+  "validCapture": {
+    "file": "../uniterm-simd-live/flow-video-bounded.json",
+    "durationSeconds": 15,
+    "events": 99509,
+    "workerPeakBatch": 6226,
+    "mainPeakEvents": 99509,
+    "workerDropped": 0,
+    "mainDropped": 0,
+    "drainGaps": 0,
+    "maxSubmissionGapMs": 99.715087890625,
+    "gapsAbove100Ms": 0,
+    "limitation": "No >100ms event captured; no additional chase and no retrospective attribution of prior stalls."
+  }
+}

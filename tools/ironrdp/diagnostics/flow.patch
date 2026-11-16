@@ -1,0 +1,194 @@
+--- a/crates/ironrdp-web/src/session.rs
++++ b/crates/ironrdp-web/src/session.rs
+@@ -56,6 +56,34 @@
+ const DEFAULT_WIDTH: u16 = 1280;
+ const DEFAULT_HEIGHT: u16 = 720;
+ 
++// Isolated diagnostics build only. No hook is installed by the normal client.
++// The cached JS callback timestamps every event in the session Worker's clock
++// domain; no payload, URL, account or protocol bytes cross this boundary.
++struct FlowTrace {
++    callback: Option<js_sys::Function>,
++    serial: u32,
++}
++impl FlowTrace {
++    fn new() -> Self {
++        let callback = js_sys::Reflect::get(&js_sys::global(), &"unitermRdpFlowTrace".into())
++            .ok().and_then(|value| value.dyn_into::<js_sys::Function>().ok());
++        Self { callback, serial: 0 }
++    }
++    fn next_loop(&mut self) -> u32 {
++        if self.callback.is_some() { self.serial = self.serial.wrapping_add(1); }
++        self.serial
++    }
++    fn enabled(&self) -> bool { self.callback.is_some() }
++    fn record(&self, stage: u32, id: u32, a: usize, b: usize, c: usize) {
++        if let Some(callback) = &self.callback {
++            // Browser/WASM lengths fit u32; saturate unexpected diagnostic values.
++            let number = |value| JsValue::from(u32::try_from(value).unwrap_or(u32::MAX));
++            let _ = callback.call5(&JsValue::UNDEFINED, &stage.into(), &id.into(),
++                &number(a), &number(b), &number(c));
++        }
++    }
++}
++
+ #[derive(Clone, Copy)]
+ struct SecurityConfig {
+     enable_credssp: bool,
+@@ -837,6 +865,8 @@
+         let mut receive_budget = crate::graphics_scheduler::ReceiveBudget::default();
+         let mut graphics_prepare = None;
+         let mut graphics_prepared = false;
++        let mut flow = FlowTrace::new();
++        let mut preparation_id = 0;
+ 
+         // We retain the factory to drive the Deactivation-Reactivation Sequence locally.
+         let activation_factory = connection_result.activation_factory;
+@@ -857,22 +887,33 @@
+         let mut cleanup_interval = IntervalStream::new(5_000).fuse();
+ 
+         let disconnect_reason = 'outer: loop {
++            let flow_id = flow.next_loop();
+             // Keep connector finalization synchronous: it has no graphics pump.
+             // Once this loop owns the channel, network receipt can defer decoding.
+             if let Some(mut gfx) = active_stage.get_dvc_mut::<GraphicsPipelineClient>() {
+                 gfx.processor_mut().enable_deferred_processing();
+             }
+             if !graphics_prepared && graphics_prepare.is_none() {
+-                let chunks = active_stage.get_dvc::<GraphicsPipelineClient>()
+-                    .map(|gfx| gfx.processor().pending_h264_chunks()).transpose().context("prepare next graphics command")?.unwrap_or_default();
+-                graphics_prepare = crate::webcodecs::prepare(chunks)
+-                    .map_err(|_| anyhow::anyhow!("could not prepare AVC pictures"))?;
++                flow.record(2, flow_id, 0, 0, 0); // prepare-call-start (includes synchronous chunk copying)
++                let preparation = (|| {
++                    let chunks = active_stage.get_dvc::<GraphicsPipelineClient>()
++                        .map(|gfx| gfx.processor().pending_h264_chunks()).transpose().context("prepare next graphics command")?.unwrap_or_default();
++                    crate::webcodecs::prepare(chunks)
++                        .map_err(|_| anyhow::anyhow!("could not prepare AVC pictures"))
++                })();
++                flow.record(3, flow_id, usize::from(preparation.is_ok()),
++                    usize::from(preparation.as_ref().is_ok_and(|future| future.is_some())), 0);
++                graphics_prepare = preparation?;
++                preparation_id = flow_id;
+                 graphics_prepared = graphics_prepare.is_none();
+             }
+             let processing_started;
+             let (pending_count, pending_bytes) = active_stage.pending_graphics_work();
+             let pending_graphics = pending_count != 0;
+             let service_graphics = receive_budget.prioritize_graphics(pending_count, pending_bytes);
++            flow.record(1, flow_id, pending_count, pending_bytes,
++                usize::from(graphics_prepared) | (usize::from(graphics_prepare.is_some()) << 1)
++                    | (usize::from(service_graphics) << 2));
+             let outputs = select_biased! {
+                 decoded = async {
+                     match graphics_prepare.as_mut() {
+@@ -881,6 +922,7 @@
+                     }
+                 }.fuse() => {
+                     processing_started = js_sys::Date::now();
++                    flow.record(10, preparation_id, usize::from(decoded.is_ok()), 0, 0);
+                     decoded.map_err(|_| anyhow::anyhow!("asynchronous AVC decode failed"))?;
+                     graphics_prepare = None;
+                     graphics_prepared = true;
+@@ -888,23 +930,28 @@
+                 }
+                 _ = wait_for_frame(&mut animation_frame).fuse() => {
+                     processing_started = js_sys::Date::now();
+-                    animation_frame = None;
+-                    if self.render_canvas.width() != u32::from(image.width()) || self.render_canvas.height() != u32::from(image.height()) {
+-                        gui.resize(
+-                            NonZeroU32::new(u32::from(image.width())).context("zero graphics width")?,
+-                            NonZeroU32::new(u32::from(image.height())).context("zero graphics height")?,
+-                        );
+-                        damage.clear();
+-                        damage.add(ironrdp::pdu::geometry::InclusiveRectangle {
+-                            left: 0, top: 0, right: image.width() - 1, bottom: image.height() - 1,
+-                        });
+-                    }
+-                    for region in damage.take() {
+-                        let region = extract_partial_image(&image, region, &mut draw_buffer);
+-                        gui.draw(draw_buffer.filled_mut(), region).context("draw batched region")?;
+-                        draw_buffer.clear();
+-                    }
+-                    Vec::new()
++                    flow.record(12, flow_id, usize::from(image.width()), usize::from(image.height()), 0);
++                    let rendered = (|| -> anyhow::Result<Vec<ActiveStageOutput>> {
++                        animation_frame = None;
++                        if self.render_canvas.width() != u32::from(image.width()) || self.render_canvas.height() != u32::from(image.height()) {
++                            gui.resize(
++                                NonZeroU32::new(u32::from(image.width())).context("zero graphics width")?,
++                                NonZeroU32::new(u32::from(image.height())).context("zero graphics height")?,
++                            );
++                            damage.clear();
++                            damage.add(ironrdp::pdu::geometry::InclusiveRectangle {
++                                left: 0, top: 0, right: image.width() - 1, bottom: image.height() - 1,
++                            });
++                        }
++                        for region in damage.take() {
++                            let region = extract_partial_image(&image, region, &mut draw_buffer);
++                            gui.draw(draw_buffer.filled_mut(), region).context("draw batched region")?;
++                            draw_buffer.clear();
++                        }
++                        Ok(Vec::new())
++                    })();
++                    flow.record(13, flow_id, usize::from(rendered.is_ok()), 0, 0);
++                    rendered?
+                 }
+                 input_events = input_events.next() => {
+                     processing_started = js_sys::Date::now();
+@@ -1120,7 +1167,13 @@
+                         crate::graphics_scheduler::Work::Graphics => {
+                             processing_started = js_sys::Date::now();
+                             receive_budget.graphics_processed();
+-                            let outputs = active_stage.process_pending_graphics(&mut image)?;
++                            flow.record(7, flow_id, pending_count, pending_bytes, 0);
++                            let processed = active_stage.process_pending_graphics(&mut image);
++                            if flow.enabled() {
++                                let (count, bytes) = active_stage.pending_graphics_work();
++                                flow.record(8, flow_id, usize::from(processed.is_ok()), count, bytes);
++                            }
++                            let outputs = processed?;
+                             graphics_prepared = false;
+                             if active_stage.get_dvc::<GraphicsPipelineClient>().is_some_and(|gfx| gfx.processor().externally_composited()) {
+                                 damage.clear(); animation_frame = None;
+@@ -1134,9 +1187,16 @@
+                         crate::graphics_scheduler::Work::Network(frame) => {
+                             processing_started = js_sys::Date::now();
+                             let (action, payload) = frame.context("read frame")?;
++                            flow.record(4, flow_id, payload.len(), 0, 0);
+                             trace!(?action, frame_length = payload.len(), "Frame received");
+         
+-                            let outputs = active_stage.process(&mut image, action, &payload, framed.last_read_at())?;
++                            flow.record(5, flow_id, pending_count, pending_bytes, 0);
++                            let processed = active_stage.process(&mut image, action, &payload, framed.last_read_at());
++                            if flow.enabled() {
++                                let (count, bytes) = active_stage.pending_graphics_work();
++                                flow.record(6, flow_id, usize::from(processed.is_ok()), count, bytes);
++                            }
++                            let outputs = processed?;
+                             receive_budget.received(js_sys::Date::now() - processing_started);
+                             if !pending_graphics { graphics_prepared = false; }
+                             if framebuffer_dimensions != (image.width(), image.height()) {
+@@ -1184,15 +1244,19 @@
+             for out in outputs {
+                 match out {
+                     ActiveStageOutput::ResponseFrame(frame) => {
+-                        self.writer_tx
+-                            .unbounded_send(frame)
+-                            .context("Send frame to writer task")?;
++                        let bytes = frame.len();
++                        let queued = self.writer_tx.unbounded_send(frame);
++                        if flow.enabled() {
++                            flow.record(9, flow_id, bytes, self.writer_tx.len(), usize::from(queued.is_ok()));
++                        }
++                        queued.context("Send frame to writer task")?;
+                     }
+                     ActiveStageOutput::GraphicsUpdate(region) => {
+                         if active_stage.get_dvc::<GraphicsPipelineClient>().is_some_and(|gfx| gfx.processor().externally_composited()) {
+                             return Err(anyhow::anyhow!("RDP WebGL mixed graphics requires canvas context fallback").into());
+                         }
+                         damage.add(region);
++                        flow.record(11, flow_id, 0, 0, 0);
+                     }
+                     ActiveStageOutput::PointerDefault => {
+                         self.set_cursor_style(CursorStyle::Default)?;
