@@ -1,11 +1,11 @@
 # uniTerm KoolCenter 插件
 
-适配当前实测 TUF-BE3600 / 3006.102_37307 / aarch64 的离线安装包。插件版本 0.3.0-rc.3。
+适配当前实测 TUF-BE3600 / 3006.102_37307 / aarch64 的离线安装包。插件版本 0.3.0-rc.9。
 源码仓库：https://github.com/yunwan1x/uniterm.git。
 
 ## 安装与使用
 
-在软件中心的离线安装中上传 output/uniterm-0.3.0-rc.3-arm64.tar.gz，进入 uniTerm 设置页：
+在软件中心的离线安装中上传 `output/uniterm-0.3.0-rc.9-<提交前八位>-arm64.tar.gz`，进入 uniTerm 设置页：
 1. 默认端口 18888，可调整为未占用的 1024–65535 端口。
 2. 首次启用设置 6–24 字节管理员密码，管理员名 admin。
 3. 勾选启用，保存并应用，点击“打开 uniTerm”。
@@ -32,6 +32,7 @@ uniTerm 的账号隔离不是操作系统权限沙箱；服务使用路由器管
 在 Linux 上使用 Go 1.26.3、Node 22.22.0、wails3 v3.1.0、UPX 5.2.0：
 先以 CGO_ENABLED=0 go install -tags server github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0 安装构建工具，
 再运行 router-plugin/build.sh。Go 工具、Node、wails3 和 UPX 必须在 PATH 中。
+`package/uniterm/version` 是插件版本的唯一来源；构建脚本将版本和提交号同时写入前端、服务端及包名，安装器读取同一个文件更新软件中心版本。
 前端完整嵌入 uniterm-server，不需另装 Node、Docker 或 WebKit。
 后端使用 server,production 标签、CGO_ENABLED=0、-trimpath、-s -w。
 server 模式排除 backend/platform/remote_desktop_linux.go 的 GTK 全局键盘捕获，

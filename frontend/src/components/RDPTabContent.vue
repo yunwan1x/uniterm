@@ -123,12 +123,14 @@
     <RemoteDesktopToolbar
       v-if="isFullscreen && !floating"
       v-model:zoom="zoom"
+      :hold-open="floatingKeyboardOpen || filesOpen"
       :allow-fit="activeResolution !== 'adaptive'"
       selects
       :host="config?.host || ''"
       :port="config?.port || 3389"
       :disabled="status !== 'connected'"
       @restore="toggleFullscreen"
+      @interaction="onFocusOut"
       @focus-desktop="focusDesktop"
       @minimize="onFocusOut"
       @error="onToolbarError"

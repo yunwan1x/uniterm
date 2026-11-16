@@ -4,6 +4,7 @@ import {
   onBeforeUnmount,
   ref,
   shallowRef,
+  watch,
   type Ref,
 } from 'vue'
 
@@ -25,6 +26,7 @@ export function useFloatingWindow(
   const kind = ref<'inline' | 'page' | 'native' | 'window'>('inline')
   const target = shallowRef<HTMLElement | null>(null)
   const opening = ref(false)
+  const isFullscreen = ref(false)
   const notice = ref('')
   const geometry = ref({ x: 0, y: 0, width: 340, height: 640 })
   let pip: Window | null = null
@@ -33,6 +35,23 @@ export function useFloatingWindow(
   let generation = 0
   let cancelDrag = () => {}
   const floating = computed(() => kind.value !== 'inline')
+  let fullscreenOwner: Document | undefined
+  function syncFullscreen() {
+    const element = root.value
+    isFullscreen.value = !!element && element.ownerDocument.fullscreenElement === element
+  }
+  function observeFullscreen() {
+    const owner = root.value?.ownerDocument
+    if (owner !== fullscreenOwner) {
+      fullscreenOwner?.removeEventListener('fullscreenchange', syncFullscreen)
+      fullscreenOwner = owner
+      owner?.addEventListener('fullscreenchange', syncFullscreen)
+    }
+    syncFullscreen()
+  }
+  // A Teleport retains the root element while changing its owning document.
+  // Observe after Vue moves it so closing/restoring a popup also moves this listener.
+  const stopFullscreenWatch = watch([root, target, kind], observeFullscreen, { immediate: true, flush: 'post' })
   const style = computed(() =>
     kind.value === 'page'
       ? {
@@ -108,6 +127,10 @@ export function useFloatingWindow(
   async function restore() {
     const previous = pip
     generation++
+    const element = root.value
+    if (element && element.ownerDocument.fullscreenElement === element) {
+      try { await element.ownerDocument.exitFullscreen() } catch { /* The owner may already be closing. */ }
+    }
     returned()
     // Move teleported children back before disposing their document.
     await nextTick()
@@ -236,9 +259,12 @@ export function useFloatingWindow(
   async function fullscreen() {
     notice.value = ''
     try {
-      const owner = root.value?.ownerDocument ?? document
-      if (owner.fullscreenElement) await owner.exitFullscreen()
-      else await root.value?.requestFullscreen()
+      const element = root.value
+      if (!element) return
+      const owner = element.ownerDocument
+      if (owner.fullscreenElement === element) await owner.exitFullscreen()
+      else await element.requestFullscreen()
+      observeFullscreen()
     } catch (error) {
       notice.value = String(error)
     }
@@ -249,6 +275,14 @@ export function useFloatingWindow(
   onBeforeUnmount(() => {
     destroyed = true
     cancelDrag()
+    stopFullscreenWatch()
+    fullscreenOwner?.removeEventListener('fullscreenchange', syncFullscreen)
+    fullscreenOwner = undefined
+    isFullscreen.value = false
+    const element = root.value
+    if (element && element.ownerDocument.fullscreenElement === element) {
+      void element.ownerDocument.exitFullscreen().catch(() => {})
+    }
     window.removeEventListener('resize', clamp)
     window.removeEventListener('pagehide', closeChild)
     const previous = pip
@@ -259,6 +293,7 @@ export function useFloatingWindow(
     kind,
     target,
     opening,
+    isFullscreen,
     notice,
     floating,
     style,

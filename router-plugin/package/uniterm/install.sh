@@ -2,6 +2,8 @@
 . /koolshare/scripts/base.sh
 set -e
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+version=$(cat "$DIR/version")
+printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$' || { echo '安装包版本号无效'; exit 1; }
 [ "$(uname -m)" = aarch64 ] || { echo '此包仅支持 ARM64 路由器'; exit 1; }
 [ -d /koolshare ] && [ -d /koolshare/perp ] || { echo '需要 KoolCenter 软件中心'; exit 1; }
 # Upgrades stop the service before overwriting its existing binaries. Count
@@ -22,6 +24,7 @@ free=$(df -Pk /koolshare | awk 'END{print $4}')
 if [ -x /koolshare/scripts/uniterm_config.sh ]; then /koolshare/scripts/uniterm_config.sh stop; fi
 mkdir -p /koolshare/uniterm /koolshare/configs/uniterm /koolshare/scripts /koolshare/webs /koolshare/res /koolshare/init.d
 cp "$DIR"/bin/* /koolshare/uniterm/
+cp "$DIR/version" /koolshare/uniterm/version
 cp "$DIR"/scripts/* /koolshare/scripts/
 cp "$DIR"/webs/* /koolshare/webs/
 cp "$DIR"/res/* /koolshare/res/
@@ -37,5 +40,5 @@ dbus set softcenter_module_uniterm_install=1
 dbus set softcenter_module_uniterm_name=uniterm
 dbus set softcenter_module_uniterm_title=uniTerm
 dbus set softcenter_module_uniterm_description='Web 终端、文件传输与远程连接管理'
-dbus set softcenter_module_uniterm_version=0.3.0-rc.3
+dbus set "softcenter_module_uniterm_version=$version"
 echo '安装完成。请打开 uniTerm 插件设置首次密码并启用；升级后也需重新启用。'

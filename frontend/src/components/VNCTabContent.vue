@@ -70,11 +70,13 @@
     <RemoteDesktopToolbar
       v-if="isFullscreen"
       v-model:zoom="zoom"
+      :hold-open="!!regionEditor"
       v-model:show-dot-cursor="showDotCursor"
       :host="config?.host || ''"
       :port="config?.port || 5900"
       :disabled="status !== 'connected'"
       @restore="toggleFullscreen"
+      @interaction="blurDesktop"
       @focus-desktop="focusDesktop"
       @minimize="blurDesktop"
       @error="onToolbarError"

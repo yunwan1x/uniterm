@@ -56,6 +56,7 @@
       :resolution="resolution || undefined"
       :disabled="status !== 'connected'"
       @restore="toggleFullscreen"
+      @interaction="blurDesktop"
       @focus-desktop="focusDesktop"
       @minimize="blurDesktop"
       @error="onToolbarError"

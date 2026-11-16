@@ -15,19 +15,20 @@
           'android-floating-window': floatKind === 'window',
           'android-floating-native': floatKind === 'native' || floatKind === 'window',
           'android-toolbar-open': toolbarVisible,
+          'android-browser-fullscreen': isFullscreen,
         }"
         :style="floatingStyle"
       >
         <button
-          v-if="floatKind === 'page'"
+          v-if="floatKind === 'page' && !isFullscreen"
           class="android-resize"
           :aria-label="t('android.resizeFloating')"
           @pointerdown="dragFloating($event, true)"
         >
           ◢
         </button>
-        <div v-if="floatKind === 'page'" class="android-resize-edge android-resize-right" @pointerdown.stop="dragFloating($event, 'right')" />
-        <div v-if="floatKind === 'page'" class="android-resize-edge android-resize-bottom" @pointerdown.stop="dragFloating($event, 'bottom')" />
+        <div v-if="floatKind === 'page' && !isFullscreen" class="android-resize-edge android-resize-right" @pointerdown.stop="dragFloating($event, 'right')" />
+        <div v-if="floatKind === 'page' && !isFullscreen" class="android-resize-edge android-resize-bottom" @pointerdown.stop="dragFloating($event, 'bottom')" />
         <div
           ref="screen"
           class="android-screen"
@@ -38,6 +39,7 @@
           @pointermove="move"
           @pointerup="touch($event, 1)"
           @pointercancel="touch($event, 1)"
+          @lostpointercapture="releaseTouch"
           @wheel.prevent="wheel"
           @keydown="keyboard"
           @paste.prevent="paste"
@@ -165,22 +167,29 @@
         <p v-if="windowNotice" class="android-window-notice" role="status">
           {{ windowNotice }}
         </p>
-        <div v-if="(floatKind === 'native' || floatKind === 'window') && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
+        <div v-if="!isFullscreen && (floatKind === 'native' || floatKind === 'window') && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
           @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
           @pointerdown.prevent="toolbarPinned = true; showToolbar()" />
-        <button v-if="floatKind === 'native' || floatKind === 'window'" class="android-toolbar-handle"
+        <button v-if="!isFullscreen && (floatKind === 'native' || floatKind === 'window')" class="android-toolbar-handle"
           :aria-label="t('android.toggleToolbar')" :title="t('android.toggleToolbar')"
           :aria-expanded="toolbarVisible" aria-controls="android-pip-toolbar"
           @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
           @focus="showToolbar" @blur="scheduleHideToolbar"
           @click="toolbarPinned = !toolbarPinned; toolbarHovered = toolbarPinned"
         >{{ toolbarVisible ? '›' : '‹' }}</button>
-        <footer :id="floatKind === 'native' || floatKind === 'window' ? 'android-pip-toolbar' : undefined" aria-label="Android status"
+        <FullscreenToolbarShell
+          class="android-fullscreen-toolbar"
+          :active="isFullscreen"
+          :hold-open="anyPanelOpen"
+          @interaction="releaseTouch"
+          @focus-desktop="focusScreen"
+        >
+        <footer :id="!isFullscreen && (floatKind === 'native' || floatKind === 'window') ? 'android-pip-toolbar' : undefined" aria-label="Android status"
           @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
           @focusin="showToolbar" @focusout="scheduleHideToolbar"
         >
           <button
-            v-if="floatKind === 'page'"
+            v-if="floatKind === 'page' && !isFullscreen"
             class="android-drag"
             :title="t('android.dragFloating')"
             :aria-label="t('android.dragFloating')"
@@ -202,7 +211,7 @@
           </div>
           <div class="android-window-actions">
             <button
-              v-if="!floating"
+              v-if="!floating && !isFullscreen"
               :disabled="opening || !connected"
               :title="t('android.floating')"
               @click="openFloating"
@@ -211,17 +220,18 @@
                 t('android.floating')
               }}</span>
             </button>
-            <button v-if="!floating" :disabled="opening || !connected" :title="t('android.detachedWindow')" :aria-label="t('android.detachedWindow')" @click="openWindow(t('android.popupBlocked'))"><ExternalLink :size="17" /></button>
+            <button v-if="!floating && !isFullscreen" :disabled="opening || !connected" :title="t('android.detachedWindow')" :aria-label="t('android.detachedWindow')" @click="openWindow(t('android.popupBlocked'))"><ExternalLink :size="17" /></button>
             <button v-if="floating" :title="t('android.restore')" @click="restore">
               <PanelTop :size="15" /><span>{{ t('android.restore') }}</span>
             </button>
-            <button v-if="floating" :title="t(floatKind === 'window' ? 'android.maximizeWindow' : 'android.maximize')" :aria-label="t(floatKind === 'window' ? 'android.maximizeWindow' : 'android.maximize')" @click="maximize"><Maximize :size="17" /></button>
+            <button v-if="floating && !isFullscreen" :title="t(floatKind === 'window' ? 'android.maximizeWindow' : 'android.maximize')" :aria-label="t(floatKind === 'window' ? 'android.maximizeWindow' : 'android.maximize')" @click="maximize"><Maximize :size="17" /></button>
             <button
               v-if="floatKind !== 'native'"
-              :title="t('android.fullscreen')"
+              :title="t(isFullscreen ? 'remoteDesktop.exitFullscreen' : 'android.fullscreen')"
+              :aria-label="t(isFullscreen ? 'remoteDesktop.exitFullscreen' : 'android.fullscreen')"
               @click="fullscreen"
             >
-              <Maximize :size="15" /><span>{{ t('android.fullscreen') }}</span>
+              <component :is="isFullscreen ? Minimize : Maximize" :size="15" /><span>{{ t(isFullscreen ? 'remoteDesktop.exitFullscreen' : 'android.fullscreen') }}</span>
             </button>
             <button
               v-if="floating"
@@ -233,6 +243,7 @@
             </button>
           </div>
         </footer>
+        </FullscreenToolbarShell>
       </section>
     </Teleport>
   </div>
@@ -240,7 +251,8 @@
 <script setup lang="ts">
 import { qualityBitrates, qualityPresets, presetQuality, storedQuality, type QualityPreset } from '../android/quality'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { PictureInPicture2, PanelTop, Maximize, X, Smartphone, SlidersHorizontal, Scan, Camera, ArrowLeft, House, PanelsTopLeft, Volume2, Volume1, Power, RotateCw, Keyboard, Folder, Terminal, GripVertical, ExternalLink } from '@lucide/vue'
+import { PictureInPicture2, PanelTop, Maximize, Minimize, X, Smartphone, SlidersHorizontal, Scan, Camera, ArrowLeft, House, PanelsTopLeft, Volume2, Volume1, Power, RotateCw, Keyboard, Folder, Terminal, GripVertical, ExternalLink } from '@lucide/vue'
+import FullscreenToolbarShell from './FullscreenToolbarShell.vue'
 import { useFloatingWindow } from '../android/useFloatingWindow'
 import { androidDevicePresets } from '../android/devicePresets'
 import { androidErrorMessage } from '../android/errors'
@@ -315,10 +327,12 @@ const files = ref(false),
   path = ref('/sdcard/Download/'),
   busy = ref(false),
   fileStatus = ref('')
+const anyPanelOpen = computed(() => viewOpen.value || qualityOpen.value || resolutionOpen.value || textOpen.value || files.value || shellOpen.value)
 const {
   kind: floatKind,
   target: floatingTarget,
   opening,
+  isFullscreen,
   notice: windowNotice,
   floating,
   style: floatingStyle,
@@ -368,6 +382,8 @@ watch(
 )
 let client: AndroidClient | undefined,
   down = false,
+  activePointer: number | undefined,
+  lastTouch = { x: 0, y: 0 },
   mounted = true,
   sessionId = props.sessionId
 function update() {
@@ -417,7 +433,7 @@ async function connect(fresh = false) {
 async function reconnect() {
   if (switching.value) return
   switching.value = true
-  down = false
+  releaseTouch()
   connected.value = false
   error.value = ''
   try {
@@ -508,17 +524,16 @@ function touch(e: PointerEvent, action: number) {
     r = canvas.getBoundingClientRect()
   if (!r.width || !r.height) return
   if (action === 0) {
-    if (e.button !== 0) return
+    if (e.button !== 0 || down) return
     down = true
+    activePointer = e.pointerId
     screen.value?.setPointerCapture(e.pointerId)
     screen.value?.focus()
     client.enableAudio()
   }
-  if (!down) return
+  if (!down || e.pointerId !== activePointer) return
   e.preventDefault()
-  client.send({
-    type: 'touch',
-    action,
+  lastTouch = {
     x: Math.max(
       0,
       Math.min(
@@ -533,10 +548,22 @@ function touch(e: PointerEvent, action: number) {
         Math.floor(((e.clientY - r.top) / r.height) * client.height),
       ),
     ),
-    width: client.width,
-    height: client.height,
-  })
-  if (action === 1) down = false
+  }
+  client.send({ type: 'touch', action, ...lastTouch, width: client.width, height: client.height })
+  if (action === 1) clearTouchCapture()
+}
+function clearTouchCapture() {
+  const pointer = activePointer
+  down = false
+  activePointer = undefined
+  if (pointer !== undefined && screen.value?.hasPointerCapture(pointer)) screen.value.releasePointerCapture(pointer)
+}
+function releaseTouch() {
+  if (down && client) client.send({ type: 'touch', action: 1, ...lastTouch, width: client.width, height: client.height })
+  clearTouchCapture()
+}
+function focusScreen() {
+  screen.value?.focus({ preventScroll: true })
 }
 function wheel(e: WheelEvent) {
   if (source.value !== 'display') return
@@ -662,15 +689,7 @@ onMounted(() => {
   void connect()
 })
 onBeforeUnmount(() => {
-  if (down && client)
-    client.send({
-      type: 'touch',
-      action: 1,
-      x: 0,
-      y: 0,
-      width: client.width,
-      height: client.height,
-    })
+  releaseTouch()
   mounted = false
   window.removeEventListener('panel:reconnect', onReconnect)
   if (client) client.changed = () => {}
@@ -941,5 +960,80 @@ onBeforeUnmount(() => {
 .android-floating-window .android-screen:not(.android-pixel-view) :deep(canvas) {
   width: min(100cqw, calc(100cqh * var(--android-video-aspect)));
   height: auto;
+}
+/* Browser fullscreen keeps the screen rectangle fixed while the shared toolbar
+   moves above it. Native PiP and ordinary detached windows keep their side bar. */
+.android-browser-fullscreen {
+  display: flex;
+  overflow: hidden;
+}
+.android-browser-fullscreen .android-screen {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+.android-fullscreen-toolbar {
+  --fullscreen-toolbar-width: min(52rem, 100%);
+}
+.android-browser-fullscreen .android-fullscreen-toolbar :deep(.fullscreen-toolbar-content) {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.android-browser-fullscreen footer {
+  position: static;
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition: none;
+  overflow: hidden;
+}
+.android-browser-fullscreen .android-status-scroll {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+}
+.android-browser-fullscreen .android-window-actions {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+.android-browser-fullscreen .android-window-actions > button {
+  width: auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+}
+.android-browser-fullscreen .android-panel {
+  top: 64px;
+  right: 12px;
+  bottom: auto;
+  z-index: 45;
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100% - 76px);
+  box-sizing: border-box;
+  overflow: auto;
+}
+.android-browser-fullscreen .android-window-notice {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+@media (max-width: 640px) {
+  .android-browser-fullscreen .android-window-actions button span { display: none; }
 }
 </style>

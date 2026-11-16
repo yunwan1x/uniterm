@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 const { cleanup } = vi.hoisted(() => ({ cleanup: [] as (() => void)[] }))
 vi.mock('vue', async (original) => ({
   ...(await original<typeof import('vue')>()),
@@ -10,12 +10,12 @@ function childWindow() {
   return Object.assign(new EventTarget(), {
     close: vi.fn(),
     focus: vi.fn(),
-    document: {
+    document: Object.assign(new EventTarget(), {
       head: { appendChild: vi.fn() },
       body: { style: { cssText: '' } },
       documentElement: { style: { setProperty: vi.fn(), cssText: '' } },
       title: '',
-    },
+    }),
   })
 }
 beforeEach(() => {
@@ -28,11 +28,11 @@ beforeEach(() => {
       isSecureContext: true,
     }),
   )
-  vi.stubGlobal('document', {
+  vi.stubGlobal('document', Object.assign(new EventTarget(), {
     body: {},
     documentElement: {},
     querySelectorAll: () => [],
-  })
+  }))
   vi.stubGlobal('getComputedStyle', () => [])
 })
 afterEach(() => {
@@ -43,7 +43,7 @@ describe('Android floating window lifecycle', () => {
   it.each([[416,912,315,690],[912,416,690,315],[720,720,360,360]])('opens %sx%s video at matching %sx%s window dimensions',async(w,h,width,height)=>{
     const child=childWindow(),requestWindow=vi.fn().mockResolvedValue(child)
     Object.assign(window,{documentPictureInPicture:{requestWindow}})
-    const root=ref({querySelector:()=>({width:w,height:h})} as unknown as HTMLElement)
+    const root=ref({ownerDocument:document,querySelector:()=>({width:w,height:h})} as unknown as HTMLElement)
     const view=useFloatingWindow(root);await view.open()
     expect(requestWindow).toHaveBeenCalledWith({width,height,disallowReturnToOpener:true})
     expect(child.document.body.style.cssText).toContain('padding:0;')
@@ -52,7 +52,7 @@ describe('Android floating window lifecycle', () => {
   it('uses received video dimensions before the first canvas frame is drawn',async()=>{
     const requestWindow=vi.fn().mockResolvedValue(childWindow())
     Object.assign(window,{documentPictureInPicture:{requestWindow}})
-    const root=ref({querySelector:()=>({width:300,height:150})} as unknown as HTMLElement)
+    const root=ref({ownerDocument:document,querySelector:()=>({width:300,height:150})} as unknown as HTMLElement)
     await useFloatingWindow(root,undefined,()=>({width:416,height:912})).open()
     expect(requestWindow).toHaveBeenCalledWith({width:315,height:690,disallowReturnToOpener:true})
   })
@@ -223,13 +223,93 @@ describe('Android independent window', () => {
     expect(child.moveTo).toHaveBeenCalledWith(100,20);expect(child.resizeTo).toHaveBeenCalledWith(1400,980);expect(view.kind.value).toBe('window')
   })
   it('uses the child document when leaving fullscreen',async()=>{
-    const owner={fullscreenElement:{},exitFullscreen:vi.fn().mockResolvedValue(undefined)}
-    const view=useFloatingWindow(ref({ownerDocument:owner} as unknown as HTMLElement));await view.fullscreen()
+    const owner=Object.assign(new EventTarget(), {fullscreenElement:null as HTMLElement|null,exitFullscreen:vi.fn().mockImplementation(async()=>{owner.fullscreenElement=null})})
+    const root=ref({ownerDocument:owner} as unknown as HTMLElement)
+    owner.fullscreenElement=root.value
+    const view=useFloatingWindow(root);await view.fullscreen()
     expect(owner.exitFullscreen).toHaveBeenCalledOnce()
+    expect(view.isFullscreen.value).toBe(false)
   })
   it('closes child windows when the opener leaves',()=>{
     const child=childWindow();Object.assign(window,{open:vi.fn().mockReturnValue(child)})
     const view=useFloatingWindow(ref());view.openWindow();window.dispatchEvent(new Event('pagehide'))
     expect(child.close).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Android browser fullscreen ownership', () => {
+  function ownerDocument() {
+    return Object.assign(new EventTarget(), {
+      fullscreenElement: null as HTMLElement | null,
+      exitFullscreen: vi.fn(),
+    })
+  }
+  it('tracks only this Android root and follows browser-initiated exit', () => {
+    const owner = ownerDocument()
+    const root = ref({ ownerDocument: owner } as unknown as HTMLElement)
+    const view = useFloatingWindow(root)
+    owner.fullscreenElement = {} as HTMLElement
+    owner.dispatchEvent(new Event('fullscreenchange'))
+    expect(view.isFullscreen.value).toBe(false)
+    owner.fullscreenElement = root.value
+    owner.dispatchEvent(new Event('fullscreenchange'))
+    expect(view.isFullscreen.value).toBe(true)
+    owner.fullscreenElement = null
+    owner.dispatchEvent(new Event('fullscreenchange'))
+    expect(view.isFullscreen.value).toBe(false)
+  })
+  it('requests its own root without exiting an unrelated fullscreen element', async () => {
+    const owner = ownerDocument()
+    const requestFullscreen = vi.fn(async () => { owner.fullscreenElement = root.value })
+    const root = ref({ ownerDocument: owner, requestFullscreen } as unknown as HTMLElement)
+    owner.fullscreenElement = {} as HTMLElement
+    const view = useFloatingWindow(root)
+    await view.fullscreen()
+    expect(owner.exitFullscreen).not.toHaveBeenCalled()
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    expect(view.isFullscreen.value).toBe(true)
+    owner.fullscreenElement = null
+  })
+  it('moves its listener with the same teleported root and removes it on cleanup', async () => {
+    const first = ownerDocument(), second = ownerDocument()
+    const root = ref({ ownerDocument: first } as unknown as HTMLElement)
+    const view = useFloatingWindow(root)
+    const firstRemove = vi.spyOn(first, 'removeEventListener')
+    const secondRemove = vi.spyOn(second, 'removeEventListener')
+    Object.assign(root.value, { ownerDocument: second })
+    view.target.value = {} as HTMLElement
+    await nextTick()
+    expect(firstRemove).toHaveBeenCalledWith('fullscreenchange', expect.any(Function))
+    second.fullscreenElement = root.value
+    second.dispatchEvent(new Event('fullscreenchange'))
+    expect(view.isFullscreen.value).toBe(true)
+    Object.assign(root.value, { ownerDocument: first })
+    view.target.value = null
+    await nextTick()
+    expect(view.isFullscreen.value).toBe(false)
+    expect(secondRemove).toHaveBeenCalledWith('fullscreenchange', expect.any(Function))
+    second.dispatchEvent(new Event('fullscreenchange'))
+    expect(view.isFullscreen.value).toBe(false)
+    cleanup.splice(0).forEach(fn => fn())
+    first.fullscreenElement = root.value
+    first.dispatchEvent(new Event('fullscreenchange'))
+    expect(view.isFullscreen.value).toBe(false)
+  })
+  it('exits its owned fullscreen before restoring the floating view', async () => {
+    const owner = ownerDocument()
+    const root = ref({ ownerDocument: owner } as unknown as HTMLElement)
+    const restored = vi.fn()
+    const view = useFloatingWindow(root, restored)
+    await view.open()
+    owner.fullscreenElement = root.value
+    owner.exitFullscreen.mockImplementation(async () => {
+      expect(view.kind.value).toBe('page')
+      expect(restored).not.toHaveBeenCalled()
+      owner.fullscreenElement = null
+    })
+    await view.restore()
+    expect(owner.exitFullscreen).toHaveBeenCalledOnce()
+    expect(restored).toHaveBeenCalledOnce()
+    expect(view.isFullscreen.value).toBe(false)
   })
 })

@@ -1,34 +1,11 @@
 <template>
-  <div
-    class="remote-desktop-fullscreen-edge"
-    aria-hidden="true"
-    @pointerenter="showFullscreenToolbar"
-    @pointerleave="scheduleFullscreenToolbarHide"
-    @pointerdown.prevent="showFullscreenToolbar"
-  />
-  <div
-    ref="fullscreenToolbar"
+  <FullscreenToolbarShell
     class="remote-desktop-fullscreen-toolbar"
-    :class="{ 'is-hidden': !toolbarPinned && !toolbarExpanded, 'has-cursor-toggle': showDotCursor !== undefined, 'has-selects': selects }"
-    role="toolbar"
-    :aria-label="t('remoteDesktop.fullscreenToolbar')"
-    @pointerenter="showFullscreenToolbar"
-    @pointerleave="scheduleFullscreenToolbarHide"
-    @focusin="showFullscreenToolbar"
-    @focusout="scheduleFullscreenToolbarHide"
-    @contextmenu.prevent
+    :class="{ 'has-cursor-toggle': showDotCursor !== undefined, 'has-selects': selects }"
+    :hold-open="holdOpen"
+    @interaction="emit('interaction')"
+    @focus-desktop="focusDesktop"
   >
-    <button
-      class="remote-desktop-toolbar-btn remote-desktop-toolbar-pin"
-      :class="{ 'is-active': toolbarPinned }"
-      :aria-pressed="toolbarPinned"
-      :aria-label="t(toolbarPinned ? 'remoteDesktop.unpinToolbar' : 'remoteDesktop.pinToolbar')"
-      :title="t(toolbarPinned ? 'remoteDesktop.unpinToolbar' : 'remoteDesktop.pinToolbar')"
-      @click="toggleToolbarPin"
-    >
-      <Pin v-if="toolbarPinned" :size="16" />
-      <PinOff v-else :size="16" />
-    </button>
     <span class="remote-desktop-toolbar-host" :title="`${host}:${port}`">
       {{ host }}:{{ port }}
     </span>
@@ -80,21 +57,21 @@
     </button>
     <button
       class="remote-desktop-toolbar-btn remote-desktop-toolbar-restore"
-      :aria-label="t('remoteDesktop.restore')"
-      :title="t('remoteDesktop.restore')"
+      :aria-label="t('remoteDesktop.exitFullscreen')"
+      :title="t('remoteDesktop.exitFullscreen')"
       @click="emit('restore')"
     >
       <Copy :size="15" />
     </button>
-  </div>
+  </FullscreenToolbarShell>
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeUnmount } from 'vue'
-import { Pin, PinOff, Minus, Copy } from '@lucide/vue'
+import { Minus, Copy } from '@lucide/vue'
 import { Window } from '@wailsio/runtime'
 import { useI18n } from '../i18n'
 import RemoteDesktopZoomSelect from './RemoteDesktopZoomSelect.vue'
+import FullscreenToolbarShell from './FullscreenToolbarShell.vue'
 import type { RdpZoom } from '../utils/rdpZoom'
 
 const { t } = useI18n()
@@ -111,49 +88,20 @@ withDefaults(defineProps<{
   selects?: boolean
   showDotCursor?: boolean
   disabled: boolean
-}>(), { showDotCursor: undefined, resolution: undefined, allowFit: true, selects: false })
+  holdOpen?: boolean
+}>(), { showDotCursor: undefined, resolution: undefined, allowFit: true, selects: false, holdOpen: false })
 const emit = defineEmits<{
   'update:zoom': [value: RdpZoom]
   'update:showDotCursor': [value: boolean]
   restore: []
   focusDesktop: []
+  interaction: []
   minimize: []
   error: [error: unknown]
 }>()
 
-const fullscreenToolbar = ref<HTMLDivElement | null>(null)
-const toolbarPinned = ref(true)
-const toolbarExpanded = ref(true)
-let toolbarHideTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearToolbarHideTimer() {
-  if (toolbarHideTimer !== null) clearTimeout(toolbarHideTimer)
-  toolbarHideTimer = null
-}
-
-function showFullscreenToolbar() {
-  clearToolbarHideTimer()
-  toolbarExpanded.value = true
-}
-
-function scheduleFullscreenToolbarHide() {
-  clearToolbarHideTimer()
-  if (toolbarPinned.value) return
-  toolbarHideTimer = setTimeout(() => {
-    toolbarHideTimer = null
-    if (!fullscreenToolbar.value?.matches(':hover, :focus-within')) toolbarExpanded.value = false
-  }, 600)
-}
-
 function focusDesktop() {
   emit('focusDesktop')
-}
-
-function toggleToolbarPin() {
-  toolbarPinned.value = !toolbarPinned.value
-  showFullscreenToolbar()
-  focusDesktop()
-  scheduleFullscreenToolbarHide()
 }
 
 async function minimizeWindow() {
@@ -166,48 +114,15 @@ async function minimizeWindow() {
   }
 }
 
-onBeforeUnmount(clearToolbarHideTimer)
 </script>
 
 <style scoped>
-.remote-desktop-fullscreen-edge {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  z-index: 20;
-}
-.remote-desktop-fullscreen-toolbar {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  z-index: 21;
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  width: min(36rem, 100%);
-  min-width: 0;
-  padding: 0.25rem 0.5rem;
-  box-sizing: border-box;
-  border: 1px solid var(--border-default);
-  border-top: 0;
-  border-radius: 0 0 0.625rem 0.625rem;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  box-shadow: 0 0.25rem 1rem #0006;
-  transform: translateX(-50%);
-  transition: transform 160ms ease, visibility 160ms;
-  --wails-draggable: no-drag;
-}
 .remote-desktop-fullscreen-toolbar.has-cursor-toggle {
-  width: min(44rem, 100%);
-  flex-wrap: wrap;
+  --fullscreen-toolbar-width: min(44rem, 100%);
 }
-/* RDP embeds three selects in the toolbar; give them room to breathe. */
+/* RDP embeds three selects; retain enough space without resizing the canvas. */
 .remote-desktop-fullscreen-toolbar.has-selects {
-  width: min(52rem, 100%);
-  flex-wrap: wrap;
+  --fullscreen-toolbar-width: min(52rem, 100%);
 }
 .remote-desktop-fullscreen-toolbar :deep(.rdp-status-label),
 .remote-desktop-fullscreen-toolbar .remote-desktop-toolbar-scale > span {
@@ -215,11 +130,6 @@ onBeforeUnmount(clearToolbarHideTimer)
 }
 .remote-desktop-fullscreen-toolbar :deep(.rdp-status-sep) {
   color: var(--text-disabled);
-}
-.remote-desktop-fullscreen-toolbar.is-hidden {
-  transform: translate(-50%, -100%);
-  visibility: hidden;
-  pointer-events: none;
 }
 .remote-desktop-toolbar-btn {
   display: flex;
@@ -239,10 +149,6 @@ onBeforeUnmount(clearToolbarHideTimer)
 .remote-desktop-toolbar-btn:focus-visible {
   background: var(--bg-hover);
   color: var(--text-primary);
-}
-.remote-desktop-toolbar-pin.is-active {
-  color: var(--accent);
-  background: var(--bg-hover);
 }
 .remote-desktop-toolbar-host {
   flex: 1;
@@ -286,8 +192,5 @@ onBeforeUnmount(clearToolbarHideTimer)
   min-height: 1.5rem;
   height: 1.5rem;
   font-size: 0.75rem;
-}
-@media (prefers-reduced-motion: reduce) {
-  .remote-desktop-fullscreen-toolbar { transition: none; }
 }
 </style>
