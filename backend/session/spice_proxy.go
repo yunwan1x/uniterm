@@ -29,6 +29,7 @@ type SPICEProxy struct {
 	conns     map[*websocket.Conn]net.Conn
 	ctx       context.Context
 	cancel    context.CancelFunc
+	heartbeat sessionWebSocketHeartbeatOptions
 }
 
 func NewSPICEProxy(target string) *SPICEProxy {
@@ -130,6 +131,9 @@ func (p *SPICEProxy) handleWebSocket(ws *websocket.Conn) {
 	}
 	p.conns[ws] = tcp
 	p.mu.Unlock()
+
+	stopHeartbeat := startSessionWebSocketHeartbeat(ws, p.heartbeat, func() { tcp.Close() })
+	defer stopHeartbeat()
 
 	readDone := make(chan struct{})
 	go func() {

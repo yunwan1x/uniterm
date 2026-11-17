@@ -165,6 +165,7 @@ type RDPProxy struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	options          RDPOptions
+	heartbeat        sessionWebSocketHeartbeatOptions
 }
 
 type RDPOptions struct {
@@ -313,7 +314,9 @@ func (p *RDPProxy) handleWebSocket(ws *websocket.Conn) {
 
 	// First WebSocket message: DER-encoded RDCleanPath Request carrying the
 	// client's X.224 ConnectionRequest (TPKT-framed, forwarded verbatim).
+	_ = ws.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, reqDER, err := ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Time{})
 	if err != nil {
 		log.Writef("[RDPProxy] WebSocket read (rdcleanpath request) failed: %v", err)
 		ws.Close()
@@ -395,6 +398,12 @@ func (p *RDPProxy) handleWebSocket(ws *websocket.Conn) {
 		upstreamConn.Close()
 		return
 	}
+
+	stopHeartbeat := startSessionWebSocketHeartbeat(ws, p.heartbeat, func() {
+		cancel()
+		upstreamConn.Close()
+	})
+	defer stopHeartbeat()
 
 	var relayWG sync.WaitGroup
 	relayWG.Add(2)

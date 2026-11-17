@@ -67,6 +67,7 @@ type AndroidSession struct {
 	sockets                                     []io.ReadWriteCloser
 	ws                                          *websocket.Conn
 	serving                                     bool
+	heartbeat                                   sessionWebSocketHeartbeatOptions
 	videoSource                                 string
 	videoBitrate                                int
 	once                                        sync.Once
@@ -263,9 +264,17 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 	up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	ws, err := up.Upgrade(w, r, nil)
 	if err != nil {
+		s.mu.Lock()
+		s.serving = false
+		s.mu.Unlock()
 		return
 	}
+	defer ws.Close()
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.ws = ws
 	s.mu.Unlock()
 	defer s.Disconnect()
@@ -345,6 +354,8 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	ws.SetReadLimit(64 * 1024)
+	stopHeartbeat := startSessionWebSocketHeartbeat(ws, s.heartbeat, s.cancel)
+	defer stopHeartbeat()
 	for {
 		_, data, e := ws.ReadMessage()
 		if e != nil {

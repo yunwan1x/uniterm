@@ -58,15 +58,16 @@ type SessionClaims struct {
 
 // WorkerInstance tracks a per-user headless `uniterm-server` worker process.
 type WorkerInstance struct {
-	Username   string
-	Port       int
-	TargetURL  *url.URL
-	Proxy      *httputil.ReverseProxy
-	Cmd        *exec.Cmd
-	LastActive time.Time
-	done       chan struct{} // closed once the process has exited and been reaped
-	waitErr    error
-	mu         sync.Mutex
+	Username       string
+	Port           int
+	TargetURL      *url.URL
+	Proxy          *httputil.ReverseProxy
+	Cmd            *exec.Cmd
+	LastActive     time.Time
+	activeSessions int           // protected by mu; session relays pin this process until they finish
+	done           chan struct{} // closed once the process has exited and been reaped
+	waitErr        error
+	mu             sync.Mutex
 
 	// ready is closed once the HTTP port is listening, or spawning failed
 	// (readyErr then explains why). Concurrent first-screen requests wait on
@@ -272,19 +273,20 @@ func (gw *MultiUserGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 5. Route to the user's dedicated isolated uniterm-server worker
 	// instance, forwarding the cached login password so a respawned worker
 	// can silently re-unlock its master-password credential store.
-	worker, err := gw.getOrSpawnWorker(claims.Username, true)
+	sessionRelay := strings.HasPrefix(r.URL.Path, "/api/web/session-proxy/")
+	worker, release, err := gw.workerForRequest(claims.Username, sessionRelay)
 	if err != nil {
 		log.Printf("[uniterm-gateway] failed to spawn worker for %s: %v", claims.Username, err)
 		http.Error(w, fmt.Sprintf("Failed to start isolated workspace for user %s: %v", claims.Username, err), http.StatusBadGateway)
 		return
 	}
 
-	worker.Touch()
+	defer release()
 
 	// Session proxies ride a dedicated relay (see serveSessionProxyRelay):
 	// the worker's wails asset server rejects WebSocket upgrades on /api/web
 	// before the session-proxy route is reached.
-	if strings.HasPrefix(r.URL.Path, "/api/web/session-proxy/") {
+	if sessionRelay {
 		gw.serveSessionProxyRelay(w, r, worker)
 		return
 	}
@@ -750,35 +752,8 @@ func (gw *MultiUserGateway) reapIdleWorkersLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			now := time.Now()
-			var stale []string
-			gw.workersMu.Lock()
-			for username, inst := range gw.workers {
-				inst.mu.Lock()
-				idle := now.Sub(inst.LastActive)
-				inst.mu.Unlock()
-				if idle > gw.workerIdleTimeout {
-					stale = append(stale, username)
-				}
-			}
-			gw.workersMu.Unlock()
-
-			for _, username := range stale {
-				// HTTP-request activity alone misses WebSocket-only usage (a
-				// user watching terminal output streams over the event
-				// channel). Ask the worker when it last emitted an event
-				// before tearing it down; unreachable workers are dead
-				// anyway and get reaped.
-				gw.workersMu.Lock()
-				inst, ok := gw.workers[username]
-				gw.workersMu.Unlock()
-				if ok && workerRecentlyActive(inst, gw.workerIdleTimeout) {
-					continue
-				}
-				log.Printf("[uniterm-gateway] Stopping idle worker for user=%s", username)
-				gw.stopWorker(username)
-			}
+		case now := <-ticker.C:
+			gw.reapIdleWorkers(now)
 		}
 	}
 }

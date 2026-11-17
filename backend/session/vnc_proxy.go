@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -21,8 +22,10 @@ type VNCProxy struct {
 	// authToken scopes the proxy's path in server mode; also the registry
 	// key for the /api/web dispatch.
 	authToken string
-	stopCh    chan struct{}
-	stopOnce  sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	stopped   bool
+	heartbeat sessionWebSocketHeartbeatOptions
 	wg        sync.WaitGroup
 	mu        sync.Mutex
 	wsConn    *websocket.Conn
@@ -30,14 +33,20 @@ type VNCProxy struct {
 }
 
 func NewVNCProxy(target string) *VNCProxy {
-	return &VNCProxy{
-		target: target,
-		stopCh: make(chan struct{}),
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &VNCProxy{target: target, ctx: ctx, cancel: cancel}
 }
 
 // Start begins listening on a random local port and returns the WebSocket URL.
 func (p *VNCProxy) Start() (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return "", fmt.Errorf("vnc proxy stopped")
+	}
+	if p.listener != nil {
+		return "", fmt.Errorf("vnc proxy already started")
+	}
 	var token [16]byte
 	if _, err := rand.Read(token[:]); err != nil {
 		return "", fmt.Errorf("vnc proxy token: %w", err)
@@ -80,104 +89,99 @@ func (p *VNCProxy) Start() (string, error) {
 }
 
 func (p *VNCProxy) handleWebSocket(ws *websocket.Conn) {
+	defer ws.Close()
 	p.mu.Lock()
-	if p.wsConn != nil {
+	if p.stopped || p.wsConn != nil {
 		p.mu.Unlock()
-		log.Writef("[VNCProxy] Rejecting additional WebSocket connection")
-		ws.Close()
+		log.Writef("[VNCProxy] Rejecting additional or stopped WebSocket connection")
 		return
 	}
 	p.wsConn = ws
+	// Stop sets stopped under the same mutex before waiting, so no handler
+	// can add to the wait group after shutdown starts.
+	p.wg.Add(1)
 	p.mu.Unlock()
-	log.Writef("[VNCProxy] WebSocket client connected")
-
-	// Clean up wsConn when this client disconnects so new clients can connect.
+	defer p.wg.Done()
 	defer func() {
 		p.mu.Lock()
 		if p.wsConn == ws {
-			p.wsConn = nil
+			p.wsConn, p.tcpConn = nil, nil
 		}
 		p.mu.Unlock()
 	}()
+	log.Writef("[VNCProxy] WebSocket client connected")
 
-	tcp, err := net.DialTimeout("tcp", p.target, 5*time.Second)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	tcp, err := dialer.DialContext(p.ctx, "tcp", p.target)
 	if err != nil {
 		log.Writef("[VNCProxy] TCP dial to %s failed: %v", p.target, err)
-		ws.Close()
 		return
 	}
-	log.Writef("[VNCProxy] TCP connection to %s established", p.target)
-
+	defer tcp.Close()
 	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		return
+	}
 	p.tcpConn = tcp
 	p.mu.Unlock()
+	log.Writef("[VNCProxy] TCP connection to %s established", p.target)
 
-	p.wg.Add(2)
-
+	stopHeartbeat := startSessionWebSocketHeartbeat(ws, p.heartbeat, func() { tcp.Close() })
+	defer stopHeartbeat()
+	readDone := make(chan struct{})
 	go func() {
-		defer p.wg.Done()
+		defer close(readDone)
 		defer tcp.Close()
+		defer ws.Close()
 		for {
-			select {
-			case <-p.stopCh:
-				return
-			default:
-			}
 			msgType, data, err := ws.ReadMessage()
 			if err != nil {
-				log.Writef("[VNCProxy] WebSocket read error: %v", err)
 				return
 			}
 			if msgType == websocket.BinaryMessage {
 				if _, err := tcp.Write(data); err != nil {
-					log.Writef("[VNCProxy] TCP write error: %v", err)
 					return
 				}
 			}
 		}
 	}()
-
-	go func() {
-		defer p.wg.Done()
-		defer ws.Close()
-		buf := make([]byte, 32768)
-		for {
-			select {
-			case <-p.stopCh:
-				return
-			default:
-			}
-			n, err := tcp.Read(buf)
-			if err != nil {
-				log.Writef("[VNCProxy] TCP read error: %v", err)
-				return
-			}
-			if err := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-				log.Writef("[VNCProxy] WebSocket write error: %v", err)
+	defer func() {
+		tcp.Close()
+		ws.Close()
+		<-readDone
+	}()
+	// Keep ownership until both directions stop; returning immediately used
+	// to clear wsConn while the old relay was still consuming the stream.
+	buf := make([]byte, 32768)
+	for {
+		n, err := tcp.Read(buf)
+		if n > 0 {
+			if writeErr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
 				return
 			}
 		}
-	}()
+		if err != nil {
+			return
+		}
+	}
 }
 
-// Stop closes all connections and waits for goroutines to exit.
+// Stop closes all connections and waits for their owning handlers to exit.
 func (p *VNCProxy) Stop() {
-	p.stopOnce.Do(func() { close(p.stopCh) })
-	unregisterSessionProxyHandler(p.authToken)
 	p.mu.Lock()
+	p.stopped = true
+	p.cancel()
+	unregisterSessionProxyHandler(p.authToken)
 	if p.wsConn != nil {
 		p.wsConn.Close()
 	}
 	if p.tcpConn != nil {
 		p.tcpConn.Close()
 	}
-	p.mu.Unlock()
-	// Close the listener BEFORE wg.Wait() so handleWebSocket can exit
-	// and add to the wait group cleanly — otherwise a new connection
-	// accepted in the window between listener.Close() and wg.Wait()
-	// adds goroutines that never reach Done (SESSION-04).
 	if p.listener != nil {
 		p.listener.Close()
 	}
+	p.mu.Unlock()
 	p.wg.Wait()
 }
