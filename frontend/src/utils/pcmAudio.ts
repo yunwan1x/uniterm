@@ -24,6 +24,44 @@ type AudioChunk = { buffer: AudioBuffer; offset: number; duration: number }
 type ScheduledAudio = AudioChunk & { start: number; end: number }
 
 export class PcmAudioPlayer {
+  private inputControl: MessagePort | null = null
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private recoveryInFlight = false
+  private recoveryAttempts = 0
+  private processorFailures = 0
+  private faulted = false
+
+  private attachInput() {
+    if (!this.worklet || !this.inputControl || this.disposed) return
+    const channel = new MessageChannel()
+    this.worklet.port.postMessage({ type: 'attach', port: channel.port1 }, [channel.port1])
+    this.inputControl.postMessage({ type: 'attach', port: channel.port2 }, [channel.port2])
+  }
+
+  private processorFailed(node: AudioWorkletNode) {
+    if (this.disposed || this.worklet !== node) return
+    this.processorFailures++
+    node.onprocessorerror = null; node.port.onmessage = null
+    node.disconnect(); node.port.close(); this.worklet = null
+    this.workletStats = null; this.faulted = true
+    this.inputControl?.postMessage({ type: 'detach' })
+    this.onBlocked(this.enabled)
+    this.scheduleRecovery()
+    this.statsListener?.()
+  }
+
+  private scheduleRecovery() {
+    if (this.disposed || !this.enabled || !this.faulted || this.recoveryTimer || this.recoveryInFlight || this.recoveryAttempts >= 3) return
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null
+      if (this.disposed || !this.enabled || !this.faulted || !this.context) return
+      this.recoveryAttempts++
+      this.recoveryInFlight = true
+      this.workletReady = this.setupWorklet(this.context)
+      void this.workletReady.then(() => { this.recoveryInFlight = false; if (this.faulted) this.scheduleRecovery() })
+    }, 250 * (this.recoveryAttempts + 1))
+  }
+
   private context: AudioContext | null = null
   private worklet: AudioWorkletNode | null = null
   private workletReady: Promise<void> | null = null
@@ -37,8 +75,15 @@ export class PcmAudioPlayer {
     if (this.disposed) return null
     try { this.ensureContext(); await this.workletReady } catch { return null }
     if (!this.worklet || this.disposed) return null
+    // Stable control port; PCM still flows directly from worker to worklet.
+    if (this.inputControl) return null
     const channel = new MessageChannel()
-    this.worklet.port.postMessage({ type: 'attach', port: channel.port1 }, [channel.port1])
+    this.inputControl = channel.port1
+    this.inputControl.onmessage = ({ data }) => {
+      if (!this.disposed && data.type === 'volume') this.setVolume(data.left, data.right)
+    }
+    this.inputControl.start()
+    this.attachInput()
     return channel.port2
   }
 
@@ -48,7 +93,7 @@ export class PcmAudioPlayer {
       await ctx.audioWorklet.addModule(workletUrl)
       if (this.disposed || this.context !== ctx) return
       const node = new AudioWorkletNode(ctx, 'uniterm-pcm', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
-      node.onprocessorerror = () => { this.onBlocked(true) }
+      node.onprocessorerror = () => this.processorFailed(node)
       node.port.onmessage = ({ data }) => {
         if (this.disposed || data.type !== 'stats') return
         this.workletStats = data.stats
@@ -61,6 +106,10 @@ export class PcmAudioPlayer {
       node.port.postMessage({ type: 'active', value: ctx.state === 'running' })
       node.port.postMessage({ type: 'volume', left: this.volume[0], right: this.volume[1] })
       node.connect(ctx.destination)
+      this.faulted = false
+      this.attachInput()
+      this.onBlocked(this.enabled && ctx.state !== 'running')
+      this.statsListener?.()
     } catch { /* Older/insecure engines retain bounded AudioBuffer playback. */ }
   }
   private splitter: ChannelSplitterNode | null = null
@@ -100,7 +149,7 @@ export class PcmAudioPlayer {
       this.worklet?.port.postMessage({ type: 'active', value: ctx.state === 'running' })
       if (this.disposed || !this.enabled) return
       if (ctx.state !== 'running') this.clear()
-      this.onBlocked(ctx.state !== 'running')
+      this.onBlocked(this.faulted || ctx.state !== 'running')
     }
     return ctx
   }
@@ -108,10 +157,11 @@ export class PcmAudioPlayer {
   /** Must also be called synchronously from a trusted pointer/key gesture. */
   unlock() {
     if (!this.enabled || this.disposed) return
+    if (this.faulted) this.scheduleRecovery()
     try {
       const ctx = this.ensureContext()
-      if (!ctx || ctx.state === 'running') { if (ctx) this.onBlocked(false); return }
-      void ctx.resume().then(() => { if (!this.disposed && this.enabled) this.onBlocked(ctx.state !== 'running') }).catch(() => {
+      if (!ctx || ctx.state === 'running') { if (ctx) this.onBlocked(this.faulted); return }
+      void ctx.resume().then(() => { if (!this.disposed && this.enabled) this.onBlocked(this.faulted || ctx.state !== 'running') }).catch(() => {
         if (!this.disposed && this.enabled) this.onBlocked(true)
       })
     } catch { /* No Web Audio implementation; never break the RDP connection. */ }
@@ -129,6 +179,7 @@ export class PcmAudioPlayer {
       this.unlock()
       return
     }
+    if (this.faulted) return
     if (this.worklet) {
       // Copy before transfer: some callers provide views into the WASM heap.
       const copy = data.slice()
@@ -228,8 +279,9 @@ export class PcmAudioPlayer {
   }
 
   getStats() {
-    if (this.worklet) return { ...this.counters, ...this.format, ...this.workletStats, backend: 'audio-worklet', enabled: this.enabled, state: this.disposed ? 'closed' : this.context?.state ?? 'uninitialized' }
-    return { backend: 'buffer-source', ...this.counters, ...this.format, enabled: this.enabled, queuedMs: Math.max(0, this.nextTime - (this.context?.currentTime ?? 0)) * 1000,
+    const recovery = { processorFailures: this.processorFailures, recoveryAttempts: this.recoveryAttempts, recovering: this.faulted }
+    if (this.worklet) return { ...recovery, ...this.counters, ...this.format, ...this.workletStats, backend: 'audio-worklet', enabled: this.enabled, state: this.disposed ? 'closed' : this.context?.state ?? 'uninitialized' }
+    return { ...recovery, backend: 'buffer-source', ...this.counters, ...this.format, enabled: this.enabled, queuedMs: Math.max(0, this.nextTime - (this.context?.currentTime ?? 0)) * 1000,
       targetMs: this.target * 1000, jitterMs: this.jitter * 1000, sources: this.sources.size, state: this.disposed ? 'closed' : this.context?.state ?? 'uninitialized' }
   }
 
@@ -237,6 +289,8 @@ export class PcmAudioPlayer {
   setEnabled(enabled: boolean) {
     if (this.enabled === enabled || this.disposed) return
     this.enabled = enabled
+    if (enabled && this.faulted) { this.recoveryAttempts = 0; this.scheduleRecovery() }
+    if (!enabled && this.recoveryTimer) { clearTimeout(this.recoveryTimer); this.recoveryTimer = null }
     this.worklet?.port.postMessage({ type: 'enabled', value: enabled })
     if (!enabled) {
       this.clear()
@@ -266,8 +320,11 @@ export class PcmAudioPlayer {
 
   dispose() {
     this.disposed = true
+    if (this.recoveryTimer) { clearTimeout(this.recoveryTimer); this.recoveryTimer = null }
+    this.inputControl?.postMessage({ type: 'detach' })
+    this.inputControl?.close(); this.inputControl = null
     this.clear()
-    if (this.worklet) { this.worklet.port.onmessage = null; this.worklet.port.close(); this.worklet.disconnect(); this.worklet = null }
+    if (this.worklet) { this.worklet.onprocessorerror = null; this.worklet.port.onmessage = null; this.worklet.port.close(); this.worklet.disconnect(); this.worklet = null }
     this.statsListener = null
     if (this.context) {
       this.context.onstatechange = null

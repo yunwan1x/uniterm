@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import { AudioTransport } from './audio-transport'
 import { DesktopDamage } from './damage'
 import { PreparedAvc } from './async-avc'
 import { GpuCompositor } from './gpu-compositor'
@@ -154,11 +155,8 @@ scope.onmessage = async ({ data: m }) => {
           gpu.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();stopped=true;event('workerError','RDP WebGL context lost')})
         } catch (error) { gpu=undefined; gpuReason = error instanceof Error ? error.message.replace(/[\r\n]/g, ' ').slice(0, 160) : 'initialization-failed' }
         await mod.default(); try { mod.setup('warn') } catch {}
-        let audioPending = 0, lastAudioAt: number | undefined, lastAudioSource: number | undefined, lastAudioDuration = 0
-        if (audioPort) {
-          audioPort.onmessage = ({ data }: MessageEvent) => { if (data.type === 'consumed') audioPending = Math.max(0, audioPending - data.bytes) }
-          audioPort.start()
-        }
+        let lastAudioAt: number | undefined, lastAudioSource: number | undefined, lastAudioDuration = 0
+        const audioTransport = audioPort ? new AudioTransport(audioPort) : null
         let avc: Record<string, unknown>
         try { avc = await setupAvc(extensions.webcodecs_enabled !== false) }
         catch (error) {
@@ -202,12 +200,11 @@ scope.onmessage = async ({ data: m }) => {
               }
               lastAudioAt=now;lastAudioSource=sourceTimestamp;lastAudioDuration=data.byteLength/((rate||1)*(channels||1)*(bits||8)/8)*1000;stats.audioPackets++
               // Suspended audio renderers must not accumulate unbounded port messages.
-              if (audioPending + data.byteLength > 256 * 1024) return
-              audioPending += data.byteLength
+              if (!audioTransport?.canSend(data.byteLength)) return
               const copy = data.slice()
-              audioPort.postMessage({ type: 'pcm', data: copy, rate, channels, bits }, [copy.buffer])
+              audioTransport.send({ type: 'pcm', data: copy, rate, channels, bits }, [copy.buffer])
             } else if (kind === 'volume') audioPort.postMessage({ type: 'volume', left: data, right: rate })
-            else if (kind === 'close') audioPort.postMessage({ type: 'end' })
+            else if (kind === 'close') audioTransport?.send({ type: 'end' })
           }))
           else builder.extension(new mod.Extension(name, (...args: any[]) => event(name, ...args)))
         }
