@@ -14,10 +14,11 @@ globalThis.Uint8Array = new Proxy(OriginalUint8Array, {
 const results = []
 function test(name, body) {
   delete globalThis.unitermGpuCommand
+  delete globalThis.unitermReleaseAvc
   copies = 0
   try { body(); results.push({ name, passed: true }) }
   catch (error) { results.push({ name, passed: false, error: error.message }) }
-  finally { delete globalThis.unitermGpuCommand }
+  finally { delete globalThis.unitermGpuCommand; delete globalThis.unitermReleaseAvc }
 }
 const expectedBitmap = ['bitmap', 9, [2, 3, 4, 4], [17, 34, 51, 255, 68, 85, 102, 255]]
 const snapshot = (name, ...args) => [name, ...args.map(arg => ArrayBuffer.isView(arg) ? [...arg] : arg)]
@@ -127,6 +128,26 @@ test('throwing_bridge_keeps_failure_semantics', () => {
   globalThis.unitermGpuCommand = (...args) => calls.push(snapshot(...args))
   binding.emit_bitmap()
   assert.deepEqual(calls, [expectedBitmap])
+})
+
+// oracle: regression Decoder resources must follow surface destruction/reuse;
+// enabling lifecycle cleanup must not reintroduce the Canvas2D RGBA copy.
+test('cpu_surface_lifecycle_releases_decoder_without_copying_rgba', () => {
+  const releases = []
+  globalThis.unitermReleaseAvc = id => releases.push(id)
+  binding.emit_surface_lifecycle()
+  assert.deepEqual(releases, [9, 9, 9, 9])
+  assert.equal(copies, 0)
+})
+
+test('gpu_surface_lifecycle_releases_decoder_in_graphics_command_order', () => {
+  const calls = []
+  globalThis.unitermReleaseAvc = id => calls.push(['release', id])
+  globalThis.unitermGpuCommand = (name, ...args) => { calls.push([name, ...args]); return false }
+  binding.emit_surface_lifecycle()
+  assert.deepEqual(calls.filter(([name]) => ['release','create','remove'].includes(name)).map(([name,id]) => [name,id]),
+    [['release',9],['create',9],['release',9],['remove',9],['release',9],['create',9],['release',9],['create',9]])
+  assert.equal(copies, 1)
 })
 
 globalThis.Uint8Array = OriginalUint8Array

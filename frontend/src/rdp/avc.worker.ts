@@ -14,7 +14,22 @@ function finish(status: number) {
   Atomics.notify(control, 0)
   scope.postMessage({ method: 'decoded', status, timestamp: active.timestamp })
 }
-function reset() { active = null; rawYuv = new Uint8Array(0); for (const d of decoders.values()) d.decoder.close(); decoders.clear() }
+function release(surface: number) {
+  // Complete an interrupted request before forgetting it; normal GFX lifecycle
+  // commands are ordered after the preceding picture has been consumed.
+  if (active?.surface === surface) {
+    // copyTo may still write its destination after close(). A new request must
+    // get a different scratch buffer until that abandoned readback finishes.
+    if (!active.done) rawYuv = new Uint8Array(0)
+    finish(-1); active = null
+  }
+  const state = decoders.get(surface)
+  decoders.delete(surface)
+  // A decoder error closes the decoder itself. Cleanup must still release the
+  // other surfaces when close() would reject that already-closed decoder.
+  if (state && state.decoder.state !== 'closed') try { state.decoder.close() } catch {}
+}
+function reset() { for (const surface of decoders.keys()) release(surface); active = null; rawYuv = new Uint8Array(0) }
 function nalUnits(data: Uint8Array) {
   const starts: { offset: number; payload: number }[] = []
   for (let i = 0; i + 3 < data.length; i++) {
@@ -59,6 +74,7 @@ scope.onmessage = async ({ data: m }) => {
     scope.postMessage({ ready: supported, yuv, baselineReason, yuvReason }); return
   }
   if (m.method === 'reset') { reset(); return }
+  if (m.method === 'release') { release(m.surface); return }
   if (m.method !== 'decode') return
   active = { timestamp: m.timestamp, surface: m.surface, done: false, yuv: m.yuv === true }
   try {
@@ -75,25 +91,27 @@ scope.onmessage = async ({ data: m }) => {
         output: async frame => {
           const request = active
           try {
-            if (active?.done || frame.timestamp !== active?.timestamp) throw new Error('Delayed AVC picture')
+            // close/reset can race an already-queued output or copyTo promise.
+            // A stale decoder must not fail a newer request reusing its surface.
+            if (!request || request.done || frame.timestamp !== request.timestamp || request.surface !== m.surface || decoders.get(m.surface)?.decoder !== decoder) return
             // Decoders can expose padded coded rows outside the visible picture.
             // Return the visible H.264 picture, not codec allocation dimensions.
             const rect = frame.visibleRect ?? { x: 0, y: 0, width: frame.codedWidth, height: frame.codedHeight }
             const width = rect.width, height = rect.height
             const size = width * height * 4
             if (size > pixels.length || width < 1 || height < 1) throw new Error('AVC picture too large')
-            if (active.yuv) {
+            if (request.yuv) {
               const required=frame.allocationSize({rect})
               if(required>pixels.length)throw new Error('YUV allocation too large')
               if(rawYuv.length<required)rawYuv=new Uint8Array(required)
               const source = rawYuv
               const layout=await frame.copyTo(source,{rect})
-              if (active !== request) return
+              if (active !== request || request.done || decoders.get(m.surface)?.decoder !== decoder) return
               packYuv420(source,frame.format,layout,width,height,pixels)
             } else {
               const source = new Uint8Array(size)
               await frame.copyTo(source, { format: 'RGBA', rect })
-              if (active !== request) return
+              if (active !== request || request.done || decoders.get(m.surface)?.decoder !== decoder) return
               pixels.set(source)
             }
             Atomics.store(control, 1, width); Atomics.store(control, 2, height)

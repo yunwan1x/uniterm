@@ -9,7 +9,7 @@ class UnitermPcmProcessor extends AudioWorkletProcessor {
     this.read = 0; this.length = 0; this.phase = 0; this.rate = 48000
     this.target = .12; this.jitter = 0; this.lastArrival = null; this.lastWallArrival = null; this.lastDuration = 0
     this.playing = false; this.active = true; this.enabled = true; this.ended = true; this.starving = false; this.reserveAdjusted = false
-    this.missing = 0; this.volume = [1, 1]; this.elapsed = 0; this.input = null
+    this.missing = 0; this.waitUntil = null; this.volume = [1, 1]; this.elapsed = 0; this.input = null
     this.counters = { packets: 0, bytes: 0, underruns: 0, missingMs: 0, overflows: 0, droppedMs: 0, maxArrivalGapMs: 0, maxWallArrivalGapMs: 0, maxQueuedMs: 0 }
     this.format = { sampleRate: 0, channels: 0, bits: 0 }
     this.port.onmessage = ({data}) => {
@@ -27,13 +27,17 @@ class UnitermPcmProcessor extends AudioWorkletProcessor {
   reset() {
     this.read = 0; this.length = 0; this.phase = 0
     this.playing = false; this.ended = true; this.starving = false; this.reserveAdjusted = false; this.missing = 0
-    this.lastArrival = null; this.lastWallArrival = null; this.lastDuration = 0; this.target = .12; this.jitter = 0
+    this.lastArrival = null; this.lastWallArrival = null; this.lastDuration = 0; this.target = .12; this.jitter = 0; this.waitUntil = null
   }
   message(m) {
     if (m.type === 'active') { this.active = m.value; this.reset(); return }
     if (m.type === 'enabled') { this.enabled = m.value; this.reset(); return }
     if (m.type === 'reset') { this.reset(); return }
-    if (m.type === 'end') { this.ended = true; this.lastArrival = null; this.lastWallArrival = null; return }
+    if (m.type === 'end') {
+      this.ended = true; this.lastArrival = null; this.lastWallArrival = null; this.waitUntil = null
+      if (!this.length) this.playing = false
+      return
+    }
     if (m.type === 'volume') { this.volume = [m.left, m.right].map(v => Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1); return }
     if (m.type !== 'pcm' || !this.enabled || !this.active) return
     const {data, rate, channels, bits} = m
@@ -56,6 +60,10 @@ class UnitermPcmProcessor extends AudioWorkletProcessor {
       // Keep counting the recovery silence until playout actually resumes.
       this.reserveAdjusted = true
     }
+    // A short notification may be the only PCM sent for a long time. Keep the
+    // continuous-stream reserve, but never wait indefinitely for another packet
+    // or RDPSND Close (which ends the transmission, not each individual sound).
+    if (!this.playing && this.waitUntil === null) this.waitUntil = currentTime + Math.min(.75, this.target + duration)
     this.lastArrival = currentTime; this.lastDuration = duration; this.ended = false
     this.counters.packets++; this.counters.bytes += data.length
     this.format = { sampleRate: rate, channels, bits }
@@ -85,15 +93,17 @@ class UnitermPcmProcessor extends AudioWorkletProcessor {
     const frames = out[0].length, step = this.rate / sampleRate
     // Keep one packet plus the reserve before starting: large Windows packets
     // must not consume the entire reserve as soon as the first block plays.
-    if (!this.playing && this.length >= (this.ended ? 1 : Math.ceil(Math.min(.75, this.target + this.lastDuration) * this.rate))) {
-      this.playing = true; this.starving = false; this.reserveAdjusted = false; this.missing = 0
+    const ready = this.length >= Math.ceil(Math.min(.75, this.target + this.lastDuration) * this.rate)
+    const waited = this.waitUntil !== null && currentTime >= this.waitUntil
+    if (!this.playing && this.length > 0 && (this.ended || ready || waited)) {
+      this.playing = true; this.starving = false; this.reserveAdjusted = false; this.missing = 0; this.waitUntil = null
     }
     for (let i = 0; i < frames; i++) {
       if (!this.enabled || !this.playing || this.length < 1) {
         out[0][i] = 0; if (out[1]) out[1][i] = 0
-        if (this.playing && !this.ended) {
-          if (!this.starving) { this.starving = true; this.counters.underruns++ }
-          this.playing = false
+        if (this.playing) {
+          if (!this.ended && !this.starving) { this.starving = true; this.counters.underruns++ }
+          this.playing = false; this.waitUntil = null
         }
         if (this.starving && !this.ended) {
           this.missing++; this.counters.missingMs += 1000 / sampleRate
@@ -108,6 +118,9 @@ class UnitermPcmProcessor extends AudioWorkletProcessor {
       this.read = (this.read + consume) % this.capacity; this.length -= consume; this.phase -= consume
       if (!this.length) this.phase = 0
     }
+    // Clear this even when the final sample ends exactly at a render boundary:
+    // the next stream may arrive before another empty quantum is processed.
+    if (this.ended && !this.length) { this.playing = false; this.waitUntil = null }
     this.elapsed += frames
     if (this.elapsed >= sampleRate / 4) {
       this.elapsed = 0

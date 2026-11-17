@@ -15,7 +15,7 @@ The runner inherits `RUSTUP_HOME`, `CARGO_HOME`, `RUSTUP_TOOLCHAIN` and `PATH`. 
 
 The runner creates a temporary crate, copies `gpu.rs` into it, rewrites the five Cargo path dependencies to `IRONRDP_CHECKOUT`, and removes the temporary directory on exit. It never changes the selected checkout, production exports, package files or services. Test results are printed as JSON; any failing assertion produces a nonzero exit code.
 
-The eight cases cover:
+The ten cases cover:
 
 1. Missing bridge: zero RGBA copies.
 2. Non-callable bridge: zero RGBA copies.
@@ -25,7 +25,9 @@ The eight cases cover:
 6. Bootstrap: reset, create, map, bitmap, frame and close retain their order and values.
 7. Bridge removal and replacement: the next call observes the current bridge.
 8. Throwing callback: existing swallowed-error behavior and later recovery remain intact.
+9. Canvas2D lifecycle: surface create/delete/reuse releases the corresponding decoder without RGBA copies.
+10. GPU lifecycle: the same decoder releases preserve ordering with surface creation and removal.
 
 The unavailable-bridge cases guard the measured redundant copy in the CPU fallback. The compatibility cases preserve the existing bridge contract: presence of a callable permits forwarding even before it reports active, and lookup/callback errors remain failed delivery. The two explicit BGRX input pixels in `src/lib.rs` are expected as RGBA bytes with opaque alpha in `test.cjs`.
 
-These checks exercise real WASM forwarding, not browser WebGL rendering, codecs such as AVC444, or end-to-end frame pacing. With the original eager argument construction, four unavailable/removal cases fail; the lazy argument implementation passes all eight.
+These checks exercise real WASM forwarding, not browser WebGL rendering, codecs such as AVC444, or end-to-end frame pacing. With the original eager argument construction, four unavailable/removal cases fail; the lazy argument implementation passes those eight. The two lifecycle cases additionally require the uniterm.19 decoder-release bridge.

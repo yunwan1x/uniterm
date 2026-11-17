@@ -105,7 +105,7 @@
       <table class="FormTitle plugin-page" id="FormTitle" width="760" border="0" cellpadding="5" cellspacing="0">
         <tr><td class="plugin-body" bgcolor="#4D595D" valign="top">
           <div class="plugin-heading">
-            <div class="formfonttitle">软件中心 - uniTerm <span class="plugin-version" id="plugin-version">0.3.0-rc.11</span></div>
+            <div class="formfonttitle">软件中心 - uniTerm <span class="plugin-version" id="plugin-version">0.3.0-rc.12</span></div>
             <a class="plugin-return" href="/Module_Softcenter.asp" title="返回软件中心" aria-label="返回软件中心"><img src="/images/backprev.png" alt="返回软件中心"></a>
           </div>
           <div class="splitLine"></div>

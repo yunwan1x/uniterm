@@ -5,7 +5,7 @@ mod gpu;
 use ironrdp_dvc::DvcProcessor;
 use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineClient, GraphicsPipelineHandler};
 use ironrdp_egfx::pdu::{
-    Codec1Type, CreateSurfacePdu, EndFramePdu, GfxPdu, MapSurfaceToOutputPdu,
+    Codec1Type, CreateSurfacePdu, DeleteSurfacePdu, EndFramePdu, GfxPdu, MapSurfaceToOutputPdu,
     PixelFormat, ResetGraphicsPdu, WireToSurface1Pdu,
 };
 use ironrdp_pdu::geometry::ExclusiveRectangle;
@@ -65,4 +65,19 @@ pub fn emit_bootstrap() {
 #[wasm_bindgen]
 pub fn externally_composited() -> bool {
     gpu::WebGraphicsHandler.externally_composited()
+}
+
+#[wasm_bindgen]
+pub fn emit_surface_lifecycle() {
+    let mut client = GraphicsPipelineClient::new(Box::new(gpu::WebGraphicsHandler), None);
+    prepare(&mut client);
+    bitmap(&mut client);
+    send(&mut client, GfxPdu::DeleteSurface(DeleteSurfacePdu { surface_id: 9 }));
+    send(&mut client, GfxPdu::CreateSurface(CreateSurfacePdu {
+        surface_id: 9, width: 8, height: 6, pixel_format: PixelFormat::XRgb,
+    }));
+    // Reusing an existing ID also replaces its decoding context.
+    send(&mut client, GfxPdu::CreateSurface(CreateSurfacePdu {
+        surface_id: 9, width: 8, height: 6, pixel_format: PixelFormat::XRgb,
+    }));
 }

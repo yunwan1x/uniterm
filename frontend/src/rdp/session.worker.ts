@@ -80,12 +80,17 @@ async function setupAvc(enabled = true): Promise<Record<string, unknown>> {
   const prepared = new PreparedAvc()
   let pending: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | undefined
   worker.onmessage = ({ data }) => {
-    if (data.method !== 'decoded' || !pending) return
+    // A cancelled decode can finish after reset and after a new request starts.
+    // Its completion must not clear the new request or its timeout.
+    if (data.method !== 'decoded' || !pending || data.timestamp !== timestamp) return
     const completion = pending; pending = undefined; clearTimeout(completion.timer)
-    if (data.timestamp !== timestamp || data.status !== 1) completion.reject(new Error('WebCodecs AVC decode failed'))
+    if (data.status !== 1) completion.reject(new Error('WebCodecs AVC decode failed'))
     else completion.resolve()
   }
   worker.onerror = () => { if (pending) { clearTimeout(pending.timer); pending.reject(new Error('AVC worker failed')); pending = undefined } }
+  // This lifecycle bridge is independent of the optional GPU command bridge,
+  // so Canvas2D sessions release decoders without copying unused GPU arguments.
+  ;(globalThis as any).unitermReleaseAvc = (surface: number) => worker.postMessage({ method: 'release', surface })
   ;(globalThis as any).unitermResetAvc = () => {
     prepared.clear()
     if (pending) { clearTimeout(pending.timer); pending.reject(new Error('AVC preparation cancelled')); pending = undefined }

@@ -1336,10 +1336,10 @@ index 00000000..e63e5444
 +}
 diff --git a/crates/ironrdp-web/src/gpu.rs b/crates/ironrdp-web/src/gpu.rs
 new file mode 100644
-index 00000000..c95872e4
+index 00000000..5d87e2b5
 --- /dev/null
 +++ b/crates/ironrdp-web/src/gpu.rs
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,75 @@
 +//! GPU handler keeps native YUV through presentation. Only Alpha's rare CPU
 +//! read-modify-write path requests a readback; normal video does not.
 +use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler, Surface};
@@ -1350,6 +1350,16 @@ index 00000000..c95872e4
 +use wasm_bindgen::{JsCast, JsValue};
 +
 +pub(crate) struct WebGraphicsHandler;
++fn release_avc(surface: u16) {
++    #[cfg(target_arch = "wasm32")]
++    if let Ok(function) = js_sys::Reflect::get(&js_sys::global(), &"unitermReleaseAvc".into()) {
++        if let Ok(function) = function.dyn_into::<js_sys::Function>() {
++            let _ = function.call1(&JsValue::UNDEFINED, &surface.into());
++        }
++    }
++    #[cfg(not(target_arch = "wasm32"))]
++    let _ = surface;
++}
 +fn command(name: &str, args: impl FnOnce() -> js_sys::Array) -> Option<JsValue> {
 +    let global=js_sys::global();
 +    let function=js_sys::Reflect::get(&global,&"unitermGpuCommand".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
@@ -1373,8 +1383,8 @@ index 00000000..c95872e4
 +impl GraphicsPipelineHandler for WebGraphicsHandler {
 +    fn externally_composited(&self)->bool {call!("active").and_then(|v|v.as_bool()).unwrap_or(false)}
 +    fn on_reset_graphics(&mut self,width:u32,height:u32){call!("reset",width,height);}
-+    fn on_surface_created(&mut self,s:&Surface){call!("create",s.id,s.width,s.height);}
-+    fn on_surface_deleted(&mut self,id:u16){call!("remove",id);}
++    fn on_surface_created(&mut self,s:&Surface){release_avc(s.id);call!("create",s.id,s.width,s.height);}
++    fn on_surface_deleted(&mut self,id:u16){release_avc(id);call!("remove",id);}
 +    fn on_surface_mapped(&mut self,id:u16,x:u32,y:u32){call!("map",id,x,y);}
 +    fn on_map_surface_to_scaled_output(&mut self,p:&MapSurfaceToScaledOutputPdu){call!("map",p.surface_id,p.output_origin_x,p.output_origin_y,p.target_width,p.target_height);}
 +    fn on_bitmap_updated(&mut self,p:&BitmapUpdate){call!("bitmap",p.surface_id,rect(&p.destination_rectangle),js_sys::Uint8Array::from(p.data.as_slice()));}

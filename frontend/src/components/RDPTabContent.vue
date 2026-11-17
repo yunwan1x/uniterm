@@ -471,9 +471,10 @@ let session: any = null
 let connectTimer: ReturnType<typeof setTimeout> | null = null
 let started = false
 let clientGeneration = 0
+let disposed = false
 let activeSecurityMode = resolveSecurityMode(props.config)
 let securityFallbackAttempted = false
-let pendingSecurityFallback = false
+let pendingFallback = false
 let avcFallbackAttempted = false
 let workerFallbackAttempted = false
 let canvasFallbackAttempted = false
@@ -549,7 +550,7 @@ function splitDomainUser(username: string, cfg: ConnectionConfig): { username: s
 }
 
 async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSize) {
-  if (started || !props.config || !canvasEl.value) return
+  if (disposed || started || !props.config || !canvasEl.value) return
   if (clientGeneration === 0) activeSecurityMode = resolveSecurityMode(props.config)
   started = true
   const generation = ++clientGeneration
@@ -798,7 +799,7 @@ function retryRenderer(reason: string): boolean {
     wasmModule = null
   } else return false
   rdpLog('Renderer unavailable; reconnecting with the compatible renderer')
-  void reconnect()
+  requestFallbackReconnect()
   return true
 }
 
@@ -807,7 +808,7 @@ function runEnded(reason: string, isError = false) {
   if (isError && /WebCodecs|AVC decode/i.test(reason) && !avcFallbackAttempted) {
     avcFallbackAttempted = true
     rdpLog('AVC decoder unavailable; reconnecting with the existing GFX codecs')
-    void reconnect()
+    requestFallbackReconnect()
     return
   }
   if (retryWithSecurityFallback(reason)) return
@@ -849,7 +850,8 @@ function teardownClient(preserveCapture = false) {
 }
 
 async function connect() {
-  if (!props.config) return
+  if (disposed || !props.config) return
+  const generation = clientGeneration
   status.value = 'connecting'
   errorMessage.value = ''
   try {
@@ -858,11 +860,21 @@ async function connect() {
       rdpSecurityMode: activeSecurityMode,
       rdpEnableNLA: activeSecurityMode !== 'tls',
     })
+    // Closing a tab cannot cancel the backend request. Release a late proxy
+    // before it can be bound to a removed panel or replace a newer session.
+    if (disposed || generation !== clientGeneration) {
+      try { await CloseSession(info.id) } catch (_) {}
+      return
+    }
     currentSessionId.value = info.id
     panelStore.bindSession(props.panelId, info.id)
     if (info.proxyAddr) {
       panelStore.setProxyAddr(props.panelId, info.proxyAddr)
       await nextTick()
+      if (disposed || currentSessionId.value !== info.id) {
+        try { await CloseSession(info.id) } catch (_) {}
+        return
+      }
       await startClient(info.proxyAddr)
     } else {
       errorMessage.value = 'missing proxy address'
@@ -870,6 +882,7 @@ async function connect() {
       teardownClient()
     }
   } catch (e) {
+    if (disposed || generation !== clientGeneration) return
     rdpLog(`session create error: ${backendErrorText(e)}`)
     errorMessage.value = backendErrorText(e)
     status.value = 'error'
@@ -878,7 +891,7 @@ async function connect() {
 }
 
 async function reconnect(preserveCapture = false) {
-  if (reconnecting) return
+  if (disposed || reconnecting) return
   reconnecting = true
   try {
     clearConnectTimer()
@@ -891,11 +904,25 @@ async function reconnect(preserveCapture = false) {
     }
     await connect()
   } finally {
-    reconnecting = false
-    if (pendingSecurityFallback) {
-      pendingSecurityFallback = false
-      void reconnect()
-    }
+    finishReconnect()
+  }
+}
+
+function requestFallbackReconnect() {
+  if (disposed) return
+  status.value = 'connecting'
+  errorMessage.value = ''
+  // Renderer/codec errors can arrive while the current connect() is still
+  // unwinding. Queue one retry instead of losing it to the reconnect guard.
+  if (reconnecting) pendingFallback = true
+  else void reconnect()
+}
+
+function finishReconnect() {
+  reconnecting = false
+  if (pendingFallback) {
+    pendingFallback = false
+    if (!disposed) void reconnect()
   }
 }
 
@@ -914,8 +941,7 @@ function retryWithSecurityFallback(reason: string): boolean {
     status.value = 'connecting'
     errorMessage.value = ''
     rdpLog(`NLA handshake failed (${reason}); retrying with TLS login`)
-    if (reconnecting) pendingSecurityFallback = true
-    else void reconnect()
+    requestFallbackReconnect()
     return true
   }
   if (/STANDARD_RDP_SECURITY|Standard RDP Security/i.test(reason)) {
@@ -924,8 +950,7 @@ function retryWithSecurityFallback(reason: string): boolean {
     status.value = 'connecting'
     errorMessage.value = ''
     rdpLog(`server requires Standard RDP Security (${reason}); retrying unencrypted`)
-    if (reconnecting) pendingSecurityFallback = true
-    else void reconnect()
+    requestFallbackReconnect()
     return true
   }
   return false
@@ -1483,14 +1508,18 @@ function onPixelRatioChange() {
 }
 
 async function reconnectWithSize(width: number, height: number) {
-  if (reconnecting) return
+  if (disposed || reconnecting) return
   reconnecting = true
+  let generation = clientGeneration
   try {
     teardownClient()
-    if (currentSessionId.value) {
-      try { await CloseSession(currentSessionId.value) } catch (_) {}
-      currentSessionId.value = null
+    generation = clientGeneration
+    const closingSessionId = currentSessionId.value
+    currentSessionId.value = null
+    if (closingSessionId) {
+      try { await CloseSession(closingSessionId) } catch (_) {}
     }
+    if (disposed || generation !== clientGeneration) return
     const cfg = {
       ...(props.config || {}),
       rdpFixedWidth: width,
@@ -1499,27 +1528,32 @@ async function reconnectWithSize(width: number, height: number) {
       rdpEnableNLA: activeSecurityMode !== 'tls',
     }
     const info = await CreateSession('rdp', cfg)
+    if (disposed || generation !== clientGeneration) {
+      try { await CloseSession(info.id) } catch (_) {}
+      return
+    }
     currentSessionId.value = info.id
     panelStore.bindSession(props.panelId, info.id)
     if (info.proxyAddr) {
       panelStore.setProxyAddr(props.panelId, info.proxyAddr)
       await nextTick()
+      if (disposed || currentSessionId.value !== info.id) {
+        try { await CloseSession(info.id) } catch (_) {}
+        return
+      }
       await startClient(info.proxyAddr, { width, height })
     } else {
       throw new Error('missing proxy address')
     }
   } catch (e) {
+    if (disposed || generation !== clientGeneration) return
     rdpLog(`adaptive reconnect failed: ${backendErrorText(e)}`)
     errorMessage.value = backendErrorText(e)
     status.value = 'error'
   } finally {
-    reconnecting = false
-    if (pendingSecurityFallback) {
-      pendingSecurityFallback = false
-      void reconnect()
-    }
+    finishReconnect()
     // Catch viewport changes that happened while the handshake was running.
-    onContainerResize()
+    if (!disposed) onContainerResize()
   }
 }
 
@@ -1714,6 +1748,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  pendingFallback = false
   unsubKeyboard?.()
   unsubStatus?.()
   stopProxyWatch?.()

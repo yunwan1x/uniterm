@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.17.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.19.tgz`.
 It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -55,7 +55,7 @@ credential-handling paths are unchanged.
 ## Rebuild production package
 
 Prerequisites: Git, Node 22+, npm, Rust with wasm32-unknown-unknown target,
-`wasm-bindgen-cli` **0.2.129**. The uniterm.17 build was validated with rustc 1.99.1.
+`wasm-bindgen-cli` **0.2.129**. The uniterm.19 build was validated with rustc 1.99.1.
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.129 --locked
@@ -298,3 +298,26 @@ copies, explicit pixel bytes, rectangles, command order, inactive bootstrap,
 per-call lookup and exception behavior. The old implementation fails four of
 eight checks; this revision passes all eight. The fixture does not validate a
 physical GPU driver. Live performance measurements are documented separately.
+
+## AVC surface lifecycle (uniterm.19)
+
+Creating or deleting an EGFX surface now calls a dedicated decoder lifecycle
+bridge in both GPU and Canvas2D sessions. The latter keeps the GPU bridge absent,
+so CPU bitmap updates still avoid unused RGBA argument copies. Both AVC444
+pictures share the same surface decoder and are released together; other
+surfaces retain their reference frames. Reusing a surface ID starts a fresh
+decoder. This prevents deleted surfaces from exhausting the 16-live-decoder cap.
+
+Cancelled decoder outputs and readbacks cannot complete a newer request. A YUV
+readback already in progress keeps its own scratch storage when its surface is
+released, preventing a late copy from corrupting a replacement stream. Reset
+also tolerates decoders already closed by a browser decoding error.
+
+The production package retains the scalar build flags; it does not enable
+simd128. Revision .18 was used for an unpublished SIMD experiment and is skipped.
+The lifecycle regression creates/deletes 32 successive surface IDs, checks two
+AVC444 streams and same-ID reuse, and forces late decoder output/readback. The
+real-WASM GPU bridge fixture verifies lifecycle notification on both renderer
+paths and zero unused RGBA copies without the GPU bridge (10 checks pass).
+These are controlled regression tests, not a claim that a live Windows session
+was observed exhausting its decoder limit.
