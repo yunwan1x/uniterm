@@ -31,7 +31,8 @@ COPY frontend/vendor/ ./vendor/
 RUN for i in 1 2 3; do npm ci && break; [ "$i" = 3 ] && exit 1; sleep 5; done
 COPY --from=bindings-generator /src/frontend/bindings ./bindings
 COPY frontend/ ./
-RUN npm run build
+ARG VERSION=dev
+RUN VITE_VERSION="${VERSION}" npm run build
 
 # =============================================================================
 # Stage 3: Headless worker (-tags server) + multi-user gateway
