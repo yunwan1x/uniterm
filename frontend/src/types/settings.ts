@@ -161,9 +161,6 @@ export interface AISettings {
   autoCompact?: boolean
   contextTokenBudget?: number
   summaryModelId?: string
-  // How user messages render in the AI panel: 'plain' (default) keeps the
-  // shared left-aligned full-width layout; 'bubble' right-aligns a
-  // content-sized chat bubble (issue #1478). Undefined behaves as 'plain'.
   userMessageStyle?: 'plain' | 'bubble'
   models: AIModelConfig[]
 }
@@ -200,6 +197,7 @@ export type ShortcutAction =
   | 'zoomFontOut'
   | 'toggleFilePanel'    // 切换文件边栏
   | 'toggleMonitor'      // 切换资源监控边栏
+  | 'toggleNotes'        // 切换笔记面板（no default binding — opt-in）
 
 // User-facing bindings only use ctrl/shift/alt. On macOS the runtime mirrors
 // every ctrl combo to Cmd (per-action shortcuts register both; the digit
@@ -253,6 +251,7 @@ export const SHORTCUT_LABELS: Record<ShortcutAction, string> = {
   zoomFontOut: 'shortcut.zoomFontOut',
   toggleFilePanel: 'shortcut.toggleFilePanel',
   toggleMonitor: 'shortcut.toggleMonitor',
+  toggleNotes: 'shortcut.toggleNotes',
 }
 
 export const DEFAULT_KEYBOARD: KeyboardSettings = {
@@ -405,6 +404,7 @@ export const SIDEBAR_TAB_DEFAULTS: Record<string, boolean> = {
   history: true,
   personalization: true,
   commandSend: true,
+  notes: true,
 }
 
 // Canonical sidebar tab order shared by the tab-strip context menu and the
@@ -418,6 +418,7 @@ export const SIDEBAR_TAB_ORDER: { key: string; labelKey: string }[] = [
   { key: 'history', labelKey: 'quickCommands.historyTab' },
   { key: 'personalization', labelKey: 'sidebar.personalization' },
   { key: 'commandSend', labelKey: 'sidebar.commandSend' },
+  { key: 'notes', labelKey: 'notes.notesTab' },
 ]
 
 // Default dock position per sidebar view: "sidebar" (left) or "bottom"
@@ -434,6 +435,7 @@ export const PANEL_LOCATION_DEFAULTS: Record<string, 'sidebar' | 'bottom'> = {
   quickCommands: 'sidebar',
   history: 'sidebar',
   commandSend: 'bottom',
+  notes: 'bottom',
 }
 
 // Monitor sections with their default enabled state. Disabled sections are
@@ -510,7 +512,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoCompact: true,
     contextTokenBudget: DEFAULT_CONTEXT_TOKEN_BUDGET,
     summaryModelId: '',
-    userMessageStyle: 'plain',
+    userMessageStyle: 'bubble',
     models: [
       {
         id: 'model-default',

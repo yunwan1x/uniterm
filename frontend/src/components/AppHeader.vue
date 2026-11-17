@@ -117,26 +117,34 @@
 
         <MenuDivider />
 
-        <!-- AI模型 / MCP / 密钥库 / 代理 -->
-        <MenuItem @click="openCategory('ai')">{{ t('settings.ai') }}</MenuItem>
-        <MenuItem v-if="!isMobilePlatform(platform.value)" @click="openCategory('mcp')">{{ t('settings.mcp') }}</MenuItem>
-        <MenuItem @click="openCategory('identities')">{{ t('settings.identities') }}</MenuItem>
-        <MenuItem @click="openCategory('proxies')">{{ t('settings.proxies') }}</MenuItem>
-        <MenuItem @click="openCategory('tunnels')">{{ t('settings.tunnels') }}</MenuItem>
+        <!-- 连接：新建连接 + 连接的安全与通道配置（密钥库 / 代理） -->
+        <MenuSubmenu :label="t('menu.connectionToolbox')">
+          <MenuItem @click="openNewConnection">{{ t('header.newConnection') }}</MenuItem>
+          <MenuItem @click="openCategory('identities')">{{ t('settings.identities') }}</MenuItem>
+          <MenuItem @click="openCategory('proxies')">{{ t('settings.proxies') }}</MenuItem>
+        </MenuSubmenu>
 
-        <MenuDivider />
+        <!-- 网络工具箱子菜单：网络扫描 / 本地服务 / SSH隧道。Server deployments
+             hide local services: the servers bind inside the container and
+             share its filesystem, so "local" files/fports are not the browser
+             user's machine. -->
+        <MenuSubmenu :label="t('menu.networkToolbox')">
+          <MenuItem @click="openNetscan">{{ t('netscan.title') }}</MenuItem>
+          <MenuItem v-if="!webServerMode" @click="openLocalServices">{{ t('localsrv.title') }}</MenuItem>
+          <MenuItem v-if="!webServerMode" @click="openPacketcap">{{ t('packetcap.title') }}</MenuItem>
+          <MenuItem @click="openCategory('tunnels')">{{ t('settings.tunnels') }}</MenuItem>
+        </MenuSubmenu>
 
-        <!-- 网络扫描（右上角工具入口） -->
-        <MenuItem @click="openNetscan">
-          {{ t('netscan.title') }}
-        </MenuItem>
-
-        <!-- 本地服务（右上角工具入口）。Server deployments hide it: the
-             servers bind inside the container and share its filesystem, so
-             "local" files/fports are not the browser user's machine. -->
-        <MenuItem v-if="!webServerMode" @click="openLocalServices">
-          {{ t('localsrv.title') }}
-        </MenuItem>
+        <!-- AI 子菜单（与设置页 AI 分组一致） -->
+        <MenuSubmenu :label="t('menu.ai')">
+          <MenuItem @click="openCategory('ai')">{{ t('settings.ai') }}</MenuItem>
+          <MenuItem @click="openCategory('skills')">{{ t('settings.skills') }}</MenuItem>
+          <MenuItem @click="openCategory('commands')">{{ t('settings.commands') }}</MenuItem>
+          <!-- MCP features have no mobile backend; the built-in MCP server is
+               also hidden in server deployments (binds a worker loopback port). -->
+          <MenuItem v-if="!isMobilePlatform(platform)" @click="openCategory('mcp-client')">{{ t('settings.mcpClient') }}</MenuItem>
+          <MenuItem v-if="!isMobilePlatform(platform) && !webServerMode" @click="openCategory('mcp')">{{ t('settings.mcp') }}</MenuItem>
+        </MenuSubmenu>
 
         <MenuDivider />
 
@@ -152,7 +160,7 @@
         <MenuItem @click="openCategory('about')">{{ t('settings.about') }}</MenuItem>
         <!-- In-app update download is desktop-only; server deployments update
              by pulling a new image and the backend refuses the call. -->
-        <MenuItem v-if="!isMobilePlatform(platform.value) && !webServerMode" @click="checkUpdate">{{ t('settings.checkUpdate') }}</MenuItem>
+        <MenuItem v-if="!isMobilePlatform(platform) && !webServerMode" @click="checkUpdate">{{ t('settings.checkUpdate') }}</MenuItem>
       </Menu>
 
       <ImportDialog v-model:visible="showImportDialog" />
@@ -295,8 +303,18 @@ function openNetscan() {
   closeSettingsMenu()
 }
 
+function openPacketcap() {
+  emit('open-packetcap')
+  closeSettingsMenu()
+}
+
 function openLocalServices() {
   emit('open-local-services')
+  closeSettingsMenu()
+}
+
+function openNewConnection() {
+  emit('open-new-connection')
   closeSettingsMenu()
 }
 
@@ -359,7 +377,9 @@ const emit = defineEmits<{
   'toggle-sidebar': []
   'open-settings': [category?: string]
   'open-netscan': []
+  'open-packetcap': []
   'open-local-services': []
+  'open-new-connection': []
   'close-tab': [id: string]
   'close-tab-batch': [ids: string[]]
   'toggle-ai-lock': [panelId: string]

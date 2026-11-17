@@ -8,7 +8,9 @@
       @toggle-sidebar="sidebarVisible = !sidebarVisible"
       @open-settings="openSettings"
       @open-netscan="openNetscan"
+      @open-packetcap="openPacketcap"
       @open-local-services="openLocalServices"
+      @open-new-connection="onNewConnectionFromStart"
       @close-tab="closeTab"
       @close-tab-batch="closeTabBatch"
       @toggle-ai-lock="onToggleAiLock"
@@ -166,6 +168,7 @@
     <CredentialUnlockDialog v-model:visible="unlockVisible" @done="onUnlockDone" @reset="onReset" />
     <MobileKeyBar v-if="keyBarSessionId" :key="keyBarSessionId" :session-id="keyBarSessionId" />
     <NetworkScanTabContent v-model:visible="netscanVisible" @new-connection="onNetscanNewConnection" />
+    <PacketCaptureTabContent v-model:visible="packetcapVisible" />
     <LocalServices v-model:visible="localServicesVisible" />
     <HostKeyChangedDialog />
   </div>
@@ -193,6 +196,7 @@ import { startAndroidKeepAlive, stopAndroidKeepAlive } from './utils/androidKeep
 import { writeClipboard } from './composables/useClipboardWrite'
 import SettingsTabContent from './components/SettingsTabContent.vue'
 import NetworkScanTabContent from './components/netscan/NetworkScanTabContent.vue'
+import PacketCaptureTabContent from './components/packetcap/PacketCaptureTabContent.vue'
 import HostKeyChangedDialog from './components/HostKeyChangedDialog.vue'
 import LocalServices from './components/localsrv/LocalServices.vue'
 import WorkspaceContent from './components/WorkspaceContent.vue'
@@ -235,6 +239,7 @@ import { useAIStore } from './stores/aiStore'
 import { useCompanionStore } from './stores/companionStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useQuickCommandStore } from './stores/quickCommandStore'
+import { useNotesStore } from './stores/notesStore'
 import { useSkillStore } from './stores/skillStore'
 import { useCommandStore } from './stores/commandStore'
 import { useTunnelStore } from './stores/tunnelStore'
@@ -399,6 +404,7 @@ let uninstallFocusRestore: (() => void) | null = null
 let unsubTrayOpenSettings: (() => void) | null = null
 let unsubTrayOpenAbout: (() => void) | null = null
 let unsubTrayOpenNetscan: (() => void) | null = null
+let unsubTrayOpenPacketcap: (() => void) | null = null
 // Records every terminal's cwd reports app-wide (see companionStore.sessionCwd).
 let unsubTerminalCwd: (() => void) | null = null
 const { t, locale } = useI18n()
@@ -413,6 +419,7 @@ const dataDirVisible = ref(false)
 const encryptVisible = ref(false)
 const unlockVisible = ref(false)
 const netscanVisible = ref(false)
+const packetcapVisible = ref(false)
 const localServicesVisible = ref(false)
 
 // Determine which credential dialog (recovery-unlock / setup) to show based
@@ -455,6 +462,7 @@ function onDataDirDone(restart: boolean) {
   connectionStore.load()
   settingsStore.reload()
   useQuickCommandStore().load()
+  useNotesStore().reload()
   useSkillStore().reload()
   useCommandStore().reload()
   tunnelStore.load()
@@ -868,6 +876,8 @@ onMounted(async () => {
     : (localStateStore.state.sidebarVisible ?? false)
   // Pre-load quick commands so suggestions can read them immediately
   useQuickCommandStore().load()
+  // Pre-load notes so the panel opens instantly
+  useNotesStore().load()
   // Pre-load tunnels so auto-start state and the panel are ready
   useTunnelStore().load()
   // Auto-open start tab if no tabs are open
@@ -924,6 +934,7 @@ onMounted(async () => {
   unsubTrayOpenSettings = Events.On('app:open-settings', () => openSettings())
   unsubTrayOpenAbout = Events.On('app:open-about', () => openSettings('about'))
   unsubTrayOpenNetscan = Events.On('app:open-netscan', () => openNetscan())
+  unsubTrayOpenPacketcap = Events.On('app:open-packetcap', () => openPacketcap())
   // MCP (external AI agents): approval dialogs + session takeover.
   unsubMcpApproval = Events.On('mcp:approval-request', (ev) => {
     mcpApprovalRequest.value = ev.data as MCPApprovalRequest
@@ -1113,6 +1124,7 @@ const actionHandlers: Record<ShortcutAction, () => void> = {
   toggleFilePanel: () => sidebarViewShortcut('files'),
   toggleMonitor: () => sidebarViewShortcut('monitor'),
   openQuickCommands: () => sidebarViewShortcut('quickCommands', true),
+  toggleNotes: () => sidebarViewShortcut('notes'),
   focusTerminal: () => {
     const pid = tabStore.getActivePanelId()
     if (pid) focusPanelTerminal(pid)
@@ -1234,6 +1246,7 @@ onUnmounted(() => {
   unsubTrayOpenSettings?.()
   unsubTrayOpenAbout?.()
   unsubTrayOpenNetscan?.()
+  unsubTrayOpenPacketcap?.()
   unsubMcpApproval?.()
   unsubMcpSessionCreated?.()
   unsubTerminalCwd?.()
@@ -1266,6 +1279,10 @@ function openSettings(category?: string) {
 
 function openNetscan() {
   netscanVisible.value = true
+}
+
+function openPacketcap() {
+  packetcapVisible.value = true
 }
 
 // Open the shared connection form prefilled with a network-scan result.

@@ -7,6 +7,8 @@ vi.hoisted(() => {
   vi.stubGlobal('localStorage', { setItem: () => {} })
 })
 vi.mock('@wailsio/runtime', () => ({ Events: { On: vi.fn(() => () => {}) } }))
+// Tab restoration does not render notifications or mount Element Plus DOM directives.
+vi.mock('../services/message', () => ({ msg: { error: vi.fn() } }))
 vi.mock('../i18n', () => ({ setLocale: vi.fn() }))
 vi.mock('../../bindings/github.com/ys-ll/uniterm/app', () => ({
   LoadSettings: vi.fn(), SaveSettings: vi.fn(), LoadLocalState: vi.fn(), SaveLocalState: vi.fn(),

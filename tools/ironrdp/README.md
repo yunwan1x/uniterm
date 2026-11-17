@@ -1,7 +1,7 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.1-uniterm.19.tgz`.
-It replaces the external v0.5.1 tarball, so normal frontend/Docker builds do not
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.2-uniterm.20.tgz`.
+It replaces the external v0.5.2 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
 ## Provenance
@@ -10,6 +10,10 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 - Existing uniTerm patches: `ys-ll/ironrdp-wasm` tag `v0.5.1`, commit
   `d39ce5b728465c29b1955b3cc218d623183820d6` (autologon, quality options,
   finalization tolerance). These are retained in the combined patch.
+- Standard RDP Security support from `ys-ll/ironrdp-wasm` v0.5.2 uses
+  `ys-ll/IronRDP` commit `d37b3c290917aa914d6689f8440cc52dbee0c7cb`.
+  Its RC4 transport implementation is combined with all uniterm.19 audio,
+  frame scheduling, GPU, and decoder lifecycle changes.
 - `patches/uniterm.patch` is the complete diff against that IronRDP base,
   including new source files and regression tests.
 - The tarball includes IronRDP's Apache-2.0 and MIT license texts.
@@ -55,7 +59,7 @@ credential-handling paths are unchanged.
 ## Rebuild production package
 
 Prerequisites: Git, Node 22+, npm, Rust with wasm32-unknown-unknown target,
-`wasm-bindgen-cli` **0.2.129**. The uniterm.19 build was validated with rustc 1.99.1.
+`wasm-bindgen-cli` **0.2.129**. The uniterm.20 build uses rustc 1.99.1.
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.129 --locked
@@ -78,6 +82,7 @@ In the patched IronRDP checkout:
 ```sh
 cargo +stable test -p ironrdp-web --lib --locked -- --skip clipboard::tests
 cargo +stable test -p ironrdp-egfx --lib --locked
+cargo +stable test -p ironrdp-rdpsec --lib --locked
 cargo +stable build --locked -p ironrdp-web --target wasm32-unknown-unknown \
   --release --features render-benchmark
 wasm-bindgen target/wasm32-unknown-unknown/release/ironrdp_web.wasm \

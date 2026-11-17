@@ -327,7 +327,7 @@ func TestResetCredentialsAllowsFreshSetup(t *testing.T) {
 	for _, sf := range store.SecretFiles {
 		files = append(files, sf.File)
 	}
-	cs := credentials.New(dir, memKeychain{entries: map[string]string{}})
+	cs := credentials.New(dir, testMemoryKeychain{entries: map[string]string{}})
 	cs.SetSecretFiles(files)
 	a := &App{dataDir: dir, credentialStore: cs}
 
@@ -339,20 +339,20 @@ func TestResetCredentialsAllowsFreshSetup(t *testing.T) {
 	}
 }
 
-// memKeychain is an in-memory credentials.Keychain for tests that must not
+// testMemoryKeychain is an in-memory credentials.Keychain for tests that must not
 // touch the OS keyring.
-type memKeychain struct{ entries map[string]string }
+type testMemoryKeychain struct{ entries map[string]string }
 
-func (k memKeychain) Get(key string) (string, error) {
+func (k testMemoryKeychain) Get(key string) (string, error) {
 	v, ok := k.entries[key]
 	if !ok {
 		return "", errors.New("not found")
 	}
 	return v, nil
 }
-func (k memKeychain) Set(key, val string) error { k.entries[key] = val; return nil }
-func (k memKeychain) Delete(key string) error   { delete(k.entries, key); return nil }
-func (k memKeychain) List() ([]string, error) {
+func (k testMemoryKeychain) Set(key, val string) error { k.entries[key] = val; return nil }
+func (k testMemoryKeychain) Delete(key string) error   { delete(k.entries, key); return nil }
+func (k testMemoryKeychain) List() ([]string, error) {
 	keys := make([]string, 0, len(k.entries))
 	for name := range k.entries {
 		keys = append(keys, name)
@@ -372,7 +372,7 @@ func (k memKeychain) List() ([]string, error) {
 
 type rekeyHarness struct {
 	dir           string
-	kc            memKeychain
+	kc            testMemoryKeychain
 	cs            *credentials.Store
 	connStore     *store.ConnectionStore
 	settingsStore *store.SettingsStore
@@ -386,7 +386,7 @@ type rekeyHarness struct {
 func newRekeyHarness(t *testing.T, startMode, startPass string) rekeyHarness {
 	t.Helper()
 	dir := t.TempDir()
-	kc := memKeychain{entries: map[string]string{}}
+	kc := testMemoryKeychain{entries: map[string]string{}}
 	cs := credentials.New(dir, kc)
 	files := make([]string, 0, len(store.SecretFiles))
 	for _, sf := range store.SecretFiles {
