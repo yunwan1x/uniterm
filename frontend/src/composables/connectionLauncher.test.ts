@@ -11,6 +11,7 @@ const { createSessionMock, recordRecentMock } = vi.hoisted(() => ({
 
 vi.mock('../../bindings/github.com/ys-ll/uniterm/app', () => ({
   CreateSession: createSessionMock,
+  CloseSession: vi.fn(async () => {}),
   RecordRecentConnection: recordRecentMock,
   SaveConnections: vi.fn(async () => {}),
   LoadConnections: vi.fn(async () => ({ groups: [], connections: [] })),
@@ -25,6 +26,7 @@ vi.mock('../services/message', () => ({
 
 import { useConnectionStore, migrateLegacyDatabaseTypes } from '../stores/connectionStore'
 import { usePanelStore } from '../stores/panelStore'
+import { CloseSession } from '../../bindings/github.com/ys-ll/uniterm/app'
 import { useTabStore } from '../stores/tabStore'
 import { launchConnection, launchFileBrowser, configureLauncher } from './connectionLauncher'
 import { msg } from '../services/message'
@@ -76,6 +78,21 @@ describe('launchConnection persistence', () => {
 })
 
 describe('launchConnection routing', () => {
+  it('closes an RDP session returned after its tab was removed', async () => {
+    let finish!: (info: { id: string; proxyAddr: string }) => void
+    createSessionMock.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const opening = launchConnection(baseConfig('rdp'), { persist: false })
+    await vi.waitFor(() => expect(createSessionMock).toHaveBeenCalled())
+    const tabs = useTabStore().tabs
+    const tab = tabs[tabs.length - 1]!
+    const [panelId] = useTabStore().closeTab(tab.id)
+    usePanelStore().removePanel(panelId)
+    finish({ id: 'late-rdp', proxyAddr: 'ws://local/late' })
+    await opening
+    expect(CloseSession).toHaveBeenCalledWith('late-rdp')
+    expect(usePanelStore().getProxyAddr(panelId)).toBeUndefined()
+  })
+
   it('lets the Android view create its session after measuring the viewport', async () => {
     await launchConnection(baseConfig('android'), { persist: false })
     expect(createSessionMock).not.toHaveBeenCalled()
@@ -89,7 +106,8 @@ describe('launchConnection routing', () => {
       tunnelSSHConnId: 'jump', tunnelSSHUser: 'jump-user', tunnelSSHPassword: 'jump-password' }
     await launchConnection(cfg, { persist: false })
     expect(createSessionMock).toHaveBeenCalledWith('spice', expect.objectContaining(cfg))
-    const tab = useTabStore().tabs.at(-1)!
+    const tabs = useTabStore().tabs
+    const tab = tabs[tabs.length - 1]!
     expect(tab.type).toBe('spice')
     const panelId = (tab as any).panelId
     expect(usePanelStore().getPanel(panelId)?.sessionId).toBe('spice-session')
@@ -104,7 +122,8 @@ describe('launchConnection routing', () => {
       const cfg = { ...baseConfig('rdp'), rdpEngine: obsoleteEngine, rdpEnableNLA: true, rdpAdminSession: true }
       await launchConnection(cfg, { persist: false })
       expect(createSessionMock).toHaveBeenCalledWith('rdp', expect.objectContaining({ rdpEnableNLA: true, rdpAdminSession: true }))
-      const tab = useTabStore().tabs.at(-1)!
+      const tabs = useTabStore().tabs
+    const tab = tabs[tabs.length - 1]!
       expect(tab.type).toBe('rdp')
       const panelId = (tab as any).panelId
       expect(usePanelStore().getPanel(panelId)?.type).toBe('rdp')

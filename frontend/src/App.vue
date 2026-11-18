@@ -233,7 +233,7 @@ import MenuItem from './components/MenuItem.vue'
 import { ElMessageBox, ElCheckbox } from 'element-plus'
 import { useConnectionStore } from './stores/connectionStore'
 import { useTabStore } from './stores/tabStore'
-import { usePanelStore } from './stores/panelStore'
+import { closesSessionOnRemoval, usePanelStore } from './stores/panelStore'
 import { useSessionStore } from './stores/sessionStore'
 import { useAIStore } from './stores/aiStore'
 import { useCompanionStore } from './stores/companionStore'
@@ -1164,14 +1164,14 @@ const actionHandlers: Record<ShortcutAction, () => void> = {
     if (t.type === 'workspace' && t.panelIds.length > 1) {
       const panelId = t.activePanelId || t.panelIds[t.panelIds.length - 1]
       const p = panelStore.getPanel(panelId)
-      if (p?.sessionId) CloseSession(p.sessionId).catch(() => {})
+      if (p?.sessionId && !closesSessionOnRemoval(p)) CloseSession(p.sessionId).catch(() => {})
       companionStore.disposeForPanel(panelId).catch(() => {})
       tabStore.removePanelFromWorkspaceTab(t.id, panelId)
       panelStore.removePanel(panelId)
     } else if (t.type === 'workspace' && t.panelIds.length === 1) {
       const panelId = t.panelIds[0]
       const p = panelStore.getPanel(panelId)
-      if (p?.sessionId) CloseSession(p.sessionId).catch(() => {})
+      if (p?.sessionId && !closesSessionOnRemoval(p)) CloseSession(p.sessionId).catch(() => {})
       companionStore.disposeForPanel(panelId).catch(() => {})
       tabStore.removePanelFromWorkspaceTab(t.id, panelId)
       panelStore.removePanel(panelId)
@@ -1347,12 +1347,6 @@ async function closeTab(tabId: string, opts: { skipConfirm?: boolean } = {}) {
       }
     }
   }
-  if (tab && (tab.type === 'rdp' || tab.type === 'android')) {
-    const p = panelStore.getPanel(tab.panelId)
-    if (p?.sessionId) {
-      try { await CloseSession(p.sessionId) } catch (_) {}
-    }
-  }
   // Close VNC session
   if (tab && tab.type === 'vnc') {
     const p = panelStore.getPanel(tab.panelId)
@@ -1408,7 +1402,7 @@ async function closeTab(tabId: string, opts: { skipConfirm?: boolean } = {}) {
   if (tab && tab.type === 'workspace') {
     for (const pid of tab.panelIds) {
       const p = panelStore.getPanel(pid)
-      if (p?.sessionId) {
+      if (p?.sessionId && !closesSessionOnRemoval(p)) {
         try { await CloseSession(p.sessionId) } catch (_) {}
       }
     }

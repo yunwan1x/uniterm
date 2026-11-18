@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { reactive, shallowReactive } from 'vue'
 import type { Panel, PanelStatus, ConnectionConfig } from '../types/workspace'
-import { DisableSessionOutputLog, RegisterSessionForPanel, UnregisterSession } from '../../bindings/github.com/ys-ll/uniterm/app'
+import { CloseSession, DisableSessionOutputLog, RegisterSessionForPanel, UnregisterSession } from '../../bindings/github.com/ys-ll/uniterm/app'
 
 export interface TransferFileState {
   path: string
@@ -64,6 +64,11 @@ const panelState = shallowReactive<{
   spiceCaches: new Map()
 })
 
+// Live desktop playback ends with its panel, even when KeepAlive retains the view.
+export function closesSessionOnRemoval(panel: Panel | undefined) {
+  return panel?.type === 'android' || panel?.type === 'rdp'
+}
+
 export const usePanelStore = defineStore('panel', () => {
   function makeTitleUnique(title: string, excludePanelId?: string): string {
     const others = [...panelState.panels.values()]
@@ -101,6 +106,11 @@ export const usePanelStore = defineStore('panel', () => {
 
   function removePanel(id: string) {
     const p = panelState.panels.get(id)
+    panelState.panels.delete(id)
+    panelState.proxyAddrs.delete(id)
+    if (closesSessionOnRemoval(p) && p?.sessionId) {
+      void CloseSession(p.sessionId).catch(() => {})
+    }
     // Close any active output log so the footer banner is written and
     // the file handle is released. Fire-and-forget; the backend logs
     // any error via its own facilities.
@@ -108,7 +118,6 @@ export const usePanelStore = defineStore('panel', () => {
     if (p?.sessionId) {
       UnregisterSession(p.sessionId).catch(() => {})
     }
-    panelState.panels.delete(id)
   }
 
   function getPanel(id: string): Panel | undefined {

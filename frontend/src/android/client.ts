@@ -173,8 +173,6 @@ export class AndroidClient {
       if (!this.error) this.error = `Android connection closed${event?.code ? ` (${event.code})` : ''}${event?.reason ? `: ${event.reason}` : '; reconnect'}`
       this.connected = false
       this.dispose()
-      androidClients.delete(url)
-      this.changed()
     }
   }
   setAutomatic(enabled: boolean) {
@@ -256,9 +254,9 @@ export class AndroidClient {
     clearInterval(this.qualityTimer)
     if (androidClients.get(this.url) === this) androidClients.delete(this.url)
     this.connected = false
+    this.audio?.dispose()
     this.ws.close()
     this.decoder.dispose()
-    this.audio?.dispose()
     if (this.audio) this.canvas.dataset.androidAudioStats = JSON.stringify(this.audio.getStats())
     this.changed()
   }

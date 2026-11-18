@@ -3,11 +3,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick, watch, type WatchStopHandle } from 'vue'
 
 vi.mock('../../bindings/github.com/ys-ll/uniterm/app', () => ({
+  CloseSession: vi.fn(async () => {}),
   DisableSessionOutputLog: vi.fn(async () => {}),
   RegisterSessionForPanel: vi.fn(async () => {}),
   UnregisterSession: vi.fn(async () => {}),
 }))
 
+import { CloseSession } from '../../bindings/github.com/ys-ll/uniterm/app'
 import { usePanelStore } from './panelStore'
 
 const watchers: WatchStopHandle[] = []
@@ -55,5 +57,23 @@ describe('remote desktop proxy readiness', () => {
     await nextTick()
     expect(changed).toHaveBeenCalledTimes(2)
     expect(changed.mock.calls[1]?.[0]).toBeUndefined()
+  })
+})
+describe('media panel removal', () => {
+  it.each(['android', 'rdp'] as const)('releases the %s panel before asking the backend to close', type => {
+    const store = usePanelStore()
+    const panel = store.createPanel(null, type)
+    store.bindSession(panel.id, 'active-session')
+    store.setProxyAddr(panel.id, 'ws://local/stream')
+    const stopped = vi.fn()
+    watchers.push(watch(() => store.getPanel(panel.id), stopped, { flush: 'sync' }))
+    let stoppedAtRequest = false
+    vi.mocked(CloseSession).mockImplementationOnce(async () => {
+      stoppedAtRequest = stopped.mock.calls.length === 1
+      throw new Error('gateway unavailable')
+    })
+    store.removePanel(panel.id)
+    expect(stoppedAtRequest).toBe(true)
+    expect(store.getProxyAddr(panel.id)).toBeUndefined()
   })
 })

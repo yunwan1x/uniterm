@@ -147,14 +147,6 @@ async function closeTab(id: string) {
     }
   }
 
-  // Close the RDP proxy session.
-  if (tab && (tab.type === 'rdp' || tab.type === 'android')) {
-    const rdpPanel = panelStore.getPanel(tab.panelId)
-    if (rdpPanel?.sessionId) {
-      try { await CloseSession(rdpPanel.sessionId) } catch (_) {}
-    }
-  }
-
   // Clean up VNC session
   if (tab && tab.type === 'vnc') {
     const vncPanel = panelStore.getPanel(tab.panelId)

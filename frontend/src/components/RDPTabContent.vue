@@ -1670,10 +1670,12 @@ function bindOwnerEvents() {
   }
 }
 watch(windowKind, async () => {
+  if (disposed) return
   onFocusOut()
   clearResizeProbe()
   clearScaleSync()
   await nextTick()
+  if (disposed) return
   bindOwnerEvents()
   onPixelRatioChange()
   focusDesktop()
@@ -1748,7 +1750,8 @@ onMounted(() => {
   resizeObserver.observe(viewportEl.value!)
 })
 
-onBeforeUnmount(() => {
+function disposeDesktop() {
+  if (disposed) return
   disposed = true
   pendingFallback = false
   unsubKeyboard?.()
@@ -1766,9 +1769,15 @@ onBeforeUnmount(() => {
   unbindOwnerEvents()
   clearConnectTimer()
   teardownClient()
-  // CloseSession is handled by TabBar/App on tab close; unmount only tears
-  // the WASM client down.
-})
+}
+
+watch(() => panelStore.getPanel(props.panelId), panel => {
+  if (!panel) {
+    disposeDesktop()
+    void restoreWindow()
+  }
+}, { flush: 'sync' })
+onBeforeUnmount(disposeDesktop)
 
 onDeactivated(onFocusOut)
 onActivated(() => {

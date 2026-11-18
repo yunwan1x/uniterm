@@ -9,7 +9,7 @@
 // The generic terminal path (ssh/telnet/mosh/local/wsl/tcp/serial) is genuinely
 // different — it must wait for the real xterm size before SessionStart — so it
 // stays in App.vue and is handed in per call via `connectTerminal`.
-import { CreateSession, RecordRecentConnection } from '../../bindings/github.com/ys-ll/uniterm/app'
+import { CloseSession, CreateSession, RecordRecentConnection } from '../../bindings/github.com/ys-ll/uniterm/app'
 import { useConnectionStore } from '../stores/connectionStore'
 import { usePanelStore } from '../stores/panelStore'
 import { useTabStore } from '../stores/tabStore'
@@ -291,6 +291,10 @@ async function runSpec(key: string, config: ConnectionConfig, spec: ConnectSpec,
 
   try {
     const info = await CreateSession(sessionType, config)
+    if (sessionType === 'rdp' && !panelStore.getPanel(panel.id)) {
+      await CloseSession(info.id).catch(() => {})
+      return
+    }
     // proxyAddr capture is not gated on sessionFirst: RDP keeps the
     // tab-first flow but its proxy URL must survive into the tab exactly like
     // VNC/SPICE. Only VNC/SPICE/RDP sessions ever return proxyAddr.

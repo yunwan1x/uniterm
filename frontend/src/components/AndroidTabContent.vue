@@ -381,23 +381,27 @@ function revealToolbarOnHover(e: PointerEvent) {
 watch(anyPanelOpen, () => scheduleToolbarHide())
 watch([floatKind, isFullscreen], hideToolbar)
 onBeforeUnmount(clearToolbarTimer)
-// KeepAlive caches inactive tabs; explicit panel deletion must still close its window.
-watch(
-  () => panels.getPanel(props.panelId),
-  (panel) => {
-    if (!panel) {
-      void restore()
-      client?.dispose()
-      if (client) androidClients.delete(client.url)
-    }
-  },
-)
 let client: AndroidClient | undefined,
   down = false,
   activePointer: number | undefined,
   lastTouch = { x: 0, y: 0 },
   mounted = true,
   sessionId = props.sessionId
+function disposeClient() {
+  if (!client) return
+  releaseTouch()
+  client.changed = () => {}
+  client.dispose()
+  client.canvas.remove()
+  client = undefined
+}
+watch(() => panels.getPanel(props.panelId), panel => {
+  if (!panel) {
+    mounted = false
+    disposeClient()
+    void restore()
+  }
+}, { flush: 'sync' })
 function update() {
   if (!client) return
   connected.value = client.connected
@@ -411,6 +415,7 @@ function update() {
   height.value = client.height
 }
 async function connect(fresh = false) {
+  if (!mounted) return
   try {
     let url = fresh ? '' : panels.getProxyAddr(props.panelId)
     if (!url) {
@@ -449,13 +454,7 @@ async function reconnect() {
   connected.value = false
   error.value = ''
   try {
-    if (client) {
-      androidClients.delete(client.url)
-      client.changed = () => {}
-      client.dispose()
-      client.canvas.remove()
-      client = undefined
-    }
+    disposeClient()
     if (sessionId) {
       await CloseSession(sessionId)
       sessionId = undefined
@@ -769,11 +768,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   imageAbort?.abort()
   clearTimeout(clipboardTimer)
-  releaseTouch()
   mounted = false
   window.removeEventListener('panel:reconnect', onReconnect)
-  if (client) client.changed = () => {}
-  client?.canvas.remove()
+  disposeClient()
 })
 </script>
 <style scoped>

@@ -39,7 +39,7 @@ defineOptions({ name: 'WorkspaceContent' })
 import { ref } from 'vue'
 import { LayoutDashboard } from '@lucide/vue'
 import { useTabStore } from '../stores/tabStore'
-import { usePanelStore } from '../stores/panelStore'
+import { closesSessionOnRemoval, usePanelStore } from '../stores/panelStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useCompanionStore } from '../stores/companionStore'
 import { useConnectionStore } from '../stores/connectionStore'
@@ -76,7 +76,7 @@ async function closePanel(panelId: string) {
       return
     }
   }
-  if (panel?.sessionId) {
+  if (panel?.sessionId && !closesSessionOnRemoval(panel)) {
     try { await CloseSession(panel.sessionId) } catch (_) {}
   }
   companionStore.disposeForPanel(panelId).catch(() => {})
