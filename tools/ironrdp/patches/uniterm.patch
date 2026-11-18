@@ -1944,10 +1944,70 @@ index 00000000..533bd9fe
 +    }
 +}
 diff --git a/crates/ironrdp-rdpsnd/src/client.rs b/crates/ironrdp-rdpsnd/src/client.rs
-index ab62dde2..a7000af2 100644
+index ab62dde2..7feff02c 100644
 --- a/crates/ironrdp-rdpsnd/src/client.rs
 +++ b/crates/ironrdp-rdpsnd/src/client.rs
-@@ -823,6 +823,11 @@ impl Rdpsnd {
+@@ -109,6 +109,8 @@ impl RdpsndClientHandler for NoopRdpsndBackend {
+ enum RdpsndState {
+     Start,
+     WaitingForTraining,
++    /// Discard the bare payload of a WaveInfo received before Training.
++    DiscardingEarlyWave,
+     Ready,
+     /// Waiting for the bare Wave payload after a pre-v8 WaveInfo PDU.
+     ExpectingWave,
+@@ -447,6 +449,12 @@ impl AudioOutputClient {
+     fn process(&mut self, payload: &[u8]) -> PduResult<Vec<ClientAudioOutputPdu>> {
+         let arrival = self.now();
+ 
++        // Consume the entire bare payload, even when its bytes resemble a valid PDU.
++        if self.state == RdpsndState::DiscardingEarlyWave {
++            self.state = RdpsndState::WaitingForTraining;
++            return Ok(vec![]);
++        }
++
+         // Pre-v8 Wave data has no RDPSND header (MS-RDPEA §2.2.3.4).
+         if self.state == RdpsndState::ExpectingWave {
+             debug!(len = payload.len(), "Completing pending WaveInfo with Wave payload");
+@@ -472,13 +480,30 @@ impl AudioOutputClient {
+                 self.begin_format_negotiation(af)?
+             }
+             RdpsndState::WaitingForTraining => {
+-                let pdu::ServerAudioOutputPdu::Training(pdu) = pdu else {
+-                    error!("Invalid PDU");
+-                    self.state = RdpsndState::Stop;
+-                    return Ok(vec![]);
+-                };
+-                self.state = RdpsndState::Ready;
+-                vec![Self::training_confirm(&pdu)?]
++                match pdu {
++                    pdu::ServerAudioOutputPdu::Training(pdu) => {
++                        self.state = RdpsndState::Ready;
++                        vec![Self::training_confirm(&pdu)?]
++                    }
++                    pdu::ServerAudioOutputPdu::Wave(wave) => {
++                        // xrdp can resume an active sink before reconnect negotiation completes.
++                        // Discard this sample, including its separate headerless payload.
++                        if payload.len() == 4 + wave.size() {
++                            self.state = RdpsndState::DiscardingEarlyWave;
++                        }
++                        trace!("Discarding Wave before Training");
++                        vec![]
++                    }
++                    pdu::ServerAudioOutputPdu::Wave2(_) | pdu::ServerAudioOutputPdu::Close => {
++                        trace!("Discarding audio before Training");
++                        vec![]
++                    }
++                    _ => {
++                        error!("Invalid PDU");
++                        self.state = RdpsndState::Stop;
++                        vec![]
++                    }
++                }
+             }
+             RdpsndState::Ready => {
+                 match pdu {
+@@ -823,6 +848,11 @@ impl Rdpsnd {
  impl_as_any!(Rdpsnd);
  
  impl SvcProcessor for Rdpsnd {
@@ -1959,7 +2019,7 @@ index ab62dde2..a7000af2 100644
      fn channel_name(&self) -> ChannelName {
          Self::NAME
      }
-@@ -959,3 +964,16 @@ impl DvcProcessor for RdpsndDvc {
+@@ -959,3 +989,16 @@ impl DvcProcessor for RdpsndDvc {
  }
  
  impl DvcClientProcessor for RdpsndDvc {}
@@ -5026,3 +5086,92 @@ index a62b3827..c94b1663 100644
              Err(e) => return Err(anyhow::Error::new(e).context("read frame")),
          };
  
+diff --git a/crates/ironrdp-testsuite-core/Cargo.toml b/crates/ironrdp-testsuite-core/Cargo.toml
+index 59021cfc..74bdaf45 100644
+--- a/crates/ironrdp-testsuite-core/Cargo.toml
++++ b/crates/ironrdp-testsuite-core/Cargo.toml
+@@ -89,3 +89,8 @@ ironrdp-egfx-native.path = "../ironrdp-egfx-native"
+ 
+ [lints]
+ workspace = true
++
++[[test]]
++name = "rdpsnd_regression"
++path = "tests/rdpsnd/mod.rs"
++harness = true
+diff --git a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
+index 8dbf08ad..7ad34902 100644
+--- a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
++++ b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
+@@ -202,9 +202,6 @@ fn decode_single_response(responses: &[ironrdp_svc::SvcMessage]) -> pdu::ClientA
+ #[case::start_wave_encrypt(client_in_start(), encoded_wave_encrypt())]
+ #[case::waiting_volume(client_in_waiting(), encoded_volume())]
+ #[case::waiting_pitch(client_in_waiting(), encoded_pitch())]
+-#[case::waiting_close(client_in_waiting(), encoded_close())]
+-#[case::waiting_wave(client_in_waiting(), encoded_wave())]
+-#[case::waiting_wave2(client_in_waiting(), encoded_wave2(0))]
+ #[case::waiting_audio_format(client_in_waiting(), encoded_server_formats(pdu::Version::V8))]
+ #[case::waiting_crypt_key(client_in_waiting(), encoded_crypt_key())]
+ #[case::waiting_wave_encrypt(client_in_waiting(), encoded_wave_encrypt())]
+@@ -551,3 +548,61 @@ fn stop_ignores_all_pdus(#[case] payload: Vec<u8>) {
+     let responses = client.process(&payload).unwrap();
+     assert!(responses.is_empty(), "Stop state should ignore all PDUs");
+ }
++
++#[test]
++fn xrdp_reconnect_early_audio_does_not_stop_training() {
++    // oracle: spec MS-RDPEA section 3.1.5; reconnecting an actively playing xrdp desktop must allow subsequent audio.
++    let backend = RecordingBackend::with_formats(vec![pcm(44100, 2)]);
++    let waves = Arc::clone(&backend.waves);
++    let mut client = Rdpsnd::new(Box::new(backend));
++    client.process(&encoded_server_formats(pdu::Version::V8)).unwrap();
++    client.process(&encoded_wave2(0)).unwrap();
++    client.process(&encoded_close()).unwrap();
++    assert!(waves.lock().unwrap().is_empty());
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    client.process(&encoded_wave2(1)).unwrap();
++    assert_eq!(waves.lock().unwrap().len(), 1);
++}
++
++#[test]
++fn xrdp_early_close_preserves_training() {
++    // oracle: spec MS-RDPEA section 3.1.5; an old stream closing during reconnect must not disable the new stream.
++    let mut client = client_in_waiting();
++    client.process(&encoded_close()).unwrap();
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    assert_eq!(client.process(&encoded_wave2(1)).unwrap().len(), 1);
++}
++
++#[test]
++fn xrdp_early_split_wave_consumes_payload_before_training() {
++    // oracle: spec MS-RDPEA sections 3.1.5 and 2.2.3.4; WaveInfo's next message is raw audio, even if it looks like Training.
++    let backend = RecordingBackend::with_formats(vec![pcm(44100, 2)]);
++    let waves = Arc::clone(&backend.waves);
++    let mut client = Rdpsnd::new(Box::new(backend));
++    client.process(&encoded_server_formats(pdu::Version::V5)).unwrap();
++    let fake_training = encoded_training();
++    client
++        .process(&encoded_wave_info(u16::try_from(fake_training.len()).unwrap()))
++        .unwrap();
++    assert!(client.process(&fake_training).unwrap().is_empty());
++    assert!(waves.lock().unwrap().is_empty());
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    client.process(&encoded_wave()).unwrap();
++    assert_eq!(client.process(&encoded_wave_data(&[])).unwrap().len(), 1);
++    assert_eq!(waves.lock().unwrap().len(), 1);
++}
++
++#[test]
++fn xrdp_early_concatenated_wave_does_not_consume_training() {
++    // oracle: regression; a sample contained in one message must not consume the next message.
++    let mut client = client_in_waiting();
++    let mut payload = encoded_wave();
++    payload.extend_from_slice(&encoded_wave_data(&[]));
++    assert!(client.process(&payload).unwrap().is_empty());
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    assert_eq!(client.process(&encoded_wave2(1)).unwrap().len(), 1);
++}

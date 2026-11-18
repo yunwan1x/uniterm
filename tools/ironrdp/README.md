@@ -20,6 +20,21 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
 ## Changes
 
+The `0.5.2-uniterm.21` package keeps RDPSND negotiation alive when xrdp sends
+Wave, Wave2, or Close before Training during a reconnect. Early audio is discarded;
+pre-v8 Wave's separate bare payload is consumed without decoding it as a PDU.
+Playback starts only after Training. Other invalid handshake messages retain their
+existing handling. This follows the out-of-sequence packet rule in
+[MS-RDPEA section 3.1.5](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/b408d629-1737-4011-80d8-7582044fb0ff).
+
+Audio regression tests can run independently of unrelated core-suite fixtures:
+
+```sh
+cargo +stable test --locked -p ironrdp-testsuite-core --test rdpsnd_regression
+```
+
+See [the reconnect verification report](results/audio-reconnect-20261118.md).
+
 1. Exact dirty rectangle extraction. The contiguous full-row copy path is used
    only for genuinely full-width damage. A 64x128 rectangle on a 1920px-wide
    desktop now copies 32 KiB instead of 960 KiB.
