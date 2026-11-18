@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { AudioTransport } from './audio-transport'
+import { AudioTransport } from '../utils/audioTransport'
 import { DesktopDamage } from './damage'
 import { PreparedAvc } from './async-avc'
 import { GpuCompositor } from './gpu-compositor'

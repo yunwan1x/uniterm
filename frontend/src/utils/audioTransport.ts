@@ -1,8 +1,8 @@
-/** Worker-side PCM endpoint, replaceable without reconnecting the RDP session. */
+/** Worker-side PCM endpoint, replaceable without reconnecting the remote session. */
 export class AudioTransport {
   private port: MessagePort | null = null
   private pending = 0
-  constructor(control: MessagePort) {
+  constructor(private readonly control: MessagePort) {
     control.onmessage = ({ data }) => {
       if (data.type !== 'attach' && data.type !== 'detach') return
       if (this.port) { this.port.onmessage = null; this.port.close() }
@@ -17,6 +17,12 @@ export class AudioTransport {
       }
     }
     control.start()
+  }
+  close() {
+    this.control.close()
+    this.port?.close()
+    this.port = null
+    this.pending = 0
   }
   canSend(bytes: number) { return !!this.port && this.pending + bytes <= 256 * 1024 }
   send(message: any, transfer: Transferable[] = []) {

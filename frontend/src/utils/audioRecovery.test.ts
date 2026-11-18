@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PcmAudioPlayer } from './pcmAudio'
-import { AudioTransport } from '../rdp/audio-transport'
+import { AudioTransport } from './audioTransport'
 class Port {
   onmessage: any = null
   postMessage = vi.fn()

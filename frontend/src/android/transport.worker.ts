@@ -1,6 +1,8 @@
 /// <reference lib="webworker" />
+import { AudioTransport } from '../utils/audioTransport'
+
 const scope = self as unknown as DedicatedWorkerGlobalScope
-let socket: WebSocket | undefined, audio: MessagePort | undefined, pending = 0, audioPending = 0
+let socket: WebSocket | undefined, audio: AudioTransport | undefined, pending = 0
 scope.onmessage = ({ data: m }) => {
   if (m.type === 'connect') {
     socket = new WebSocket(m.url)
@@ -12,9 +14,7 @@ scope.onmessage = ({ data: m }) => {
       if (data instanceof ArrayBuffer) {
         const bytes = new Uint8Array(data)
         if (bytes.length >= 13 && bytes[0] === 2 && audio) {
-          if (audioPending + bytes.length - 13 > 256 * 1024) return
-          audioPending += bytes.length - 13
-          audio.postMessage({ type: 'pcm', data: bytes.subarray(13), rate: 48000, channels: 2, bits: 16 }, [data])
+          audio.send({ type: 'pcm', data: bytes.subarray(13), rate: 48000, channels: 2, bits: 16 }, [data])
           return
         }
         pending += data.byteLength
@@ -25,9 +25,8 @@ scope.onmessage = ({ data: m }) => {
   } else if (m.type === 'send' && socket?.readyState === WebSocket.OPEN) socket.send(m.data)
   else if (m.type === 'ack') pending = Math.max(0, pending - m.bytes)
   else if (m.type === 'audio') {
-    audio?.close(); audio = m.port; audioPending = 0
-    audio!.onmessage = ({ data }: MessageEvent) => { if (data.type === 'consumed') audioPending = Math.max(0, audioPending - data.bytes) }
-    audio!.start()
+    audio?.close()
+    audio = new AudioTransport(m.port)
   }
   else if (m.type === 'close') { socket?.close(); audio?.close(); scope.close() }
 }
