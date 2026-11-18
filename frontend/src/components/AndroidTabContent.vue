@@ -169,16 +169,14 @@
         <p v-if="clipboardNotice || windowNotice" class="android-window-notice" role="status">
           {{ clipboardNotice || windowNotice }}
         </p>
-        <div v-if="!isFullscreen && (floatKind === 'native' || floatKind === 'window') && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
-          @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
-          @pointerdown.prevent="toolbarPinned = true; showToolbar()" />
-        <button v-if="!isFullscreen && (floatKind === 'native' || floatKind === 'window')" class="android-toolbar-handle"
+        <div v-if="hasSideToolbar && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
+          @pointermove="revealToolbarOnHover" @pointerdown.prevent="showToolbar" />
+        <button v-if="hasSideToolbar" class="android-toolbar-handle"
           :aria-label="t('android.toggleToolbar')" :title="t('android.toggleToolbar')"
           :aria-expanded="toolbarVisible" aria-controls="android-pip-toolbar"
-          @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
-          @focus="showToolbar" @blur="scheduleHideToolbar"
-          @click="toolbarPinned = !toolbarPinned; toolbarHovered = toolbarPinned"
-        >{{ toolbarVisible ? '›' : '‹' }}</button>
+          @pointermove="scheduleToolbarHide()" @pointerleave="scheduleToolbarHide(250)"
+          @focusout="scheduleToolbarHide()" @click="toolbarVisible ? hideToolbar() : showToolbar()"
+        ><span aria-hidden="true">{{ toolbarVisible ? '›' : '‹' }}</span></button>
         <FullscreenToolbarShell
           class="android-fullscreen-toolbar"
           :active="isFullscreen"
@@ -186,9 +184,10 @@
           @interaction="releaseTouch"
           @focus-desktop="focusScreen"
         >
-        <footer :id="!isFullscreen && (floatKind === 'native' || floatKind === 'window') ? 'android-pip-toolbar' : undefined" aria-label="Android status"
-          @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
-          @focusin="showToolbar" @focusout="scheduleHideToolbar"
+        <footer :id="hasSideToolbar ? 'android-pip-toolbar' : undefined" aria-label="Android status"
+          @pointermove="scheduleToolbarHide()" @pointerleave="scheduleToolbarHide(250)"
+          @pointerdown="clearToolbarTimer" @pointerup="scheduleToolbarHide()" @pointercancel="scheduleToolbarHide()"
+          @focusin="scheduleToolbarHide()" @focusout="scheduleToolbarHide()"
         >
           <button
             v-if="floatKind === 'page' && !isFullscreen"
@@ -205,8 +204,8 @@
             <button :title="t('android.videoQuality')" :aria-label="t('android.videoQuality')" @click="togglePane('quality')"><SlidersHorizontal :size="17" /></button>
             <button :title="`${t('android.windowDisplay')} · ${t(displayMode === 'fit' ? 'android.fitWindow' : 'android.actualPixels')}`" :aria-label="t('android.windowDisplay')" @click="togglePane('view')"><Scan :size="17" /></button>
             <button :title="`${t('android.videoSource')} · ${t(source === 'display' ? 'android.sourceDisplay' : source === 'front' ? 'android.sourceFront' : 'android.sourceBack')}`" :aria-label="t('android.videoSource')" @click="togglePane('view')"><Camera :size="17" /></button>
-            <button v-for="action in navigationActions" :key="action.code" :disabled="!connected || source !== 'display'" :title="action.label" :aria-label="action.label" @click="key(action.code)"><component :is="action.icon" :size="17" /></button>
-            <button :disabled="!connected || source !== 'display'" :title="t('android.rotate')" :aria-label="t('android.rotate')" @click="client?.send({ type: 'rotate' })"><RotateCw :size="17" /></button>
+            <button v-for="action in navigationActions" :key="action.code" :disabled="!connected || source !== 'display'" :title="action.label" :aria-label="action.label" @click="key(action.code); hideToolbar()"><component :is="action.icon" :size="17" /></button>
+            <button :disabled="!connected || source !== 'display'" :title="t('android.rotate')" :aria-label="t('android.rotate')" @click="client?.send({ type: 'rotate' }); hideToolbar()"><RotateCw :size="17" /></button>
             <button :disabled="!connected || source !== 'display'" :title="t('android.text')" :aria-label="t('android.text')" @click="togglePane('text')"><Keyboard :size="17" /></button>
             <button :disabled="!connected" :title="t('android.files')" :aria-label="t('android.files')" @click="togglePane('files')"><Folder :size="17" /></button>
             <button :disabled="!connected" title="Shell" aria-label="Shell" @click="togglePane('shell')"><Terminal :size="17" /></button>
@@ -350,27 +349,38 @@ const {
   if (panel?.tabId && tabs.tabs.some((tab) => tab.id === panel.tabId))
     tabs.setActiveTab(panel.tabId)
 }, () => ({ width: width.value, height: height.value }))
-const toolbarPinned = ref(false), toolbarHovered = ref(false)
+const hasSideToolbar = computed(() => !isFullscreen.value && (floatKind.value === 'native' || floatKind.value === 'window'))
+const toolbarVisible = ref(false)
 let toolbarHideTimer: ReturnType<typeof setTimeout> | undefined
-const toolbarVisible = computed(() => toolbarPinned.value || toolbarHovered.value)
-function showToolbar() {
+function clearToolbarTimer() {
   clearTimeout(toolbarHideTimer)
-  toolbarHovered.value = true
 }
-function scheduleHideToolbar() {
-  clearTimeout(toolbarHideTimer)
+function hideToolbar() {
+  if (!toolbarVisible.value) return
+  clearToolbarTimer()
+  toolbarVisible.value = false
+  const footer = root.value?.querySelector('footer')
+  if (footer?.contains(footer.ownerDocument.activeElement)) focusScreen()
+}
+function scheduleToolbarHide(delay = 2000) {
+  clearToolbarTimer()
+  if (!toolbarVisible.value || anyPanelOpen.value) return
   toolbarHideTimer = setTimeout(() => {
-    const footer = root.value?.querySelector('footer')
-    if (footer?.contains(footer.ownerDocument.activeElement)) return
-    toolbarHovered.value = false
-  }, 250)
+    // A keyboard user can pause on a control. A pointer-clicked button may
+    // retain DOM focus after the pointer leaves, and must still time out.
+    if (!root.value?.querySelector('footer :focus-visible, .android-toolbar-handle:focus-visible')) hideToolbar()
+  }, delay)
 }
-watch(floatKind, () => {
-  clearTimeout(toolbarHideTimer)
-  toolbarPinned.value = false
-  toolbarHovered.value = false
-})
-onBeforeUnmount(() => clearTimeout(toolbarHideTimer))
+function showToolbar() {
+  toolbarVisible.value = true
+  scheduleToolbarHide()
+}
+function revealToolbarOnHover(e: PointerEvent) {
+  if (e.pointerType === 'mouse' && !e.buttons) showToolbar()
+}
+watch(anyPanelOpen, () => scheduleToolbarHide())
+watch([floatKind, isFullscreen], hideToolbar)
+onBeforeUnmount(clearToolbarTimer)
 // KeepAlive caches inactive tabs; explicit panel deletion must still close its window.
 watch(
   () => panels.getPanel(props.panelId),
@@ -577,6 +587,7 @@ function key(key: number) {
   client?.send({ type: 'key', key })
 }
 function touch(e: PointerEvent, action: number) {
+  if (action === 0) hideToolbar()
   if (!client || !connected.value) return
   client.enableAudio()
   if (source.value !== 'display') return
@@ -1008,9 +1019,14 @@ onBeforeUnmount(() => {
 .android-floating-native .android-toolbar-edge { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; z-index: 5; }
 .android-floating-native .android-toolbar-handle {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  z-index: 6; width: 22px; height: 48px; padding: 0;
-  border-radius: 7px 0 0 7px; background: var(--bg-elevated);
+  z-index: 6; width: 24px; height: 48px; padding: 0; display: flex; justify-content: flex-end;
+  align-items: stretch; border: 0; background: transparent;
   color: var(--text-primary); opacity: 0; pointer-events: none;
+}
+.android-floating-native .android-toolbar-handle:hover:not(:disabled) { background: transparent; }
+.android-toolbar-handle span {
+  width: 10px; border-radius: 5px 0 0 5px; background: var(--bg-elevated);
+  display: grid; place-items: center;
 }
 .android-floating-native.android-toolbar-open .android-toolbar-handle { right: 44px; opacity: .75; pointer-events: auto; }
 .android-floating-native .android-toolbar-handle:focus-visible { opacity: 1; pointer-events: auto; }
