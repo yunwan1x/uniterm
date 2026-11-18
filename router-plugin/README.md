@@ -1,7 +1,11 @@
 # uniTerm KoolCenter 插件
 
-适配当前实测 TUF-BE3600 / 3006.102_37307 / aarch64 的离线安装包。插件版本 0.3.0-rc.18。
+适配当前实测 TUF-BE3600 / 3006.102_37307 / aarch64 的离线安装包。插件版本 0.3.0-rc.19。
 源码仓库：https://github.com/yunwan1x/uniterm.git。
+
+## 0.3.0-rc.19
+
+Android 独立窗口和画中画的右侧按键面板在鼠标悬停时保持展开，移开后自动收起。
 
 ## 0.3.0-rc.18
 
@@ -29,7 +33,7 @@ Android 投屏支持向 Android 10 及以上设备的剪贴板发送 PNG、JPEG 
 
 ## 安装与使用
 
-在软件中心的离线安装中上传 `output/uniterm-0.3.0-rc.18-<提交前八位>-arm64.tar.gz`，进入 uniTerm 设置页：
+在软件中心的离线安装中上传 `output/uniterm-0.3.0-rc.19-<提交前八位>-arm64.tar.gz`，进入 uniTerm 设置页：
 1. 默认端口 18888，可调整为未占用的 1024–65535 端口。
 2. 首次启用设置 6–24 字节管理员密码，管理员名 admin。
 3. 勾选启用，保存并应用，点击“打开 uniTerm”。

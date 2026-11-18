@@ -174,7 +174,7 @@
         <button v-if="hasSideToolbar" class="android-toolbar-handle"
           :aria-label="t('android.toggleToolbar')" :title="t('android.toggleToolbar')"
           :aria-expanded="toolbarVisible" aria-controls="android-pip-toolbar"
-          @pointermove="scheduleToolbarHide()" @pointerleave="scheduleToolbarHide(250)"
+          @pointerenter="onToolbarPointerEnter" @pointerleave="onToolbarPointerLeave"
           @focusout="scheduleToolbarHide()" @click="toolbarVisible ? hideToolbar() : showToolbar()"
         ><span aria-hidden="true">{{ toolbarVisible ? '›' : '‹' }}</span></button>
         <FullscreenToolbarShell
@@ -185,7 +185,7 @@
           @focus-desktop="focusScreen"
         >
         <footer :id="hasSideToolbar ? 'android-pip-toolbar' : undefined" aria-label="Android status"
-          @pointermove="scheduleToolbarHide()" @pointerleave="scheduleToolbarHide(250)"
+          @pointerenter="onToolbarPointerEnter" @pointerleave="onToolbarPointerLeave"
           @pointerdown="clearToolbarTimer" @pointerup="scheduleToolbarHide()" @pointercancel="scheduleToolbarHide()"
           @focusin="scheduleToolbarHide()" @focusout="scheduleToolbarHide()"
         >
@@ -204,8 +204,8 @@
             <button :title="t('android.videoQuality')" :aria-label="t('android.videoQuality')" @click="togglePane('quality')"><SlidersHorizontal :size="17" /></button>
             <button :title="`${t('android.windowDisplay')} · ${t(displayMode === 'fit' ? 'android.fitWindow' : 'android.actualPixels')}`" :aria-label="t('android.windowDisplay')" @click="togglePane('view')"><Scan :size="17" /></button>
             <button :title="`${t('android.videoSource')} · ${t(source === 'display' ? 'android.sourceDisplay' : source === 'front' ? 'android.sourceFront' : 'android.sourceBack')}`" :aria-label="t('android.videoSource')" @click="togglePane('view')"><Camera :size="17" /></button>
-            <button v-for="action in navigationActions" :key="action.code" :disabled="!connected || source !== 'display'" :title="action.label" :aria-label="action.label" @click="key(action.code); hideToolbar()"><component :is="action.icon" :size="17" /></button>
-            <button :disabled="!connected || source !== 'display'" :title="t('android.rotate')" :aria-label="t('android.rotate')" @click="client?.send({ type: 'rotate' }); hideToolbar()"><RotateCw :size="17" /></button>
+            <button v-for="action in navigationActions" :key="action.code" :disabled="!connected || source !== 'display'" :title="action.label" :aria-label="action.label" @click="key(action.code); hideToolbarAfterAction()"><component :is="action.icon" :size="17" /></button>
+            <button :disabled="!connected || source !== 'display'" :title="t('android.rotate')" :aria-label="t('android.rotate')" @click="client?.send({ type: 'rotate' }); hideToolbarAfterAction()"><RotateCw :size="17" /></button>
             <button :disabled="!connected || source !== 'display'" :title="t('android.text')" :aria-label="t('android.text')" @click="togglePane('text')"><Keyboard :size="17" /></button>
             <button :disabled="!connected" :title="t('android.files')" :aria-label="t('android.files')" @click="togglePane('files')"><Folder :size="17" /></button>
             <button :disabled="!connected" title="Shell" aria-label="Shell" @click="togglePane('shell')"><Terminal :size="17" /></button>
@@ -352,9 +352,24 @@ const {
 }, () => ({ width: width.value, height: height.value }))
 const hasSideToolbar = computed(() => !isFullscreen.value && (floatKind.value === 'native' || floatKind.value === 'window'))
 const toolbarVisible = ref(false)
+let mouseOverToolbar = false
 let toolbarHideTimer: ReturnType<typeof setTimeout> | undefined
 function clearToolbarTimer() {
   clearTimeout(toolbarHideTimer)
+}
+function onToolbarPointerEnter(e: PointerEvent) {
+  if (e.pointerType === 'mouse') {
+    mouseOverToolbar = true
+    clearToolbarTimer()
+  }
+}
+function onToolbarPointerLeave(e: PointerEvent) {
+  if (e.pointerType !== 'mouse') return
+  mouseOverToolbar = false
+  scheduleToolbarHide(250)
+}
+function hideToolbarAfterAction() {
+  if (!mouseOverToolbar) hideToolbar()
 }
 function hideToolbar() {
   if (!toolbarVisible.value) return
@@ -365,7 +380,7 @@ function hideToolbar() {
 }
 function scheduleToolbarHide(delay = 2000) {
   clearToolbarTimer()
-  if (!toolbarVisible.value || anyPanelOpen.value) return
+  if (!toolbarVisible.value || mouseOverToolbar || anyPanelOpen.value) return
   toolbarHideTimer = setTimeout(() => {
     // A keyboard user can pause on a control. A pointer-clicked button may
     // retain DOM focus after the pointer leaves, and must still time out.
