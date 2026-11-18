@@ -105,6 +105,9 @@
               </div>
             </el-form-item>
             <template v-if="form.type === 'android'">
+              <el-form-item :label="t('android.pauseOnDisconnect')">
+                <el-switch v-model="form.androidPauseOnDisconnect" :aria-label="t('android.pauseOnDisconnect')" />
+              </el-form-item>
               <p class="field-hint android-pair-hint">{{ t('android.pairHint') }}</p>
               <el-form-item :label="t('android.pairPort')"><el-input-number v-model="pairPort" :min="1" :max="65535" /></el-form-item>
               <el-form-item :label="t('android.pairCode')"><el-input v-model="pairCode" maxlength="6" type="password" show-password /></el-form-item>
@@ -1587,6 +1590,7 @@ function resetForm() {
   form.rdpFixedWidth = -2
   form.rdpFixedHeight = -2
   form.rdpDomain = ''
+  form.androidPauseOnDisconnect = false
   form.rdpEnableNLA = true
   form.rdpSecurityMode = 'nla-prefer'
   form.rdpAdminSession = false
@@ -1856,6 +1860,7 @@ function normalizeForm(): ConnectionConfig {
     form.serialParity = serialParityValue.value
   }
   const normalized = { ...form }
+  if (form.type !== 'android') delete normalized.androidPauseOnDisconnect
   // Terminal type only applies to ssh/telnet/local; strip it elsewhere so
   // other connection JSON stays clean.
   if (normalized.type !== 'ssh' && normalized.type !== 'telnet' && normalized.type !== 'local') {

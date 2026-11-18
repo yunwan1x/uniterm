@@ -2575,6 +2575,7 @@
   "android.transferring": "正在传输…",
   "android.done": "已完成",
   "android.limit": "单文件不能超过 256 MiB",
+  "android.pauseOnDisconnect": "断开时暂停媒体播放",
   "android.pairHint": "网络 ADB 可直接连接。Android 11+ 无线调试首次连接请配对；上方端口填写连接端口，下方填写独立的配对端口。服务端必须能访问设备。",
   "android.pairPort": "配对端口",
   "android.pairCode": "配对码（6 位）",

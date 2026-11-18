@@ -68,6 +68,7 @@ type AndroidSession struct {
 	sockets                                     []io.ReadWriteCloser
 	ws                                          *websocket.Conn
 	serving                                     bool
+	pauseOnDisconnect, streamReady              bool
 	heartbeat                                   sessionWebSocketHeartbeatOptions
 	videoSource                                 string
 	videoBitrate                                int
@@ -94,6 +95,7 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 	if err != nil {
 		return err
 	}
+	s.pauseOnDisconnect = cfg.AndroidPauseOnDisconnect
 	s.videoSource = source
 	s.setStatus(StatusConnecting)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -168,13 +170,25 @@ func (s *AndroidSession) Connect(cfg ConnectionConfig) (err error) {
 	s.setStatus(StatusConnected)
 	return nil
 }
-func (s *AndroidSession) Disconnect() error {
+func (s *AndroidSession) Disconnect() error { return s.disconnect(true) }
+
+// DisconnectForReconnect keeps device playback running while replacing this stream.
+func (s *AndroidSession) DisconnectForReconnect() error { return s.disconnect(false) }
+
+func (s *AndroidSession) disconnect(final bool) error {
 	s.once.Do(func() {
 		if s.client != nil {
 			// Clean a jar uploaded before startup failed, and bound cleanup even if the
 			// peer stops consuming data. scrcpy also cleans its own jar on normal exit.
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			stop := context.AfterFunc(ctx, func() { s.client.Close() })
+			s.mu.Lock()
+			pause := final && s.streamReady && s.pauseOnDisconnect
+			s.mu.Unlock()
+			if pause {
+				// Dedicated PAUSE is idempotent, including when media is already paused.
+				_, _ = s.exec(ctx, "cmd media_session dispatch pause")
+			}
 			if s.remoteJar != "" {
 				s.exec(ctx, "rm -f "+s.remoteJar)
 			}
@@ -327,6 +341,9 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
+	s.mu.Lock()
+	s.streamReady = true
+	s.mu.Unlock()
 	meta, _ := json.Marshal(map[string]any{"width": binary.BigEndian.Uint32(header[4:8]), "height": binary.BigEndian.Uint32(header[8:12]), "codec": "h264", "videoSource": s.videoSource, "dynamicBitrate": true, "bitrate": s.videoBitrate})
 	send(websocket.TextMessage, meta)
 	go func() {

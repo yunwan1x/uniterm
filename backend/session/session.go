@@ -76,15 +76,16 @@ type DesktopPreferences struct {
 }
 
 type ConnectionConfig struct {
-	AndroidVideoQuality *AndroidVideoQuality `json:"androidVideoQuality,omitempty"`
-	AndroidVideoSource  string               `json:"androidVideoSource,omitempty"` // display, front, back (session selection)
-	ID                  string               `json:"id"`
-	Name                string               `json:"name"`
-	Remark              string               `json:"remark,omitempty"`
-	Type                string               `json:"type"`
-	Host                string               `json:"host"`
-	Port                int                  `json:"port"`
-	User                string               `json:"user"`
+	AndroidPauseOnDisconnect bool                 `json:"androidPauseOnDisconnect,omitempty"`
+	AndroidVideoQuality      *AndroidVideoQuality `json:"androidVideoQuality,omitempty"`
+	AndroidVideoSource       string               `json:"androidVideoSource,omitempty"` // display, front, back (session selection)
+	ID                       string               `json:"id"`
+	Name                     string               `json:"name"`
+	Remark                   string               `json:"remark,omitempty"`
+	Type                     string               `json:"type"`
+	Host                     string               `json:"host"`
+	Port                     int                  `json:"port"`
+	User                     string               `json:"user"`
 	// SSHAlgorithms customizes the negotiated algorithms for SSH-based
 	// sessions. nil keeps the compatible default.
 	SSHAlgorithms *SSHAlgoConfig `json:"sshAlgorithms,omitempty"`

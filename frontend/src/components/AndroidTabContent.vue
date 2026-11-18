@@ -263,6 +263,7 @@ import { useTabStore } from '../stores/tabStore'
 import { useSessionStore } from '../stores/sessionStore'
 import {
   CreateSession,
+  CloseAndroidSessionForReconnect,
   CloseSession,
 } from '../../bindings/github.com/ys-ll/uniterm/app'
 import type { ConnectionConfig } from '../types/session'
@@ -454,11 +455,12 @@ async function reconnect() {
   connected.value = false
   error.value = ''
   try {
-    disposeClient()
     if (sessionId) {
-      await CloseSession(sessionId)
+      // The backend must know this is a replacement before the socket closes.
+      await CloseAndroidSessionForReconnect(sessionId)
       sessionId = undefined
     }
+    disposeClient()
     await connect(true)
   } catch (e) {
     error.value = androidErrorMessage(e)

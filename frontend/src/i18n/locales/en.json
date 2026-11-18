@@ -2575,6 +2575,7 @@
   "android.transferring": "Transferring…",
   "android.done": "Completed",
   "android.limit": "Maximum file size is 256 MiB",
+  "android.pauseOnDisconnect": "Pause media on disconnect",
   "android.pairHint": "Connect directly to network ADB. For Android 11+ wireless debugging, pair first. The connection port above and pairing port below are different. The server must reach the device.",
   "android.pairPort": "Pairing port",
   "android.pairCode": "Pairing code (6 digits)",

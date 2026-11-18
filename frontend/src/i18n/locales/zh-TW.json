@@ -2548,6 +2548,7 @@
   "android.transferring": "正在傳輸…",
   "android.done": "已完成",
   "android.limit": "單個檔案不能超過 256 MiB",
+  "android.pauseOnDisconnect": "中斷連線時暫停媒體播放",
   "android.pairHint": "網路 ADB 可直接連接。Android 11+ 無線偵錯首次連接請配對；上方填寫連接埠，下方填寫獨立的配對埠。伺服器必須能存取裝置。",
   "android.pairPort": "配對埠",
   "android.pairCode": "配對碼（6 位）",
