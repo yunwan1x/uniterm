@@ -40,6 +40,28 @@ func TestAndroidControl(t *testing.T) {
 		}
 	}
 }
+func TestAndroidClipboardTextLimit(t *testing.T) {
+	text := strings.Repeat("安", androidPasteLimit/3) + "xy"
+	for _, suffix := range []string{"", "!"} {
+		value := text + suffix
+		msg, err := json.Marshal(map[string]string{"type": "paste", "text": value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		packet, err := androidControl(msg)
+		if suffix != "" {
+			if err == nil {
+				t.Fatal("oversized clipboard accepted")
+			}
+			continue
+		}
+		if err != nil || len(packet) != 14+androidPasteLimit || packet[0] != 9 || packet[9] != 1 ||
+			binary.BigEndian.Uint32(packet[10:]) != androidPasteLimit || string(packet[14:]) != value {
+			t.Fatalf("clipboard packet mismatch at size limit: %v", err)
+		}
+	}
+}
+
 func TestAndroidRedroidLive(t *testing.T) {
 	if os.Getenv("UNITERM_ANDROID_LIVE") == "" {
 		t.Skip("explicit local redroid fixture required")

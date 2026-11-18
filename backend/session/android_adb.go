@@ -131,13 +131,16 @@ func (s *AndroidSession) exec(ctx context.Context, command string) ([]byte, erro
 	return data, err
 }
 func (s *AndroidSession) push(ctx context.Context, path string, reader io.Reader) error {
+	return s.pushMode(ctx, path, reader, 0644)
+}
+func (s *AndroidSession) pushMode(ctx context.Context, path string, reader io.Reader, mode os.FileMode) error {
 	stream, err := androidOpen(ctx, s.client, "sync:")
 	if err != nil {
 		return err
 	}
 	defer stream.Close()
 	syncClient := adb.NewSyncClient(stream.raw)
-	err = syncClient.Send(path, 0644, uint32(time.Now().Unix()), reader)
+	err = syncClient.Send(path, mode, uint32(time.Now().Unix()), reader)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

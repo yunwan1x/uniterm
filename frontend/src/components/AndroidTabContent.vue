@@ -157,15 +157,17 @@
             @click="textOpen = false"
           >
             ×</button
-          ><textarea v-model="text" maxlength="4096" /><button
+          ><textarea v-model="text" /><button
             @click="sendText"
           >
             {{ t('android.send') }}
           </button>
           <p>{{ t('android.textHint') }}</p>
+          <button type="button" :disabled="imageBusy || !connected" @click="readClipboardImage">{{ t('android.copyImage') }}</button>
+          <p>{{ t('android.imageHint') }}</p>
         </aside>
-        <p v-if="windowNotice" class="android-window-notice" role="status">
-          {{ windowNotice }}
+        <p v-if="clipboardNotice || windowNotice" class="android-window-notice" role="status">
+          {{ clipboardNotice || windowNotice }}
         </p>
         <div v-if="!isFullscreen && (floatKind === 'native' || floatKind === 'window') && !toolbarVisible" class="android-toolbar-edge" aria-hidden="true"
           @pointerenter="showToolbar" @pointerleave="scheduleHideToolbar"
@@ -464,9 +466,67 @@ async function switchSource(e: Event) {
   resolutionOpen.value = false
   await reconnect()
 }
+const clipboardNotice = ref('')
+const imageBusy = ref(false)
+let clipboardTimer: ReturnType<typeof setTimeout> | undefined
+let imageAbort: AbortController | undefined
+function clipboardMessage(key: string) {
+  clipboardNotice.value = t(key)
+  clearTimeout(clipboardTimer)
+  clipboardTimer = setTimeout(() => { clipboardNotice.value = '' }, 6000)
+}
+function pasteText(value: string) {
+  if (!client || !connected.value || source.value !== 'display' || !value) return false
+  const limit = 128 * 1024
+  if (value.length > limit || new TextEncoder().encode(value).length > limit) {
+    clipboardMessage('android.clipTextLimit')
+    return false
+  }
+  client.send({ type: 'paste', text: value })
+  return true
+}
 function sendText() {
-  client?.send({ type: 'paste', text: text.value })
-  text.value = ''
+  if (pasteText(text.value)) text.value = ''
+}
+async function copyImage(blob: Blob, pasteAfter: boolean) {
+  const session = client
+  if (!session || !connected.value || source.value !== 'display' || imageBusy.value) return
+  if (blob.size > 16 * 1024 * 1024) return clipboardMessage('android.clipImageLimit')
+  imageBusy.value = true
+  const abort = new AbortController()
+  imageAbort = abort
+  try {
+    clipboardMessage('android.clipSending')
+    const response = await fetch(session.httpURL('clipboard-image', ''), {
+      method: 'POST', body: blob, signal: abort.signal,
+    })
+    if (session !== client || abort.signal.aborted) return
+    if (!response.ok) {
+      return clipboardMessage(response.status === 413 || response.status === 415 ? 'android.clipImageLimit' : 'android.clipImageFailed')
+    }
+    if (pasteAfter) session.send({ type: 'key', key: 279 })
+    clipboardMessage('android.clipImageDone')
+  } catch {
+    if (!abort.signal.aborted && session === client) clipboardMessage('android.clipImageFailed')
+  } finally {
+    if (imageAbort === abort) { imageBusy.value = false; imageAbort = undefined }
+  }
+}
+async function readClipboardImage() {
+  const session = client
+  try {
+    const items = await navigator.clipboard.read()
+    if (session !== client || source.value !== 'display') return
+    for (const item of items) {
+      const type = item.types.find(type => type === 'image/png' || type === 'image/jpeg')
+      if (type) {
+        const blob = await item.getType(type)
+        if (session === client) await copyImage(blob, false)
+        return
+      }
+    }
+    clipboardMessage('android.clipNoImage')
+  } catch { clipboardMessage('android.clipReadFailed') }
 }
 function togglePane(pane: string) {
   const open =
@@ -596,8 +656,15 @@ function move(e: PointerEvent) {
 }
 function paste(e: ClipboardEvent) {
   if (source.value !== 'display') return
-  const text = e.clipboardData?.getData('text/plain')
-  if (text) client?.send({ type: 'paste', text })
+  const items = Array.from(e.clipboardData?.items || [])
+  const item = items.find(item => item.kind === 'file' && item.type.startsWith('image/'))
+  if (item) {
+    const file = item.getAsFile()
+    if (file && (file.type === 'image/png' || file.type === 'image/jpeg')) void copyImage(file, true)
+    else clipboardMessage('android.clipImageLimit')
+    return
+  }
+  pasteText(e.clipboardData?.getData('text/plain') || '')
 }
 function keyboard(e: KeyboardEvent) {
   if (source.value !== 'display') return
@@ -689,6 +756,8 @@ onMounted(() => {
   void connect()
 })
 onBeforeUnmount(() => {
+  imageAbort?.abort()
+  clearTimeout(clipboardTimer)
   releaseTouch()
   mounted = false
   window.removeEventListener('panel:reconnect', onReconnect)

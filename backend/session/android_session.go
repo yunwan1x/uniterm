@@ -53,6 +53,7 @@ func PairAndroid(host string, port int, code string) error {
 }
 
 type AndroidSession struct {
+	imageMu   sync.Mutex
 	displayMu sync.Mutex
 	baseSession
 	ctx                                         context.Context
@@ -353,7 +354,8 @@ func (s *AndroidSession) handle(w http.ResponseWriter, r *http.Request) {
 			ws.Close()
 		}
 	}()
-	ws.SetReadLimit(64 * 1024)
+	// JSON may escape a single UTF-8 byte as six ASCII bytes (e.g. U+0000).
+	ws.SetReadLimit(6*androidPasteLimit + 1024)
 	stopHeartbeat := startSessionWebSocketHeartbeat(ws, s.heartbeat, s.cancel)
 	defer stopHeartbeat()
 	for {
@@ -487,7 +489,7 @@ func androidControl(data []byte) ([]byte, error) {
 		binary.BigEndian.PutUint16(p[15:], uint16(m.ScrollY))
 		return p, nil
 	case "paste":
-		if len(m.Text) > 4096 {
+		if len(m.Text) > androidPasteLimit {
 			return nil, fmt.Errorf("text too long")
 		}
 		p := make([]byte, 14+len(m.Text))
@@ -506,6 +508,10 @@ func (s *AndroidSession) files(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	stopRequest := context.AfterFunc(r.Context(), cancel)
 	defer stopRequest()
+	if r.URL.Query().Get("op") == "clipboard-image" {
+		s.clipboardImage(ctx, w, r)
+		return
+	}
 	if r.URL.Query().Get("op") == "resolution" {
 		if r.Method != "POST" {
 			http.Error(w, "POST required", 405)

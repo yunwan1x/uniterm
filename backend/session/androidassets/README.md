@@ -12,9 +12,8 @@ No USB access, adb reverse, host display server, or desktop scrcpy process is us
 
 ## uniTerm dynamic bitrate extension
 
-The embedded jar is now built from v3.3.4 with `dynamic-bitrate.patch`, rather than
-the unmodified release above. Current SHA-256:
-`9d57266922e2a544d56273c1a2b69a809c7cda229027a58a75faf0049407ac96`.
+The embedded jar is now built from v3.3.4 with `dynamic-bitrate.patch` and the image clipboard helper in `clipboard/`. Current SHA-256:
+`d245e0cf3ed96f19ce8dddd083f58299c8a14698b0b2b217b29da5908c098afa`.
 Rebuild using `ANDROID_HOME=... ./build-dynamic-bitrate.sh` (SDK/build tools 36,
 JDK, git). The patch and upstream Apache-2.0 license are shipped here.
 
@@ -29,3 +28,13 @@ The matching Go proxy parses normal clipboard/ACK/UHID messages as well, and
 forwards quality acknowledgements separately from video metadata. Browser auto
 mode stops adapting on rejection or acknowledgement timeout, preserving the live
 session. Stock scrcpy servers do not support this extension.
+
+## Android clipboard
+
+Text paste uses the scrcpy control connection and accepts up to 128 KiB of UTF-8.
+On Android 10 and later, an explicit browser paste or toolbar action can send a
+PNG or JPEG of up to 16 MiB. The worker stages the helper for the request and
+launches it with app_process under the authorized ADB shell. The helper stores
+the image in Pictures/uniTerm and puts its MediaStore URI and MIME type on the
+system clipboard. The image remains in the gallery until the user removes it.
+Pasting into an app requires that app to accept image content.
