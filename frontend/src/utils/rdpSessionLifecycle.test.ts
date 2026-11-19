@@ -50,6 +50,7 @@ function fixture() {
     effectiveUser: ref('test'), effectivePassword: ref(''),
     resolveDesktopSize: () => ({ width: 1280, height: 720 }),
     lastResizeRequest: null, lastScaleRequest: null, scaleSyncAttempts: 0,
+    xrdpScaleRefresh: { observe: vi.fn(), pending: false },
     displayControlUsable: null, clearScaleSync: () => {}, rdpLog: vi.fn(),
     activeQuality: ref('balanced'), activeGraphicsMode: ref('gfx'),
     activeResolution: ref('fixed'), zoom: ref(1), localScalePercent: () => 100,
@@ -109,9 +110,27 @@ describe('RDP session lifecycle recovery', () => {
     c.canvasEl.value = desktop
     c.onFramebufferResize()
     expect(c.sendScaledResize).toHaveBeenCalledExactlyOnceWith(1734, 1090, 150)
-    expect(c.scheduleScaleSync).toHaveBeenCalledWith(150)
+    expect(c.scheduleScaleSync).not.toHaveBeenCalled()
     c.onFramebufferResize()
     expect(c.onContainerResize).toHaveBeenCalledOnce()
+  })
+
+  it('honors a viewport change that matches an in-flight temporary framebuffer', () => {
+    const { c } = fixture()
+    const viewport = { width: 1732, height: 1090 }
+    c.props.config.rdpXrdpScaleCompatibility = true
+    c.session = {}
+    c.isAdaptive = () => true
+    c.floating = c.mobileKbOpen = ref(false)
+    c.currentDesktopSize = c.adaptiveDesktopSize = () => viewport
+    c.framebufferSize.value = viewport
+    c.lastResizeRequest = { width: 1734, height: 1090 }
+    c.lastScaleRequest = c.localScalePercent()
+    c.xrdpScaleRefresh.pending = true
+    c.sendScaledResize = vi.fn()
+    c.requestAdaptiveResize()
+    c.requestAdaptiveResize()
+    expect(c.sendScaledResize).toHaveBeenCalledExactlyOnceWith(1732, 1090, 100)
   })
 
   it.each([

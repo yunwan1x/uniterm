@@ -228,6 +228,7 @@ import { RdpClipboardSync, RdpInputQueue } from '../utils/rdpClipboard'
 import { RdpFileTransfer } from '../utils/rdpFileTransfer'
 import { adaptiveRdpSize, rdpPointerPosition, rdpResizeRequests } from '../utils/rdpGeometry'
 import type { RdpDesktopSize } from '../utils/rdpGeometry'
+import { XrdpScaleRefresh } from '../utils/xrdpScaleRefresh'
 import { normalizeRdpQuality, rdpQualityProfile } from '../utils/rdpQuality'
 import type { RdpQuality } from '../utils/rdpQuality'
 import { RDP_RESOLUTION_PRESETS, resolutionSentinels, seedResolutionChoice } from '../utils/rdpResolutions'
@@ -1474,7 +1475,13 @@ let lastResizeRequest: RdpDesktopSize | null = null
 let lastScaleRequest: number | null = null
 let scaleSyncTimer: ReturnType<typeof setTimeout> | null = null
 let scaleSyncAttempts = 0
-let scaleRestoreTimer: ReturnType<typeof setTimeout> | null = null
+const xrdpScaleRefresh = new XrdpScaleRefresh(layout => {
+  try {
+    session?.resize(...layout)
+  } catch (e) {
+    rdpLog(`xrdp scale refresh failed: ${String(e)}`)
+  }
+})
 // Infer support from actual framebuffer changes, falling back to reconnect
 // when the server does not handle Display Control resize requests.
 let displayControlUsable: boolean | null = null
@@ -1504,8 +1511,7 @@ function clearResizeProbe() {
 }
 
 function clearScaleSync() {
-  if (scaleRestoreTimer !== null) clearTimeout(scaleRestoreTimer)
-  scaleRestoreTimer = null
+  xrdpScaleRefresh.cancel()
   if (scaleSyncTimer !== null) clearTimeout(scaleSyncTimer)
   scaleSyncTimer = null
 }
@@ -1521,28 +1527,18 @@ function localScalePercent(): number {
 // enabled xrdp connections send virtual millimetres and the temporary resize.
 function sendScaledResize(width: number, height: number, scale: number) {
   if (!session) return
-  if (scaleRestoreTimer !== null) clearTimeout(scaleRestoreTimer)
-  scaleRestoreTimer = null
-  const active = session
-  const requests = rdpResizeRequests(width, height, scale, currentDesktopSize(),
+  const [layout, restore] = rdpResizeRequests(width, height, scale, currentDesktopSize(),
     props.config?.rdpXrdpScaleCompatibility === true)
-  active.resize(...requests[0]!)
-  const restore = requests[1]
-  if (!restore) return
-  scaleRestoreTimer = setTimeout(() => {
-    scaleRestoreTimer = null
-    if (session !== active || status.value !== 'connected' || reconnecting || !isAdaptive()) return
-    if (props.config?.rdpXrdpScaleCompatibility !== true) return
-    try {
-      active.resize(...restore)
-    } catch (e) {
-      rdpLog(`dpi geometry restore failed: ${String(e)}`)
-    }
-  }, 300)
+  if (restore) {
+    xrdpScaleRefresh.start(layout, restore)
+  } else {
+    xrdpScaleRefresh.cancel()
+    session.resize(...layout)
+  }
 }
 
 // Display Control may not be ready immediately after connecting. Bound retries
-// and cancel both retry and geometry-restore timers when the session ends.
+// for ordinary RDP scale updates, which have no framebuffer size change to observe.
 const SCALE_SYNC_RETRIES = 2
 const SCALE_SYNC_RETRY_MS = 2000
 function scheduleScaleSync(scale: number) {
@@ -1656,7 +1652,8 @@ function requestAdaptiveResize() {
     lastScaleRequest = scale
     scaleSyncAttempts = 0
   }
-  if (!scaleChanged && !sizeChanged) return
+  // A new viewport can match a temporary framebuffer while its restore is in flight.
+  if (!scaleChanged && !sizeChanged && !xrdpScaleRefresh.pending) return
   // Do not reconnect repeatedly if a server clamps/refuses this resolution.
   if (!scaleChanged && lastResizeRequest?.width === width && lastResizeRequest.height === height) return
   lastResizeRequest = { width, height }
@@ -1670,7 +1667,7 @@ function requestAdaptiveResize() {
       rdpLog(`dpi scale update failed: ${String(e)}`)
       return
     }
-    scheduleScaleSync(scale)
+    if (!props.config?.rdpXrdpScaleCompatibility) scheduleScaleSync(scale)
     return
   }
   try {
@@ -1739,7 +1736,7 @@ watch(windowKind, async () => {
   if (disposed) return
   onFocusOut()
   clearResizeProbe()
-  clearScaleSync()
+  if (!props.config?.rdpXrdpScaleCompatibility) clearScaleSync()
   await nextTick()
   if (disposed) return
   bindOwnerEvents()
@@ -1752,6 +1749,7 @@ function onFramebufferResize() {
   if (!canvas || canvas.width <= 0 || canvas.height <= 0) return
   const firstSize = framebufferSize.value === null
   framebufferSize.value = { width: canvas.width, height: canvas.height }
+  xrdpScaleRefresh.observe(canvas.width, canvas.height)
   if (firstSize && isAdaptive() && props.config?.rdpXrdpScaleCompatibility) onContainerResize()
 }
 

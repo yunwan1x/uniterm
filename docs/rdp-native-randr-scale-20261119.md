@@ -14,9 +14,11 @@ The server-side external XFCE helper translates RandR notifications to xfconf.
 No xrdp source patch or private X11 property is required.
 
 Upstream xrdp 0.10.6.1 ignores same-framebuffer layout updates. For these requests,
-UniTerm sends a two-pixel width change followed 300 ms later by the intended size,
-with matching virtual physical sizes on both messages. Post-connect retries are
-bounded; restore/retry timers are cancelled during teardown. This compatibility
+UniTerm sends a two-pixel width change and restores the intended size as soon as
+the temporary framebuffer appears. Both layouts carry matching virtual physical sizes.
+Only an unobserved layout is retried (twice, at two-second intervals). If the
+temporary size is never observed, UniTerm still requests the intended size. A new
+layout or session teardown cancels pending retries. This compatibility
 sequence can cause brief resizing. Fixed-resolution mode is unchanged.
 
 Validation: 53 geometry/zoom/isolation unit tests pass; Vite production build and Go server

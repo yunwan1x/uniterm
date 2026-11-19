@@ -67,7 +67,7 @@ export type RdpResizeArguments = [number, number, number] | [number, number, num
 
 /** Preserve the original Windows RDP messages unless xrdp compatibility is explicit. */
 export function rdpResizeRequests(width: number, height: number, scale: number,
-  current: RdpDesktopSize | null, xrdpCompatibility = false): RdpResizeArguments[] {
+  current: RdpDesktopSize | null, xrdpCompatibility = false): [RdpResizeArguments, RdpResizeArguments?] {
   if (!xrdpCompatibility) return [[width, height, scale]]
   const target = rdpScaledResize(width, height, scale)
   if (current?.width !== width || current.height !== height) return [target]
