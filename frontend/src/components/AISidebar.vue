@@ -251,7 +251,7 @@
               class="ghost-btn hash-btn add-btn"
               :title="t('ai.addMenu')"
               :disabled="lockedPanels.length === 0 && !currentIsTerminal"
-              @click.stop="addMenuRef?.toggle($event.currentTarget)"
+              @click.stop="toggleAddMenu"
             >
               <Plus :size="14" />
             </button>
@@ -1099,6 +1099,10 @@ const addTagMenuRef = ref<InstanceType<typeof Menu> | null>(null)
 const modelMenuRef = ref<InstanceType<typeof Menu> | null>(null)
 const modeMenuRef = ref<InstanceType<typeof Menu> | null>(null)
 const addMenuRef = ref<InstanceType<typeof Menu> | null>(null)
+
+function toggleAddMenu(event: MouseEvent) {
+  if (event.currentTarget instanceof HTMLElement) addMenuRef.value?.toggle(event.currentTarget)
+}
 
 // "+" menu items: close the menu first, then dispatch to the same handlers
 // the removed standalone buttons used (they re-focus the editor themselves).

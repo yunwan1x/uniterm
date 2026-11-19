@@ -63,7 +63,8 @@ describe('browser RDP files', () => {
     files.download([1])
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][0]).toBe('二进制.bin')
-    expect(new Uint8Array(await save.mock.calls[0][1].arrayBuffer())).toEqual(bytes)
+    // Compare every byte without Vitest walking a million individual elements.
+    expect(Buffer.from(await save.mock.calls[0][1].arrayBuffer()).equals(Buffer.from(bytes))).toBe(true)
     expect(invoke.mock.calls.every(([name, value]) => name === 'request_file_contents' && value.file_index === 1 && value.clip_data_id === 17)).toBe(true)
     expect(files.tasks[0]).toMatchObject({ state: 'completed', done: bytes.length })
   })

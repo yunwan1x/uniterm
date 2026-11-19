@@ -1,4 +1,4 @@
-// Run against a dedicated local xrdp account; this test changes its clipboard.
+// Run against an unlocked, dedicated local xrdp account; this test changes its clipboard.
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 import fs from 'node:fs';import {execFileSync,spawn} from 'node:child_process';import assert from 'node:assert/strict';
 const cred=JSON.parse(fs.readFileSync(process.env.RDP_CREDENTIALS_FILE));
@@ -9,6 +9,7 @@ const b=await chromium.launch({headless:true,args:['--no-sandbox','--enable-unsa
 const ctx=await b.newContext({viewport:{width:1400,height:900},permissions:['clipboard-read','clipboard-write']});
 function env(){const pid=execFileSync('pgrep',['-u',cred.username,'-x','xfce4-session'],{encoding:'utf8'}).trim().split('\n')[0];return fs.readFileSync('/proc/'+pid+'/environ').toString().split('\0').filter(s=>/^(DISPLAY=|XAUTHORITY=|DBUS_SESSION_BUS_ADDRESS=|XDG_RUNTIME_DIR=)/.test(s))}
 function remote(args,encoding='utf8'){return execFileSync('runuser',['-u',cred.username,'--','env',...env(),...args],{encoding,timeout:10000})}
+let imageTarget;
 try {
  assert.equal((await ctx.request.post(base+'/api/auth/login',{data:{username:'admin',password:cred.adminPassword}})).status(),200);
  await ctx.addInitScript(()=>{window.clipSends=[];window.clipEvents=[];const W=window.Worker;window.Worker=class extends W{constructor(...a){super(...a);this.addEventListener('message',e=>{if(e.data?.type==='event'&&e.data.name==='clipboard')window.clipEvents.push(e.data.args[0].map(i=>({mime:i.mime,type:i.value?.constructor?.name,length:i.value?.length})))})}};const post=Worker.prototype.postMessage;Worker.prototype.postMessage=function(m,...a){if(m?.method==='clipboard')window.clipSends.push(m.value.map(i=>i.mime));return post.call(this,m,...a)}});
@@ -34,10 +35,44 @@ try {
  await p.waitForTimeout(2200);assert.equal(await p.evaluate(()=>window.clipSends.length),before,'remote image must not echo');console.log('PASS no image echo across polling');
  await p.evaluate(()=>navigator.clipboard.writeText('image-to-text-regression'));
  await p.waitForTimeout(1500);assert.equal(remote(['xclip','-selection','clipboard','-o']),'image-to-text-regression');console.log('PASS text after image');
+ // Use an image-aware destination: XFCE's desktop interprets Ctrl+V as file paste.
+ const targetPath='/tmp/'+cred.username+'-image-paste.png';
+ try { fs.unlinkSync(targetPath) } catch {}
+ imageTarget=spawn('runuser',['-u',cred.username,'--','env',...env(),'/usr/bin/python3','-c',
+ `import gi
+gi.require_version('Gtk','3.0')
+from gi.repository import Gtk,Gdk
+w=Gtk.Window(title='uniTerm Clipboard QA')
+w.set_default_size(320,240)
+image=Gtk.Image()
+w.add(image)
+def received(clipboard,pixbuf,data):
+ if pixbuf:
+  pixbuf.savev(${JSON.stringify(targetPath)},'png',[],[])
+  image.set_from_pixbuf(pixbuf)
+def key(window,event):
+ if event.state & Gdk.ModifierType.CONTROL_MASK and event.keyval in (Gdk.KEY_v,Gdk.KEY_V):
+  Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).request_image(received,None)
+  return True
+ return False
+w.connect('key-press-event',key)
+w.show_all()
+Gtk.main()`],{stdio:'ignore'});
+ await p.waitForTimeout(1000);
+ remote(['xdotool','search','--name','uniTerm Clipboard QA','windowactivate','--sync']);
  // A real Ctrl+V must use the DOM paste image, even when programmatic reads are unavailable.
  await p.evaluate(async()=>{const c=document.createElement('canvas');c.width=32;c.height=24;const x=c.getContext('2d');x.fillStyle='#f0c020';x.fillRect(0,0,32,24);const png=await new Promise(r=>c.toBlob(r,'image/png'));await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);Object.defineProperty(navigator.clipboard,'read',{value:undefined,configurable:true});});
- await p.keyboard.press('Control+v');await p.waitForTimeout(1200);
+ await p.locator('.rdp-tab-content').focus();
+ await p.keyboard.press('Control+v');
+ // Wait for the remote clipboard advertisement instead of assuming a fixed delay.
+ const deadline=Date.now()+10000;
+ while(!remote(['xclip','-selection','clipboard','-o','-t','TARGETS']).includes('image/bmp')) {
+   if(Date.now()>deadline)throw Error('Native paste image was not advertised: '+JSON.stringify(await p.evaluate(()=>({sends:window.clipSends,events:window.clipEvents,focus:document.activeElement?.className}))));
+   await p.waitForTimeout(200);
+ }
  const pasted=remote(['xclip','-selection','clipboard','-o','-t','image/bmp'],null);fs.writeFileSync(artifacts+'/pasted.bmp',pasted);
  execFileSync('python3',['-c',"import sys; from PIL import Image; im=Image.open(sys.argv[1]); assert im.size==(32,24); assert im.getpixel((10,10))[:3]==(240,192,32)",artifacts+'/pasted.bmp']);console.log('PASS native image paste without Clipboard.read');
+ const pasteDeadline=Date.now()+5000;while(!fs.existsSync(targetPath)){if(Date.now()>pasteDeadline)throw Error('Remote GTK app did not receive Ctrl+V image');await p.waitForTimeout(100)}
+ execFileSync('python3',['-c',"import sys; from PIL import Image; im=Image.open(sys.argv[1]); assert im.size==(32,24); assert im.getpixel((10,10))[:3]==(240,192,32)",targetPath]);console.log('PASS image received by remote GTK application');
  await p.screenshot({path:artifacts+'/connected.png'});
-} finally {await b.close()}
+} finally {imageTarget?.kill();await b.close()}

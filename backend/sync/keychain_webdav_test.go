@@ -1,8 +1,14 @@
 package sync
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/zalando/go-keyring"
+)
 
 func TestWebDAVPasswordRoundTrip(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
 	// Isolate from the real "uniTerm" keyring service so the test never
 	// touches the user's stored credentials. The "uniTerm-test" entry
 	// lingers afterwards, which is acceptable for test residue.

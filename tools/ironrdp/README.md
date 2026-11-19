@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.3-uniterm.24.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.3-uniterm.25.tgz`.
 It replaces the external v0.5.2 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -20,7 +20,15 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
 ## Changes
 
-The `0.5.3-uniterm.24` package incorporates the certificate, licensing, and
+The `0.5.3-uniterm.25` package also corrects the X.509 chain layout and
+BIT STRING parsing in the upstream security fixes. It reads the declared
+certificate count, consumes final chain padding, and encrypts using the last
+certificate's RSA key. Regression fixtures independently verify ciphertext,
+truncated input, count bounds, and the temporary-certificate flag.
+
+Run `cargo +stable test --locked -p ironrdp-testsuite-core --test rdpsec_regression`.
+
+The `0.5.3-uniterm.25` package incorporates the certificate, licensing, and
 connector fixes from `ys-ll/IronRDP` commit
 `50f55566c73816c8a0174d755cc87ab7f3a63de7` (ironrdp-wasm v0.5.3).
 It retains the channel-aware reactivation implementation and all image

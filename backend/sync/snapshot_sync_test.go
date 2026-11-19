@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zalando/go-keyring"
 )
 
 // fakeSnapshotBackend is an in-memory SnapshotBackend for flow tests.
@@ -99,6 +101,8 @@ func newSnapshotTestService(t *testing.T, scope []string) (*SyncService, string,
 	// Isolate from the real "uniTerm" keyring service so the test never
 	// touches the user's stored credentials (same pattern as
 	// keychain_webdav_test.go).
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
 	origService := keychainService
 	keychainService = "uniTerm-test"
 	t.Cleanup(func() { keychainService = origService })
@@ -495,6 +499,8 @@ func TestSnapshotSaltReusedAcrossPushes(t *testing.T) {
 // plus the snapshot tests' isolated keyring service.
 func newWebDAVConfigTestService(t *testing.T) *SyncService {
 	t.Helper()
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
 	origService := keychainService
 	keychainService = "uniTerm-test"
 	t.Cleanup(func() { keychainService = origService })

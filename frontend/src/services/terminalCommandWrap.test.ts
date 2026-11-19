@@ -65,6 +65,8 @@ describe('verified command-input hard wraps', () => {
     expect(gutter.lines.map(row => row.lineNumber)).toEqual(['1', '', ''])
     const colors = vi.spyOn(t, 'setCellColorOverrides').mockImplementation(() => {})
     vi.spyOn(t, 'clearCellColorOverrides').mockImplementation(() => {})
+    // Keep this content assertion independent of the renderer's 3 ms frame budget.
+    vi.spyOn(performance, 'now').mockReturnValue(0)
     const highlighter = new OverlayHighlighter(t)
     highlighter.forceRefresh()
     expect(colors.mock.calls.some(([row, spans]) => row === 1 && spans?.some(s => s.color === '#e5e510'))).toBe(true)

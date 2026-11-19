@@ -2,7 +2,7 @@ diff --git a/.github/pr-automation/fetch-pr-evidence.sh b/.github/pr-automation/
 old mode 100755
 new mode 100644
 diff --git a/Cargo.lock b/Cargo.lock
-index bd2558ee..e1052512 100644
+index bd2558ee..5b38d8d0 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -2936,6 +2936,7 @@ dependencies = [
@@ -39,7 +39,15 @@ index bd2558ee..e1052512 100644
   "ironrdp-svc",
   "qoicoubeh",
   "tracing",
-@@ -3794,10 +3807,13 @@ dependencies = [
+@@ -3616,6 +3629,7 @@ dependencies = [
+  "ironrdp-rdpeusb",
+  "ironrdp-rdpevor",
+  "ironrdp-rdpfile",
++ "ironrdp-rdpsec",
+  "ironrdp-rdpsnd",
+  "ironrdp-server",
+  "ironrdp-session",
+@@ -3794,10 +3808,13 @@ dependencies = [
   "ironrdp",
   "ironrdp-cliprdr-format",
   "ironrdp-core 0.3.1",
@@ -1664,10 +1672,10 @@ index 00000000..353ca4dd
 +digest = "0.10"
 diff --git a/crates/ironrdp-rdpsec/src/lib.rs b/crates/ironrdp-rdpsec/src/lib.rs
 new file mode 100644
-index 00000000..2c6ca98b
+index 00000000..679b6bb5
 --- /dev/null
 +++ b/crates/ironrdp-rdpsec/src/lib.rs
-@@ -0,0 +1,696 @@
+@@ -0,0 +1,678 @@
 +//! Standard RDP Security (PROTOCOL_RDP, MS-RDPBCGR 5.3) crypto engine.
 +//!
 +//! Verified bit-for-bit against FreeRDP `security.c` and against live
@@ -2114,58 +2122,40 @@ index 00000000..2c6ca98b
 +    Ok(out)
 +}
 +
-+/// RSA-encrypt `secret` with the RSA public key of the leaf certificate in
-+/// the GCC X.509 chain blob (`dwVersion` = 2). The blob layout is
-+/// `certCount u32` followed by `certCount` × (`certLen u32` + DER + 8-byte
-+/// padding); the last certificate is the server's leaf.
++/// RSA-encrypt `secret` with the last certificate's key in an X.509 chain.
 +///
-+/// Byte conventions per FreeRDP (`cert_common.c` + `crypto.c`): modulus and
-+/// exponent are read big-endian straight out of the DER, the plaintext is
-+/// interpreted little-endian and zero-padded to the modulus length, and the
-+/// ciphertext comes back little-endian — the same raw-modpow shape the
-+/// proprietary path uses.
++/// [MS-RDPELE] section 2.2.1.4.2, "X.509 Certificate Chain", places all
++/// length-prefixed certificates before a single padding block of 8 + 4 * count bytes.
++/// RSA input and output use the little-endian convention of Standard RDP Security.
++///
++/// [MS-RDPELE]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpele/bf2cc9cc-2b01-442e-a288-6ddfa3b80d59
 +fn encrypt_with_x509_chain_key(server_cert: &[u8], secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
-+    const CHAIN_HEADER_SIZE: usize = 8; // dwVersion + certCount
-+    const CERT_LENGTH_FIELD_SIZE: usize = 4;
-+    const X509_PADDING_SIZE: usize = 8;
-+
-+    let mut offset = CHAIN_HEADER_SIZE;
-+    let mut leaf: Option<&[u8]> = None;
-+    loop {
-+        let cert_len = u32::from_le_bytes(
-+            server_cert
-+                .get(offset..offset + CERT_LENGTH_FIELD_SIZE)
-+                .ok_or(SecurityError::CertTruncated)?
-+                .try_into()
-+                .unwrap(),
-+        ) as usize;
-+        offset += CERT_LENGTH_FIELD_SIZE;
-+        let cert = server_cert
-+            .get(offset..offset + cert_len)
-+            .ok_or(SecurityError::CertTruncated)?;
-+        offset += cert_len + X509_PADDING_SIZE;
-+        leaf = Some(cert);
-+        if offset >= server_cert.len() {
-+            break;
-+        }
++    let mut remaining = server_cert.get(4..).ok_or(SecurityError::CertTruncated)?;
++    let count = remaining.get(..4).ok_or(SecurityError::CertTruncated)?;
++    let count = u32::from_le_bytes(count.try_into().unwrap());
++    if !(2..=200).contains(&count) {
++        return Err(SecurityError::CertTruncated);
++    }
++    remaining = &remaining[4..];
++    let mut leaf = &[][..];
++    for _ in 0..count {
++        let length = remaining.get(..4).ok_or(SecurityError::CertTruncated)?;
++        let length = u32::from_le_bytes(length.try_into().unwrap()) as usize;
++        remaining = &remaining[4..];
++        leaf = remaining.get(..length).ok_or(SecurityError::CertTruncated)?;
++        remaining = &remaining[length..];
++    }
++    let padding_length = 8 + 4 * count as usize;
++    if remaining.len() != padding_length {
++        return Err(SecurityError::CertTruncated);
 +    }
 +
-+    let leaf = leaf.ok_or(SecurityError::CertTruncated)?;
 +    use x509_cert::der::Decode as _;
 +    let certificate = x509_cert::Certificate::from_der(leaf)
 +        .map_err(|_| SecurityError::CertNoPublicKey)?;
 +    let spki = certificate.tbs_certificate().subject_public_key_info();
-+
-+    // The subjectPublicKeyInfo BIT STRING wraps an RSAPublicKey DER SEQUENCE
-+    // (`SEQUENCE { INTEGER modulus, INTEGER publicExponent }`, one leading
-+    // zero byte marks zero unused bits). Parsed with a minimal DER walker:
-+    // the structure is fixed and this keeps the crate's dependency footprint
-+    // unchanged.
-+    let bits = spki
-+        .subject_public_key
-+        .as_bytes()
-+        .ok_or(SecurityError::CertNoPublicKey)?;
-+    let rsa_der = bits.strip_prefix(&[0u8]).ok_or(SecurityError::CertNoPublicKey)?;
++    // as_bytes() has already removed the DER BIT STRING's unused-bit count.
++    let rsa_der = spki.subject_public_key.as_bytes().ok_or(SecurityError::CertNoPublicKey)?;
 +    let (modulus, exponent) = parse_rsa_public_key(rsa_der)?;
 +
 +    let m = num_bigint::BigUint::from_bytes_be(modulus);
@@ -3107,10 +3097,18 @@ index 00000000..3016888d
 +    }
 +}
 diff --git a/crates/ironrdp-testsuite-core/Cargo.toml b/crates/ironrdp-testsuite-core/Cargo.toml
-index 59021cfc..74bdaf45 100644
+index 59021cfc..09f9b52e 100644
 --- a/crates/ironrdp-testsuite-core/Cargo.toml
 +++ b/crates/ironrdp-testsuite-core/Cargo.toml
-@@ -89,3 +89,8 @@ ironrdp-egfx-native.path = "../ironrdp-egfx-native"
+@@ -37,6 +37,7 @@ openh264 = { version = "0.9", optional = true, default-features = false, feature
+ visibility = { version = "0.1", optional = true }
+ 
+ [dev-dependencies]
++ironrdp-rdpsec.path = "../ironrdp-rdpsec"
+ anyhow = "1"
+ async-trait = "0.1"
+ expect-test.workspace = true
+@@ -89,3 +90,13 @@ ironrdp-egfx-native.path = "../ironrdp-egfx-native"
  
  [lints]
  workspace = true
@@ -3118,6 +3116,11 @@ index 59021cfc..74bdaf45 100644
 +[[test]]
 +name = "rdpsnd_regression"
 +path = "tests/rdpsnd/mod.rs"
++harness = true
++
++[[test]]
++name = "rdpsec_regression"
++path = "tests/rdpsec/mod.rs"
 +harness = true
 diff --git a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 index 2d65a124..a281702f 100644
@@ -3247,6 +3250,85 @@ index 9b96c4ef..a333daec 100644
 +    };
 +    assert_eq!(picture.to_rgba(&rect), expected, "pixel ({left}, {top})");
 +}
+diff --git a/crates/ironrdp-testsuite-core/tests/rdpsec/encrypted.hex b/crates/ironrdp-testsuite-core/tests/rdpsec/encrypted.hex
+new file mode 100644
+index 00000000..d46d56c8
+--- /dev/null
++++ b/crates/ironrdp-testsuite-core/tests/rdpsec/encrypted.hex
+@@ -0,0 +1 @@
++ed8486827d0b1d0b0d7a789eb6965625965f0e11cb014c932e65a99c77fdb9e68336d0c601ab7755d1399bb30ee8df00e484ed83eb53ed85b4fb276741e523614949c084af59fdaad8480a54233619109c4b5d668fe4a0b234ba298368dd52893ee551809815ef697926095039555f4e070beec003c2a3ce65c7602990eb6237
+diff --git a/crates/ironrdp-testsuite-core/tests/rdpsec/mod.rs b/crates/ironrdp-testsuite-core/tests/rdpsec/mod.rs
+new file mode 100644
+index 00000000..a3ecb9cd
+--- /dev/null
++++ b/crates/ironrdp-testsuite-core/tests/rdpsec/mod.rs
+@@ -0,0 +1,52 @@
++use ironrdp_rdpsec::encrypt_client_random;
++
++fn certificate_chain() -> Vec<u8> {
++    let mut chain = Vec::from(2u32.to_le_bytes());
++    chain.extend_from_slice(&2u32.to_le_bytes());
++    for certificate in [include_str!("root.hex"), include_str!("server.hex")] {
++        let der = hex::decode(certificate.trim()).unwrap();
++        chain.extend_from_slice(&u32::try_from(der.len()).unwrap().to_le_bytes());
++        chain.extend_from_slice(&der);
++    }
++    chain.extend_from_slice(&[0; 16]);
++    chain
++}
++
++#[test]
++fn x509_chain_encrypts_with_last_certificate_key() {
++    // oracle: spec MS-RDPELE §2.2.1.4.2, MS-RDPBCGR §5.3.4.1.
++    // Certificates were generated with Python cryptography 38.0.4.
++    // Expected ciphertext uses Python pow(m, e, n) independently, with
++    // little-endian input bytes 0..31 and the last certificate's RSA key.
++    let random: Vec<u8> = (0..32).collect();
++    let expected = hex::decode(include_str!("encrypted.hex").trim()).unwrap();
++    assert_eq!(encrypt_client_random(&certificate_chain(), &random).unwrap(), expected);
++}
++
++#[test]
++fn truncated_x509_chain_is_rejected() {
++    // oracle: spec MS-RDPELE §2.2.1.4.2 requires all blobs and final padding.
++    let chain = certificate_chain();
++    for length in 0..chain.len() {
++        assert!(encrypt_client_random(&chain[..length], &[1; 32]).is_err(), "prefix {length}");
++    }
++}
++
++#[test]
++fn invalid_x509_certificate_count_is_rejected() {
++    // oracle: spec MS-RDPELE §2.2.1.4.2 bounds NumCertBlobs to 2..=200.
++    for count in [0u32, 1, 201, u32::MAX] {
++        let mut chain = certificate_chain();
++        chain[4..8].copy_from_slice(&count.to_le_bytes());
++        assert!(encrypt_client_random(&chain, &[1; 32]).is_err());
++    }
++}
++
++#[test]
++fn temporary_x509_chain_uses_the_same_server_key() {
++    // oracle: spec MS-RDPBCGR §2.2.1.4.3.1 reserves bit 31 for the temporary flag.
++    let mut chain = certificate_chain();
++    chain[..4].copy_from_slice(&0x8000_0002u32.to_le_bytes());
++    let expected = hex::decode(include_str!("encrypted.hex").trim()).unwrap();
++    assert_eq!(encrypt_client_random(&chain, &(0..32).collect::<Vec<u8>>()).unwrap(), expected);
++}
+diff --git a/crates/ironrdp-testsuite-core/tests/rdpsec/root.hex b/crates/ironrdp-testsuite-core/tests/rdpsec/root.hex
+new file mode 100644
+index 00000000..5a595a28
+--- /dev/null
++++ b/crates/ironrdp-testsuite-core/tests/rdpsec/root.hex
+@@ -0,0 +1 @@
++308201a43082010da003020102020101300d06092a864886f70d01010b050030183116301406035504030c0d524450207465737420726f6f74301e170d3230303130313030303030305a170d3330303130313030303030305a30183116301406035504030c0d524450207465737420726f6f7430819f300d06092a864886f70d010101050003818d0030818902818100c1066b6a733e1c114ca029463d80e5d0fc4314311a62fbd1ef3cd2281df2aa3f2d6a6f412dd4fd0e25d884ccca0414f1a17b34b700e5abf2fe0f512e22fa9862c135f03a12448cebf10f069f92614a3559e8af8ab3493b2e3329cedb01de1defcdd84f0d454fefde3b0c8c57d7adb175dd20fe5d004577ad7047aa9b175ebd470203010001300d06092a864886f70d01010b0500038181008606ca689041c6ed228d27808fbed8f410ed382937457a458f5a696aa40a2a913f0a9564d35ba30942279b4bf8f00270c6d98e1045644711eadb6fedd3415434d46a0e7ed866c5ddbf1e15fe98945838ab6a90ed8a93b25d01c3a3bf51113462537dfbf8ef8652ba395d5b128ee2befe2660a48db112783b0045f85824a8fee5
+diff --git a/crates/ironrdp-testsuite-core/tests/rdpsec/server.hex b/crates/ironrdp-testsuite-core/tests/rdpsec/server.hex
+new file mode 100644
+index 00000000..074ccf96
+--- /dev/null
++++ b/crates/ironrdp-testsuite-core/tests/rdpsec/server.hex
+@@ -0,0 +1 @@
++308201a830820111a003020102020101300d06092a864886f70d01010b0500301a3118301606035504030c0f524450207465737420736572766572301e170d3230303130313030303030305a170d3330303130313030303030305a301a3118301606035504030c0f52445020746573742073657276657230819f300d06092a864886f70d010101050003818d0030818902818100ece98a3ced92a8569fc0be87eb02dfc3d47fcee2e009dc5060851dc5c9a0a606a795cc6c1ee9a28c504ccad8a5880ffe1111de0fcea20939963a8d22f45f0f69e86768270546c9ff6e4f800295a0674124082ee5d0afb92eb5a4f5be09876214b8cc52dcb713ffb34e038d617041bf972e6072d0dd406523120be874096ff53b0203010001300d06092a864886f70d01010b050003818100a7c824fe04c510fcc4b031b720aa63767677fe8aa1df84ee7992f85a7068c53ca9018e3dd90c6cf0656cb4840330e6e89422b29d04c900a7e9c9ad23b6fafa22547638edb5baaaa96700369fb1aae50d78e8e4205735d138794c1cb9b6a692c12a8ed7d47194779352da0cbe38b2154939534e64d781a27d0dba3ce4d76722db
 diff --git a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
 index 8dbf08ad..c392a002 100644
 --- a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs

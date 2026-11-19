@@ -179,7 +179,7 @@ import {
 import { msg } from '../services/message'
 import { ElMessageBox } from 'element-plus'
 import { saveWorkspaceToConnections } from '../composables/savedWorkspace'
-import type { TerminalTab, SettingsTab, NetscanTab, SFTPTab, RDPTab, VNCTab, SPICETab, DBTab, MonitorTab, WorkspaceTab } from '../types/workspace'
+import type { Tab, TerminalTab, SFTPTab, RDPTab, VNCTab, SPICETab, WorkspaceTab } from '../types/workspace'
 import { connectFileMenuKey, fileTransferProto, canOpenSshTerminal, asSshTerminalConfig } from '../utils/fileTransferUtils'
 import { connectionTypeIconOfKind } from '../utils/connectionTypes'
 import { useDuplicateSession } from '../composables/useDuplicateSession'
@@ -194,7 +194,7 @@ import { isMobilePlatform } from '../utils/platform'
 import { SquareTerminal, FolderUp, X, ArrowDownUp, Lock, Radio } from '@lucide/vue'
 
 const props = defineProps<{
-  tab: TerminalTab | SettingsTab | NetscanTab | SFTPTab | RDPTab | VNCTab | SPICETab | DBTab | MonitorTab | WorkspaceTab
+  tab: Tab
   shortcutIndex?: number
   isActive: boolean
   hasNotification?: boolean
@@ -325,7 +325,7 @@ const showBroadcastIcon = computed(() =>
 
 
 const hasActiveTransfers = computed(() => {
-  if (props.tab.type === 'workspace') return false
+  if (!('panelId' in props.tab)) return false
   const keys = [props.tab.panelId]
   // Terminal tabs also surface their companion file panel's transfers.
   if (props.tab.type === 'terminal') {
@@ -457,7 +457,7 @@ const hasServerHost = computed(() => !!serverHost.value)
 // and is not counted here).
 const hasTabMenu = computed(() => {
   if (props.tab.type !== 'start' && props.tab.type !== 'settings' && props.tab.type !== 'netscan') return true
-  return props.tab.type === 'terminal' || hasLocatableConnection.value || hasServerHost.value
+  return hasLocatableConnection.value || hasServerHost.value
 })
 
 function onDragStart(e: DragEvent) {
