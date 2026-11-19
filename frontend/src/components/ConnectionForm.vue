@@ -480,7 +480,7 @@
                   </el-form-item>
                   <el-form-item :label="t('conn.rdpXrdpScaleCompatibility')">
                     <el-switch v-model="form.rdpXrdpScaleCompatibility" />
-                    <div class="form-tip">{{ t('conn.rdpXrdpScaleCompatibilityHint') }}</div>
+                    <span class="field-hint hint-after-switch">{{ t('conn.rdpXrdpScaleCompatibilityHint') }}</span>
                   </el-form-item>
                   <el-form-item :label="t('conn.rdpSecurityMode')">
                     <el-select v-model="form.rdpSecurityMode" style="width: 100%">
@@ -2361,7 +2361,7 @@ function onConnect() {
   user-select: none;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 0.8125rem;
+  font-size: var(--el-font-size-extra-small);
   font-weight: 500;
   transition: color 0.15s;
 }
