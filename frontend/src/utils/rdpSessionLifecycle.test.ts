@@ -12,6 +12,7 @@ const names = new Set([
   'startClient', 'retryRenderer', 'runEnded', 'reconnect', 'connect',
   'clearConnectTimer', 'splitDomainUser', 'requestFallbackReconnect',
   'finishReconnect', 'reconnectWithSize', 'retryWithSecurityFallback',
+  'requestAdaptiveResize', 'onFramebufferResize',
 ])
 const functions = ast.statements.filter((node): node is ts.FunctionDeclaration =>
   ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? ''),
@@ -88,6 +89,31 @@ async function settle() { for (let i = 0; i < 40; i++) await Promise.resolve() }
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('RDP session lifecycle recovery', () => {
+  it('waits for the initial framebuffer before negotiating xrdp DPI', () => {
+    const { c } = fixture()
+    const desktop = { width: 1734, height: 1090 }
+    c.props.config.rdpXrdpScaleCompatibility = true
+    c.session = {}
+    c.isAdaptive = () => true
+    c.floating = c.mobileKbOpen = ref(false)
+    c.canvasEl.value = { width: 300, height: 150 }
+    c.currentDesktopSize = () => c.canvasEl.value
+    c.adaptiveDesktopSize = () => desktop
+    c.localScalePercent = () => 150
+    c.sendScaledResize = vi.fn()
+    c.scheduleScaleSync = vi.fn()
+    c.onContainerResize.mockImplementation(() => c.requestAdaptiveResize())
+
+    c.requestAdaptiveResize()
+    expect(c.sendScaledResize).not.toHaveBeenCalled()
+    c.canvasEl.value = desktop
+    c.onFramebufferResize()
+    expect(c.sendScaledResize).toHaveBeenCalledExactlyOnceWith(1734, 1090, 150)
+    expect(c.scheduleScaleSync).toHaveBeenCalledWith(150)
+    c.onFramebufferResize()
+    expect(c.onContainerResize).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['RDP canvas context unavailable', 'canvasFallbackAttempted'],
     ['RDP worker failed', 'workerFallbackAttempted'],

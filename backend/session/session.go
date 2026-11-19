@@ -142,11 +142,8 @@ type ConnectionConfig struct {
 	// IMsRdpClientAdvancedSettings8::ConnectToAdministerServer property.
 	RdpAdminSession bool `json:"rdpAdminSession"`
 	// RdpQuality selects the graphics/network profile tier the WASM client
-	// negotiates: "high" (default, LAN experience), "balanced" (broadband:
-	// wallpaper/theming off), "low" (modem profile for low-bandwidth links).
-	// Empty keeps the "high" default. The tier only changes the RDP
-	// connection_type + performance flags sent by the webview client; the
-	// backend itself does not act on it.
+	// negotiates: "high" (LAN), "balanced" (default, broadband), or "low" (modem).
+	// It controls the connection type and performance flags sent by the client.
 	RdpQuality      string `json:"rdpQuality,omitempty"`
 	RdpGraphicsMode string `json:"rdpGraphicsMode,omitempty"`
 	// Frontend-only opt-in; false preserves standard Windows RDP resizing.

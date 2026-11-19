@@ -21,25 +21,28 @@ describe('normalizeRdpQuality', () => {
 })
 
 describe('rdpQualityProfile', () => {
-  it('maps the default tier to the engine defaults (Lan + historical perf flags)', () => {
+  it.each(['high', 'balanced', 'low'] as const)('allows the server wallpaper on %s', tier => {
+    expect(rdpQualityProfile(tier).performanceFlags & 0x01).toBe(0)
+  })
+
+  it('maps high to the engine defaults (Lan + historical perf flags)', () => {
     const profile = rdpQualityProfile('high')
     expect(profile.connectionType).toBe(6) // Lan
     expect(profile.performanceFlags).toBe(0x86) // full-window drag + menu anims off, font smoothing on
   })
 
-  it('maps balanced to broadband with wallpaper/theming off', () => {
+  it('maps balanced to broadband with font smoothing', () => {
     const profile = rdpQualityProfile('balanced')
     expect(profile.connectionType).toBe(4) // BroadbandHigh
-    expect(profile.performanceFlags & 0x01).toBe(0x01) // wallpaper off
     expect(profile.performanceFlags & 0x08).toBe(0x08) // theming off
     expect(profile.performanceFlags & 0x80).toBe(0x80) // font smoothing on
     expect(profile.performanceFlags & 0x100).toBe(0) // desktop composition off
   })
 
-  it('maps low to the modem profile with every decoration off', () => {
+  it('maps low to the modem profile', () => {
     const profile = rdpQualityProfile('low')
     expect(profile.connectionType).toBe(1) // Modem
-    expect(profile.performanceFlags).toBe(0x6f) // 0x8f minus font smoothing, plus cursor flags
+    expect(profile.performanceFlags).toBe(0x6e)
     expect(profile.performanceFlags & 0x80).toBe(0) // font smoothing off
     expect(profile.performanceFlags & 0x100).toBe(0) // no desktop composition
   })

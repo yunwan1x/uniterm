@@ -16,20 +16,18 @@ const CONNECTION_TYPES: Record<RdpQuality, number> = {
 //   0x08 theming off, 0x20 cursor shadow off, 0x40 cursor settings off,
 //   0x80 font smoothing on, 0x100 desktop composition on.
 // 'high' mirrors the IronRDP historical default; 'balanced' (the default
-// tier, like mstsc's auto-detected WAN profile) keeps font smoothing but
-// drops wallpaper/theming; 'low' strips every decoration.
+// tier) keeps font smoothing. All tiers allow the remote wallpaper.
 const PERF_FLAGS: Record<RdpQuality, number> = {
   high: 0x02 | 0x04 | 0x80,
-  balanced: 0x01 | 0x02 | 0x04 | 0x08 | 0x80,
-  low: 0x01 | 0x02 | 0x04 | 0x08 | 0x20 | 0x40,
+  balanced: 0x02 | 0x04 | 0x08 | 0x80,
+  low: 0x02 | 0x04 | 0x08 | 0x20 | 0x40,
 }
 
 export function normalizeRdpQuality(value: unknown): RdpQuality {
   return value === 'high' || value === 'balanced' || value === 'low' ? value : DEFAULT_RDP_QUALITY
 }
 
-// Protocol values negotiated by the WASM client for the tier. Only tiers
-// other than the default need to be sent — 'high' equals the engine default.
+// Protocol values negotiated by the WASM client at connection time.
 export function rdpQualityProfile(quality: RdpQuality): { connectionType: number; performanceFlags: number } {
   return { connectionType: CONNECTION_TYPES[quality], performanceFlags: PERF_FLAGS[quality] }
 }

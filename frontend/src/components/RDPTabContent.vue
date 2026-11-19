@@ -558,6 +558,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
   const generation = ++clientGeneration
   status.value = 'connecting'
   errorMessage.value = ''
+  canvasObserver?.disconnect()
   framebufferSize.value = null
 
   clearConnectTimer()
@@ -572,7 +573,6 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
   try {
     canvasGeneration.value++
     await nextTick()
-    canvasObserver?.disconnect()
     if (canvasEl.value) canvasObserver?.observe(canvasEl.value, { attributes: true, attributeFilter: ['width', 'height'] })
     browserFilesEnabled.value = await isWebServerMode()
     const mod = await loadWasm()
@@ -650,7 +650,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     // requires the autologon extension patch in the WASM build.
     builder.extension(new mod.Extension('autologon', !!effectivePassword.value))
     // Low-bandwidth tiers negotiate a smaller connection_type and strip
-    // server-side graphics features (wallpaper, theming, animations). The
+    // server-side graphics features (theming and animations). The
     // bundled engine supports these options on every connection.
     // Send the default profile too: the engine defaults to LAN/high quality,
     // not our UI's balanced tier. Otherwise selecting Balanced has no effect.
@@ -1625,6 +1625,9 @@ async function reconnectWithSize(width: number, height: number) {
 function requestAdaptiveResize() {
   if (!session || status.value !== 'connected' || reconnecting) return
   if (!isAdaptive() || floating.value) return
+  // Before the renderer sizes the canvas it still reports the HTML default
+  // (300x150). xrdp needs the real size to recognize a DPI-only update.
+  if (props.config?.rdpXrdpScaleCompatibility && !framebufferSize.value) return
   // The soft keyboard squeezes the viewport via the IME inset padding; do not
   // resize (or reconnect) the remote desktop for that transient size. The
   // ResizeObserver fires again with the restored size once it closes.
@@ -1744,14 +1747,17 @@ watch(windowKind, async () => {
   focusDesktop()
 })
 
+function onFramebufferResize() {
+  const canvas = canvasEl.value
+  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return
+  const firstSize = framebufferSize.value === null
+  framebufferSize.value = { width: canvas.width, height: canvas.height }
+  if (firstSize && isAdaptive() && props.config?.rdpXrdpScaleCompatibility) onContainerResize()
+}
+
 onMounted(() => {
   onPixelRatioChange()
-  canvasObserver = new MutationObserver(() => {
-    const canvas = canvasEl.value
-    if (canvas && canvas.width > 0 && canvas.height > 0) {
-      framebufferSize.value = { width: canvas.width, height: canvas.height }
-    }
-  })
+  canvasObserver = new MutationObserver(onFramebufferResize)
   canvasObserver.observe(canvasEl.value!, { attributes: true, attributeFilter: ['width', 'height'] })
   unsubKeyboard = Events.On('remote-desktop:keyboard', ev => onNativeKey(ev.data as NativeRdpKey))
   if (props.sessionId) currentSessionId.value = props.sessionId

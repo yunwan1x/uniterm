@@ -71,7 +71,7 @@ export interface ConnectionConfig {
   rdpDomain?: string
   rdpAdminSession?: boolean
   // Graphics/network profile tier: 'high' (LAN experience), 'balanced'
-  // (default, broadband: wallpaper/theming off), 'low' (modem profile for
+  // (default, broadband: theming off), 'low' (modem profile for
   // low-bandwidth links). Maps to the RDP connection_type + performance flags.
   rdpQuality?: 'high' | 'balanced' | 'low'
   rdpGraphicsMode?: 'legacy' | 'gfx'
