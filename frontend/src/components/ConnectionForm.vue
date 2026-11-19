@@ -478,6 +478,10 @@
                       <el-option value="gfx" :label="t('conn.rdpGraphicsSmooth')" />
                     </el-select>
                   </el-form-item>
+                  <el-form-item :label="t('conn.rdpXrdpScaleCompatibility')">
+                    <el-switch v-model="form.rdpXrdpScaleCompatibility" />
+                    <div class="form-tip">{{ t('conn.rdpXrdpScaleCompatibilityHint') }}</div>
+                  </el-form-item>
                   <el-form-item :label="t('conn.rdpSecurityMode')">
                     <el-select v-model="form.rdpSecurityMode" style="width: 100%">
                       <el-option value="nla-prefer" :label="t('conn.rdpSecurityNlaPrefer')" />
@@ -1149,6 +1153,7 @@ const form = reactive<ConnectionConfig>({
   rdpAdminSession: false,
   rdpQuality: 'balanced',
   rdpGraphicsMode: 'gfx',
+  rdpXrdpScaleCompatibility: false,
   dbType: '',
   dbName: '',
   dbParams: '',
@@ -1435,6 +1440,7 @@ watch(() => props.editConfig, (config) => {
     // Older connections predate the tier field; they get the default tier.
     form.rdpQuality = config.rdpQuality ?? 'balanced'
     form.rdpGraphicsMode = config.rdpGraphicsMode ?? 'gfx'
+    form.rdpXrdpScaleCompatibility = config.rdpXrdpScaleCompatibility === true
     form.agentForwarding = config.agentForwarding ?? false
     // Existing SSH connections without the field default to SFTP (old behavior).
     form.fileTransferProto = config.fileTransferProto ?? 'sftp'
@@ -1596,6 +1602,7 @@ function resetForm() {
   form.rdpAdminSession = false
   form.rdpQuality = 'balanced'
   form.rdpGraphicsMode = 'gfx'
+  form.rdpXrdpScaleCompatibility = false
   form.kerberosRealm = ''
   form.sshAlgorithms = undefined
   form.dbType = ''

@@ -2438,6 +2438,8 @@
   "tableColumns.required": "必選",
   "tableColumns.noMatch": "沒有符合的欄位",
   "tableColumns.saved": "立即生效 · 儲存在目前瀏覽器",
+  "conn.rdpXrdpScaleCompatibility": "xrdp 桌面縮放相容",
+  "conn.rdpXrdpScaleCompatibilityHint": "僅為已設定縮放同步的 xrdp 桌面開啟。連線 Windows 遠端桌面時保持關閉。",
   "conn.rdpGraphicsMode": "畫面模式",
   "conn.rdpGraphicsLegacy": "相容",
   "conn.rdpGraphicsSmooth": "流暢",

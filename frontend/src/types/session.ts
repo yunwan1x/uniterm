@@ -75,6 +75,8 @@ export interface ConnectionConfig {
   // low-bandwidth links). Maps to the RDP connection_type + performance flags.
   rdpQuality?: 'high' | 'balanced' | 'low'
   rdpGraphicsMode?: 'legacy' | 'gfx'
+  // Opt-in for native xrdp/XFCE scaling; leave disabled for Windows RDP.
+  rdpXrdpScaleCompatibility?: boolean
   // Local terminal shell path (for WSL, `wsl://<distro>` carries the distro)
   shellPath?: string
   // Extra command-line arguments appended to the local shell's launch

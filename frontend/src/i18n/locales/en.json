@@ -2465,6 +2465,8 @@
   "tableColumns.required": "Required",
   "tableColumns.noMatch": "No matching columns",
   "tableColumns.saved": "Applied immediately · Saved in this browser",
+  "conn.rdpXrdpScaleCompatibility": "xrdp desktop scaling",
+  "conn.rdpXrdpScaleCompatibilityHint": "Enable only for xrdp desktops with scale synchronization configured. Keep off for Windows Remote Desktop.",
   "conn.rdpGraphicsMode": "Graphics mode",
   "conn.rdpGraphicsLegacy": "Compatibility",
   "conn.rdpGraphicsSmooth": "Smooth",

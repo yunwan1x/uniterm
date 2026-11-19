@@ -15,6 +15,7 @@ function fixture() {
     read: vi.fn(async () => local),
     publish: vi.fn(async (_content: RdpClipboardContent) => {}),
     writeText: vi.fn(async (text: string) => { local = { kind: 'text', text }; return true }),
+    writeImage: vi.fn(async (png: Uint8Array) => { local = { kind: 'image', png }; return png }),
   }
   return { bridge, sync: new RdpClipboardSync(bridge), set: (content: RdpClipboardContent | null) => { local = content } }
 }
@@ -129,6 +130,55 @@ describe('RDP clipboard synchronization', () => {
     f.set({ kind: 'text', text: 'local' })
     await f.sync.sync()
     expect(f.bridge.publish).toHaveBeenCalledWith({ kind: 'text', text: 'local' })
+  })
+
+  it('advertises an initial image and does not echo a received image', async () => {
+    const f = fixture()
+    const png = new Uint8Array([1, 2, 3])
+    f.set({ kind: 'image', png })
+    await f.sync.requestFormatList()
+    expect(f.bridge.publish).toHaveBeenCalledWith({ kind: 'image', png })
+    f.bridge.publish.mockClear()
+    await f.sync.receiveImage(new Uint8Array([4, 5, 6]))
+    await f.sync.sync()
+    expect(f.bridge.publish).not.toHaveBeenCalled()
+    // Equal-length images must not be mistaken for the same clipboard.
+    f.set({ kind: 'image', png: new Uint8Array([4, 5, 7]) })
+    await f.sync.sync()
+    expect(f.bridge.publish).toHaveBeenCalledOnce()
+    await f.sync.sync(false, 'text after image')
+    expect(f.bridge.publish).toHaveBeenLastCalledWith({ kind: 'text', text: 'text after image' })
+  })
+
+  it('invalidates a pending local read on remote image and retries failed writes', async () => {
+    const f = fixture()
+    await f.sync.requestFormatList()
+    f.bridge.publish.mockClear()
+    const read = deferred<RdpClipboardContent | null>()
+    f.bridge.read.mockReturnValueOnce(read.promise)
+    const poll = f.sync.sync()
+    await Promise.resolve()
+    const png = new Uint8Array([1, 2])
+    const incoming = f.sync.receiveImage(png)
+    read.resolve({ kind: 'text', text: 'stale' })
+    await Promise.all([poll, incoming])
+    expect(f.bridge.publish).not.toHaveBeenCalled()
+    f.bridge.writeImage.mockRejectedValueOnce(new Error('permission denied'))
+    await expect(f.sync.receiveImage(png)).rejects.toThrow('permission denied')
+    await f.sync.receiveImage(png)
+    await f.sync.sync()
+    expect(f.bridge.publish).not.toHaveBeenCalled()
+  })
+
+  it('preserves explicit image paste and discards queued images on disposal', async () => {
+    const f = fixture()
+    await f.sync.requestFormatList()
+    const image = { kind: 'image' as const, png: new Uint8Array([9, 8, 7]) }
+    await f.sync.sync(false, image)
+    expect(f.bridge.publish).toHaveBeenLastCalledWith(image)
+    f.sync.dispose()
+    await f.sync.receiveImage(image.png)
+    expect(f.bridge.writeImage).not.toHaveBeenCalled()
   })
 
   it('drops queued work on session disposal', async () => {

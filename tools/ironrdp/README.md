@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.2-uniterm.20.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.2-uniterm.23.tgz`.
 It replaces the external v0.5.2 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -19,6 +19,26 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 - The tarball includes IronRDP's Apache-2.0 and MIT license texts.
 
 ## Changes
+
+The `0.5.2-uniterm.23` package advertises and serves CF_DIB for PNG clipboard
+images, alongside CF_DIBV5 and PNG. xrdp only exposes image/bmp to Linux
+applications when the client offers CF_DIB; it does not synthesize CF_DIB from
+CF_DIBV5. The existing bounded PNG-to-DIB converter handles the response.
+Incoming DIBV5 is preferred, with DIB retained as a fallback when the server
+rejects DIBV5 or returns invalid data. Failed format requests no longer prevent
+remaining clipboard formats from being read.
+
+
+The `0.5.2-uniterm.22` package routes incoming frames by their MCS channel during
+resize reactivation. Only global I/O-channel frames go to the activation decoder;
+static-channel and fast-path traffic stays in the active session processor.
+Channel responses are sent immediately, other outputs are retained, and inbound /
+outbound Standard RDP Security envelopes are handled exactly once. Malformed
+transport frames are still errors. This prevents virtual-channel payloads from
+being decoded as ShareControlHeader while waiting for DemandActive or FontMap.
+
+Regression tests: `cargo +stable test --locked -p ironrdp-session --lib reactivation`.
+
 
 The `0.5.2-uniterm.21` package keeps RDPSND negotiation alive when xrdp sends
 Wave, Wave2, or Close before Training during a reconnect. Early audio is discarded;

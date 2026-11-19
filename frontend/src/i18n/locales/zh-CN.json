@@ -2465,6 +2465,8 @@
   "tableColumns.required": "必选",
   "tableColumns.noMatch": "没有匹配的列",
   "tableColumns.saved": "立即生效 · 保存在当前浏览器",
+  "conn.rdpXrdpScaleCompatibility": "xrdp 桌面缩放兼容",
+  "conn.rdpXrdpScaleCompatibilityHint": "仅为已配置缩放同步的 xrdp 桌面开启。连接 Windows 远程桌面时保持关闭。",
   "conn.rdpGraphicsMode": "画面模式",
   "conn.rdpGraphicsLegacy": "兼容",
   "conn.rdpGraphicsSmooth": "流畅",

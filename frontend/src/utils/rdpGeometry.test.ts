@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { adaptiveRdpSize, rdpContentRect, rdpPointerPosition } from './rdpGeometry'
+import { adaptiveRdpSize, rdpContentRect, rdpPointerPosition, rdpScaledResize, rdpScaleRefreshSize, rdpResizeRequests } from './rdpGeometry'
 
 describe('adaptive RDP desktop dimensions', () => {
   it('uses one consistent alignment for initial connection and resizing', () => {
@@ -121,5 +121,43 @@ describe('RDP bitmap and mouse geometry', () => {
     expect(rdpPointerPosition(0, 0, { ...bounds, width: 0 }, desktop, false)).toBeNull()
     expect(rdpPointerPosition(0, 0, { ...bounds, height: 0 }, desktop, true)).toBeNull()
     expect(rdpPointerPosition(0, 0, bounds, { width: 0, height: 0 }, false)).toBeNull()
+  })
+})
+
+describe('native RandR scale bridge', () => {
+  it.each([100, 125, 150, 200, 300, 500])('encodes %s%% as virtual monitor DPI', scale => {
+    const [w, h, sent, mmw, mmh] = rdpScaledResize(2512, 1384, scale)
+    expect(sent).toBe(scale)
+    const actual = Math.min(w * 25.4 / mmw, h * 25.4 / mmh) / 96 * 100
+    expect(Math.abs(actual - scale)).toBeLessThan(2)
+  })
+  it('preserves pixel dimensions and protocol limits', () => {
+    expect(rdpScaledResize(1920, 1080, 200)).toEqual([1920, 1080, 200, 254, 143])
+    expect(rdpScaledResize(640, 480, NaN)[2]).toBe(100)
+    expect(rdpScaledResize(65534, 65534, 0).slice(3)).toEqual([10000, 10000])
+    expect(rdpScaledResize(10, 10, 999).slice(2)).toEqual([500, 10, 10])
+  })
+  it.each([640, 642, 2512, 65534])('refreshes a same-size %s-pixel layout with a valid aligned size', width => {
+    const intermediate = rdpScaleRefreshSize(width, 1384)
+    expect(intermediate.width).not.toBe(width)
+    expect(intermediate.width % 2).toBe(0)
+    expect(intermediate.width).toBeGreaterThanOrEqual(640)
+    expect(intermediate.width).toBeLessThanOrEqual(65534)
+    expect(intermediate.height).toBe(1384)
+  })
+})
+
+describe('Windows RDP isolation', () => {
+  it.each([undefined, false])('keeps exactly the original three-argument message when compatibility is %s', enabled => {
+    for (const current of [null, { width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
+      for (const scale of [100, 150, 200]) {
+        expect(rdpResizeRequests(1920, 1080, scale, current, enabled)).toEqual([[1920, 1080, scale]])
+      }
+    }
+  })
+  it('only sends a physical-size refresh sequence for explicitly enabled xrdp', () => {
+    expect(rdpResizeRequests(1920, 1080, 200, { width: 1920, height: 1080 }, true))
+      .toEqual([[1918, 1080, 200, 254, 143], [1920, 1080, 200, 254, 143]])
+    expect(rdpResizeRequests(1920, 1080, 200, null, true)).toEqual([[1920, 1080, 200, 254, 143]])
   })
 })

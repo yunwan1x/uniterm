@@ -221,10 +221,12 @@ import { backendErrorText, backendErrorTextOf } from '../utils/backendError'
 import { Events } from '@wailsio/runtime'
 import { usePanelStore } from '../stores/panelStore'
 import { writeClipboard, readClipboardText } from '../composables/useClipboardWrite'
+import { normalizeClipboardImage, pasteImage, readClipboardImage, writeClipboardImage } from '../utils/rdpClipboardImage'
+import type { RdpClipboardContent } from '../utils/rdpClipboard'
 import { useConnectionStore } from '../stores/connectionStore'
 import { RdpClipboardSync, RdpInputQueue } from '../utils/rdpClipboard'
 import { RdpFileTransfer } from '../utils/rdpFileTransfer'
-import { adaptiveRdpSize, rdpPointerPosition } from '../utils/rdpGeometry'
+import { adaptiveRdpSize, rdpPointerPosition, rdpResizeRequests } from '../utils/rdpGeometry'
 import type { RdpDesktopSize } from '../utils/rdpGeometry'
 import { normalizeRdpQuality, rdpQualityProfile } from '../utils/rdpQuality'
 import type { RdpQuality } from '../utils/rdpQuality'
@@ -720,6 +722,8 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
         // CF_HDROP takes precedence: Explorer may also expose a text path.
         const files = await ClipboardGetFiles()
         if (files.length) return { kind: 'files', files }
+        const png = await readClipboardImage()
+        if (png) return { kind: 'image', png }
         const text = await readClipboardText()
         return text ? { kind: 'text', text } : null
       },
@@ -731,12 +735,14 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
           fileTransfer?.setLocalFiles([])
           const data = new mod.ClipboardData()
           try {
-            data.addText('text/plain', content.text)
+            if (content.kind === 'image') data.addBinary('image/png', content.png)
+            else data.addText('text/plain', content.text)
             await connectedSession.onClipboardPaste(data)
           } finally { data.free() }
         }
       }),
       writeText: writeClipboard,
+      writeImage: writeClipboardImage,
     })
     fileTransfer = new RdpFileTransfer({
       invoke: (name, value) => connectedSession.invokeExtension(new mod.Extension(name, value)),
@@ -987,6 +993,16 @@ function onRemoteClipboard(clipboardData: any) {
   let items: any[] = []
   try {
     items = clipboardData?.items?.() ?? []
+    const image = items.find(item => item.mimeType() === 'image/png')
+    if (image) {
+      const png = image.value()
+      if (png instanceof Uint8Array) {
+        if (browserFilesEnabled.value) browserFiles.remoteText()
+        fileTransfer?.cancelDownload()
+        clipboardSync?.receiveImage(png).catch(error => rdpLog(`remote image clipboard write failed: ${describeError(error)}`))
+        return
+      }
+    }
     for (const item of items) {
       if (item.mimeType() === 'text/plain') {
         const value = item.value()
@@ -1007,17 +1023,32 @@ function onRemoteClipboard(clipboardData: any) {
 }
 
 function onPaste(e: ClipboardEvent) {
+  if (!session || !wasmModule) return
+  const image = pasteImage(e.clipboardData)
   const text = e.clipboardData?.getData('text')
-  if (!text || !session || !wasmModule) return
+  if (!image && !text) return
   e.preventDefault()
-  inputQueue.enqueue(() => syncLocalClipboardNow(text))
-  // A native/menu paste has no forwarded key event of its own.
-  inputQueue.enqueue(() => {
-    const tx = new wasmModule.InputTransaction()
-    for (const [code, down] of [[0x1d, true], [0x2f, true], [0x2f, false], [0x1d, false]] as const) {
-      tx.addEvent(down ? wasmModule.DeviceEvent.keyPressed(code) : wasmModule.DeviceEvent.keyReleased(code))
+  const target = session
+  const mod = wasmModule
+  inputQueue.enqueue(async () => {
+    if (session !== target) return
+    let content: string | RdpClipboardContent | undefined = text
+    if (image) {
+      // Explorer file copies may also expose image MIME data. Keep file-copy
+      // semantics when the native clipboard explicitly contains file paths.
+      const files = await ClipboardGetFiles()
+      content = files.length ? { kind: 'files', files } : { kind: 'image', png: await normalizeClipboardImage(image) }
     }
-    session?.applyInputs(tx)
+    if (session !== target) return
+    await syncLocalClipboardNow(content)
+    if (session !== target) return
+    // Paste only after a successful advertisement, never stale clipboard data
+    // after a rejected image or into a newly connected session.
+    const tx = new mod.InputTransaction()
+    for (const [code, down] of [[0x1d, true], [0x2f, true], [0x2f, false], [0x1d, false]] as const) {
+      tx.addEvent(down ? mod.DeviceEvent.keyPressed(code) : mod.DeviceEvent.keyReleased(code))
+    }
+    target.applyInputs(tx)
   })
 }
 
@@ -1055,6 +1086,13 @@ function sendScancode(scancode: number, down: boolean) {
 
 function onKeyDown(e: KeyboardEvent) {
   if (isLocalKey(e) || !ownsRemoteKeyboard()) return
+  const pasteCode = KEY_SCANCODES[e.code]
+  // Preserve the native paste event (including images) and its user gesture.
+  // Native keyboard capture uses queueKey and programmatic clipboard reads.
+  if (pasteCode !== undefined && isRdpPasteKey(pasteCode, e.ctrlKey, e.metaKey, e.shiftKey)) {
+    e.stopPropagation()
+    return
+  }
   // All following key transitions stay queued until the remote accepts the
   // local clipboard, including V/Insert-up and modifier releases.
   e.preventDefault()
@@ -1370,9 +1408,9 @@ function onFullscreenEvent(event: Event) {
 // already there — no paste-time race.
 let clipPollTimer: ReturnType<typeof setInterval> | null = null
 
-async function syncLocalClipboardNow(text?: string): Promise<void> {
-  if (text !== undefined && browserFilesEnabled.value) browserFiles.remoteText()
-  if (status.value === 'connected') await clipboardSync?.sync(false, text)
+async function syncLocalClipboardNow(content?: string | RdpClipboardContent): Promise<void> {
+  if (content !== undefined && browserFilesEnabled.value) browserFiles.remoteText()
+  if (status.value === 'connected') await clipboardSync?.sync(false, content)
 }
 
 async function advertiseClipboard(target: any, send: () => Promise<void>): Promise<void> {
@@ -1436,6 +1474,7 @@ let lastResizeRequest: RdpDesktopSize | null = null
 let lastScaleRequest: number | null = null
 let scaleSyncTimer: ReturnType<typeof setTimeout> | null = null
 let scaleSyncAttempts = 0
+let scaleRestoreTimer: ReturnType<typeof setTimeout> | null = null
 // Infer support from actual framebuffer changes, falling back to reconnect
 // when the server does not handle Display Control resize requests.
 let displayControlUsable: boolean | null = null
@@ -1465,6 +1504,8 @@ function clearResizeProbe() {
 }
 
 function clearScaleSync() {
+  if (scaleRestoreTimer !== null) clearTimeout(scaleRestoreTimer)
+  scaleRestoreTimer = null
   if (scaleSyncTimer !== null) clearTimeout(scaleSyncTimer)
   scaleSyncTimer = null
 }
@@ -1476,14 +1517,37 @@ function localScalePercent(): number {
   return Math.min(500, Math.max(100, Math.round(displayPixelRatio.value * 100)))
 }
 
-// A scale-only resize has no observable feedback: the canvas keeps its size,
-// and a send racing the Display Control channel's post-connect negotiation is
-// silently dropped. Re-send a few times at the probe interval; redundant
-// sends are no-ops once the server has applied the scale.
+// Default connections keep the original Windows RDP messages. Only explicitly
+// enabled xrdp connections send virtual millimetres and the temporary resize.
+function sendScaledResize(width: number, height: number, scale: number) {
+  if (!session) return
+  if (scaleRestoreTimer !== null) clearTimeout(scaleRestoreTimer)
+  scaleRestoreTimer = null
+  const active = session
+  const requests = rdpResizeRequests(width, height, scale, currentDesktopSize(),
+    props.config?.rdpXrdpScaleCompatibility === true)
+  active.resize(...requests[0]!)
+  const restore = requests[1]
+  if (!restore) return
+  scaleRestoreTimer = setTimeout(() => {
+    scaleRestoreTimer = null
+    if (session !== active || status.value !== 'connected' || reconnecting || !isAdaptive()) return
+    if (props.config?.rdpXrdpScaleCompatibility !== true) return
+    try {
+      active.resize(...restore)
+    } catch (e) {
+      rdpLog(`dpi geometry restore failed: ${String(e)}`)
+    }
+  }, 300)
+}
+
+// Display Control may not be ready immediately after connecting. Bound retries
+// and cancel both retry and geometry-restore timers when the session ends.
 const SCALE_SYNC_RETRIES = 2
 const SCALE_SYNC_RETRY_MS = 2000
 function scheduleScaleSync(scale: number) {
-  clearScaleSync()
+  if (scaleSyncTimer !== null) clearTimeout(scaleSyncTimer)
+  scaleSyncTimer = null
   if (scaleSyncAttempts >= SCALE_SYNC_RETRIES) return
   scaleSyncAttempts++
   scaleSyncTimer = setTimeout(() => {
@@ -1494,7 +1558,7 @@ function scheduleScaleSync(scale: number) {
     const target = adaptiveDesktopSize()
     if (!target) return
     try {
-      session.resize(target.width, target.height, scale)
+      sendScaledResize(target.width, target.height, scale)
     } catch (_) {}
     scheduleScaleSync(scale)
   }, SCALE_SYNC_RETRY_MS)
@@ -1581,9 +1645,8 @@ function requestAdaptiveResize() {
     reconnectWithSize(width, height)
     return
   }
-  // The scale rides along on every resize, and a scale-only send (geometry
-  // unchanged — e.g. right after connect, which already negotiated the final
-  // size) keeps the DPI in sync without touching the resolution.
+  // Send scale and matching virtual physical dimensions on every resize.
+  // Same-size requests briefly change geometry for native xrdp compatibility.
   const scale = localScalePercent()
   const scaleChanged = lastScaleRequest !== scale
   if (scaleChanged) {
@@ -1599,7 +1662,7 @@ function requestAdaptiveResize() {
     // Scale-only: a failure says nothing about Display Control size support,
     // so keep the session instead of falling into the reconnect path.
     try {
-      session.resize(width, height, scale)
+      sendScaledResize(width, height, scale)
     } catch (e) {
       rdpLog(`dpi scale update failed: ${String(e)}`)
       return
@@ -1608,7 +1671,7 @@ function requestAdaptiveResize() {
     return
   }
   try {
-    session.resize(width, height, scale)
+    sendScaledResize(width, height, scale)
     const generation = clientGeneration
     resizeProbeTimer = setTimeout(() => {
       resizeProbeTimer = null

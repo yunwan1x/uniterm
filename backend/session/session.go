@@ -149,6 +149,8 @@ type ConnectionConfig struct {
 	// backend itself does not act on it.
 	RdpQuality      string `json:"rdpQuality,omitempty"`
 	RdpGraphicsMode string `json:"rdpGraphicsMode,omitempty"`
+	// Frontend-only opt-in; false preserves standard Windows RDP resizing.
+	RdpXrdpScaleCompatibility bool `json:"rdpXrdpScaleCompatibility,omitempty"`
 	// Local terminal shell path
 	ShellPath string `json:"shellPath,omitempty"`
 	// Extra command-line arguments appended to the local shell's launch

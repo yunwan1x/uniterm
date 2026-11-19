@@ -2620,6 +2620,84 @@ index c9889218..cf40faa6 100644
          }
          .build()
      }
+diff --git a/crates/ironrdp-session/src/lib.rs b/crates/ironrdp-session/src/lib.rs
+index 898933b7..50b9ed5b 100644
+--- a/crates/ironrdp-session/src/lib.rs
++++ b/crates/ironrdp-session/src/lib.rs
+@@ -7,6 +7,7 @@ mod macros;
+ pub mod fast_path;
+ pub mod image;
+ pub mod pointer;
++pub mod reactivation;
+ pub mod rfx; // FIXME: maybe this module should not be in this crate
+ pub mod x224;
+ 
+diff --git a/crates/ironrdp-session/src/reactivation.rs b/crates/ironrdp-session/src/reactivation.rs
+new file mode 100644
+index 00000000..3016888d
+--- /dev/null
++++ b/crates/ironrdp-session/src/reactivation.rs
+@@ -0,0 +1,47 @@
++//! Route interleaved traffic while the desktop activation sequence is running.
++use ironrdp_core::decode;
++use ironrdp_pdu::{Action, mcs, x224::X224};
++use crate::{SessionError, SessionErrorExt as _, SessionResult};
++
++/// Only the global I/O channel carries Share Control/Data activation messages.
++/// Static channels (including DRDYNVC graphics/audio) must retain their normal
++/// processors, even between DeactivateAll and FontMap. Do not decode their
++/// payload as a ShareControlHeader or discard it.
++pub fn is_activation_frame(action: Action, frame: &[u8], io_channel_id: u16) -> SessionResult<bool> {
++    if action == Action::FastPath {
++        return Ok(false);
++    }
++    let message = decode::<X224<mcs::McsMessage<'_>>>(frame).map_err(SessionError::decode)?;
++    Ok(matches!(message.0, mcs::McsMessage::SendDataIndication(data) if data.channel_id == io_channel_id))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::borrow::Cow;
++    fn frame(channel: u16) -> Vec<u8> {
++        ironrdp_core::encode_vec(&X224(mcs::McsMessage::SendDataIndication(mcs::SendDataIndication {
++            initiator_id: 1002,
++            channel_id: channel,
++            // A valid channel envelope whose payload is NOT a Share Control PDU.
++            user_data: Cow::Borrowed(&[0xff, 0, 0xff, 0, 0, 0, 0, 0]),
++        }))).unwrap()
++    }
++    #[test]
++    fn reactivation_routes_static_channel_payload_without_share_decode() {
++        let static_frame = frame(1005);
++        let ctx = mcs::decode_send_data_indication(&static_frame).unwrap();
++        assert!(ironrdp_pdu::rdp::headers::decode_share_control(ctx).is_err(),
++            "the old reactivation decoder must reject this non-Share payload");
++        assert!(!is_activation_frame(Action::X224, &static_frame, 1003).unwrap());
++        assert!(is_activation_frame(Action::X224, &frame(1003), 1003).unwrap());
++    }
++    #[test]
++    fn reactivation_keeps_fastpath_in_active_processor() {
++        assert!(!is_activation_frame(Action::FastPath, &[0, 2], 1003).unwrap());
++    }
++    #[test]
++    fn reactivation_does_not_swallow_malformed_transport() {
++        assert!(is_activation_frame(Action::X224, &[3, 0], 1003).is_err());
++    }
++}
+diff --git a/crates/ironrdp-testsuite-core/Cargo.toml b/crates/ironrdp-testsuite-core/Cargo.toml
+index 59021cfc..74bdaf45 100644
+--- a/crates/ironrdp-testsuite-core/Cargo.toml
++++ b/crates/ironrdp-testsuite-core/Cargo.toml
+@@ -89,3 +89,8 @@ ironrdp-egfx-native.path = "../ironrdp-egfx-native"
+ 
+ [lints]
+ workspace = true
++
++[[test]]
++name = "rdpsnd_regression"
++path = "tests/rdpsnd/mod.rs"
++harness = true
 diff --git a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs b/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
 index 2d65a124..a281702f 100644
 --- a/crates/ironrdp-testsuite-core/tests/clipboard/lock_timeout.rs
@@ -2747,6 +2825,82 @@ index 9b96c4ef..a333daec 100644
 +        bottom: top + 1,
 +    };
 +    assert_eq!(picture.to_rgba(&rect), expected, "pixel ({left}, {top})");
++}
+diff --git a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
+index 8dbf08ad..c392a002 100644
+--- a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
++++ b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
+@@ -202,9 +202,6 @@ fn decode_single_response(responses: &[ironrdp_svc::SvcMessage]) -> pdu::ClientA
+ #[case::start_wave_encrypt(client_in_start(), encoded_wave_encrypt())]
+ #[case::waiting_volume(client_in_waiting(), encoded_volume())]
+ #[case::waiting_pitch(client_in_waiting(), encoded_pitch())]
+-#[case::waiting_close(client_in_waiting(), encoded_close())]
+-#[case::waiting_wave(client_in_waiting(), encoded_wave())]
+-#[case::waiting_wave2(client_in_waiting(), encoded_wave2(0))]
+ #[case::waiting_audio_format(client_in_waiting(), encoded_server_formats(pdu::Version::V8))]
+ #[case::waiting_crypt_key(client_in_waiting(), encoded_crypt_key())]
+ #[case::waiting_wave_encrypt(client_in_waiting(), encoded_wave_encrypt())]
+@@ -551,3 +548,61 @@ fn stop_ignores_all_pdus(#[case] payload: Vec<u8>) {
+     let responses = client.process(&payload).unwrap();
+     assert!(responses.is_empty(), "Stop state should ignore all PDUs");
+ }
++
++#[test]
++fn xrdp_reconnect_early_audio_does_not_stop_training() {
++    // oracle: spec MS-RDPEA section 3.1.5; reconnecting an actively playing xrdp desktop must allow subsequent audio.
++    let backend = RecordingBackend::with_formats(vec![pcm(44100, 2)]);
++    let waves = Arc::clone(&backend.waves);
++    let mut client = Rdpsnd::new(Box::new(backend));
++    client.process(&encoded_server_formats(pdu::Version::V8)).unwrap();
++    client.process(&encoded_wave2(0)).unwrap();
++    client.process(&encoded_close()).unwrap();
++    assert!(waves.lock().unwrap().is_empty());
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    client.process(&encoded_wave2(1)).unwrap();
++    assert_eq!(waves.lock().unwrap().len(), 1);
++}
++
++#[test]
++fn xrdp_early_close_preserves_training() {
++    // oracle: spec MS-RDPEA section 3.1.5; an old stream closing during reconnect must not disable the new stream.
++    let mut client = client_in_waiting();
++    client.process(&encoded_close()).unwrap();
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    assert_eq!(client.process(&encoded_wave2(1)).unwrap().len(), 1);
++}
++
++#[test]
++fn xrdp_early_split_wave_consumes_payload_before_training() {
++    // oracle: spec MS-RDPEA sections 3.1.5 and 2.2.3.4; WaveInfo's next message is raw audio, even if it looks like Training.
++    let backend = RecordingBackend::with_formats(vec![pcm(44100, 2)]);
++    let waves = Arc::clone(&backend.waves);
++    let mut client = Rdpsnd::new(Box::new(backend));
++    client.process(&encoded_server_formats(pdu::Version::V5)).unwrap();
++    let fake_training = encoded_training();
++    client
++        .process(&encoded_wave_info(u16::try_from(fake_training.len()).unwrap()))
++        .unwrap();
++    assert!(client.process(&fake_training).unwrap().is_empty());
++    assert!(waves.lock().unwrap().is_empty());
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    client.process(&encoded_wave()).unwrap();
++    assert_eq!(client.process(&encoded_wave_data(&[])).unwrap().len(), 1);
++    assert_eq!(waves.lock().unwrap().len(), 1);
++}
++
++#[test]
++fn xrdp_early_concatenated_wave_does_not_consume_training() {
++    // oracle: regression; a sample contained in one message must not consume the next message.
++    let mut client = client_in_waiting();
++    let mut payload = encoded_wave();
++    payload.extend_from_slice(&encoded_wave_data(&[]));
++    assert!(client.process(&payload).unwrap().is_empty());
++    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
++    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
++    assert_eq!(client.process(&encoded_wave2(1)).unwrap().len(), 1);
 +}
 diff --git a/crates/ironrdp-testsuite-core/tests/svc.rs b/crates/ironrdp-testsuite-core/tests/svc.rs
 index 66e0f79f..2ab68e5a 100644
@@ -3389,6 +3543,201 @@ index 00000000..e63e5444
 +        assert_eq!(state.lock().unwrap().requested(), 0);
 +    }
 +}
+diff --git a/crates/ironrdp-web/src/clipboard.rs b/crates/ironrdp-web/src/clipboard.rs
+index 8bd9c62c..b8e18e91 100644
+--- a/crates/ironrdp-web/src/clipboard.rs
++++ b/crates/ironrdp-web/src/clipboard.rs
+@@ -20,7 +20,7 @@ use ironrdp::cliprdr::pdu::{
+     ClipboardFormat, ClipboardFormatId, ClipboardFormatName, ClipboardGeneralCapabilityFlags, FileContentsFlags,
+     FileContentsRequest, FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
+ };
+-use ironrdp_cliprdr_format::bitmap::{dib_to_png, dibv5_to_png, png_to_cf_dibv5};
++use ironrdp_cliprdr_format::bitmap::{dib_to_png, dibv5_to_png, png_to_cf_dib, png_to_cf_dibv5};
+ use ironrdp_cliprdr_format::html::{cf_html_to_plain_html, plain_html_to_cf_html};
+ use ironrdp_core::{IntoOwned as _, impl_as_any};
+ use tracing::{error, info, trace, warn};
+@@ -288,8 +288,8 @@ impl WasmClipboard {
+                 }
+                 MIME_PNG => {
+                     formats.extend([
+-                        // We don't provide CF_DIB, because it could be synthesized from
+-                        // CF_DIBV5 on the remote side.
++                        // xrdp requests CF_DIB and does not synthesize it from CF_DIBV5.
++                        ClipboardFormat::new(ClipboardFormatId::CF_DIB),
+                         ClipboardFormat::new(ClipboardFormatId::CF_DIBV5),
+                         FORMAT_PNG.into(),
+                         FORMAT_MIME_PNG.into(),
+@@ -362,6 +362,11 @@ impl WasmClipboard {
+                 let html_text = find_text_content_by_mime(MIME_HTML)?;
+                 FormatDataResponse::new_string(html_text)
+             }
++            ClipboardFormatId::CF_DIB => {
++                let png_data = find_binary_content_by_mime(MIME_PNG)?;
++                let buffer = png_to_cf_dib(png_data)?;
++                FormatDataResponse::new_data(buffer)
++            }
+             ClipboardFormatId::CF_DIBV5 => {
+                 let png_data = find_binary_content_by_mime(MIME_PNG)?;
+                 let buffer = png_to_cf_dibv5(png_data)?;
+@@ -464,9 +469,7 @@ impl WasmClipboard {
+ 
+                 let skip_dib = format.id() == ClipboardFormatId::CF_DIB
+                     && formats.iter().any(|format| {
+-                        format.id() == ClipboardFormatId::CF_DIBV5
+-                            || format_name_eq(format, FORMAT_MIME_PNG.name)
+-                            || format_name_eq(format, FORMAT_PNG.name)
++                        format_name_eq(format, FORMAT_MIME_PNG.name) || format_name_eq(format, FORMAT_PNG.name)
+                     });
+ 
+                 let skip_dibv5 = format.id() == ClipboardFormatId::CF_DIBV5
+@@ -482,6 +485,19 @@ impl WasmClipboard {
+             self.remote_formats_to_read.push(format.id());
+         }
+ 
++        // Keep DIB as a fallback for servers that advertise DIBV5 but reject it.
++        // Prefer DIBV5 regardless of the server's format-list order.
++        if self.remote_formats_to_read.contains(&ClipboardFormatId::CF_DIBV5) {
++            if let Some(index) = self
++                .remote_formats_to_read
++                .iter()
++                .position(|id| *id == ClipboardFormatId::CF_DIB)
++            {
++                self.remote_formats_to_read.remove(index);
++                self.remote_formats_to_read.insert(0, ClipboardFormatId::CF_DIB);
++            }
++        }
++
+         return Ok(self.remote_formats_to_read.last().copied());
+ 
+         fn format_name_eq(format: &ClipboardFormat, name: &str) -> bool {
+@@ -501,63 +517,67 @@ impl WasmClipboard {
+             }
+         };
+ 
+-        if response.is_error() {
+-            // Format is not available anymore.
+-            return Ok(());
+-        }
+-
+-        let item = match pending_format {
+-            ClipboardFormatId::CF_UNICODETEXT => match response.to_unicode_string() {
+-                Ok(text) => Some(ClipboardItem::new_text(MIME_TEXT, text)),
+-                Err(err) => {
+-                    error!(error = %err, "CF_UNICODETEXT decode error");
+-                    None
+-                }
+-            },
+-            ClipboardFormatId::CF_DIB => match dib_to_png(response.data()) {
+-                Ok(png) => Some(ClipboardItem::new_binary(MIME_PNG, png)),
+-                Err(err) => {
+-                    warn!(error = %err, "DIB decode error");
+-                    None
+-                }
+-            },
+-            ClipboardFormatId::CF_DIBV5 => match dibv5_to_png(response.data()) {
+-                Ok(png) => Some(ClipboardItem::new_binary(MIME_PNG, png)),
+-                Err(err) => {
+-                    warn!(error = %err, "DIBv5 decode error");
+-                    None
+-                }
+-            },
+-            registered => {
+-                let format_name = self.remote_mapping.get(&registered).map(|s| s.as_str());
+-
+-                match format_name {
+-                    Some(FORMAT_WIN_HTML_NAME) => match cf_html_to_plain_html(response.data()) {
+-                        Ok(text) => Some(ClipboardItem::new_text(MIME_HTML, text.to_owned())),
+-                        Err(err) => {
+-                            warn!(error = %err, "CF_HTML decode error");
+-                            None
++        let item = if response.is_error() {
++            // Continue with remaining formats, including the DIB fallback.
++            None
++        } else {
++            match pending_format {
++                ClipboardFormatId::CF_UNICODETEXT => match response.to_unicode_string() {
++                    Ok(text) => Some(ClipboardItem::new_text(MIME_TEXT, text)),
++                    Err(err) => {
++                        error!(error = %err, "CF_UNICODETEXT decode error");
++                        None
++                    }
++                },
++                ClipboardFormatId::CF_DIB => match dib_to_png(response.data()) {
++                    Ok(png) => Some(ClipboardItem::new_binary(MIME_PNG, png)),
++                    Err(err) => {
++                        warn!(error = %err, "DIB decode error");
++                        None
++                    }
++                },
++                ClipboardFormatId::CF_DIBV5 => match dibv5_to_png(response.data()) {
++                    Ok(png) => Some(ClipboardItem::new_binary(MIME_PNG, png)),
++                    Err(err) => {
++                        warn!(error = %err, "DIBv5 decode error");
++                        None
++                    }
++                },
++                registered => {
++                    let format_name = self.remote_mapping.get(&registered).map(|s| s.as_str());
++
++                    match format_name {
++                        Some(FORMAT_WIN_HTML_NAME) => match cf_html_to_plain_html(response.data()) {
++                            Ok(text) => Some(ClipboardItem::new_text(MIME_HTML, text.to_owned())),
++                            Err(err) => {
++                                warn!(error = %err, "CF_HTML decode error");
++                                None
++                            }
++                        },
++                        Some(FORMAT_MIME_HTML_NAME) => match response.to_string() {
++                            Ok(text) => Some(ClipboardItem::new_text(MIME_HTML, text)),
++                            Err(err) => {
++                                warn!(error = %err, "text/html decode error");
++                                None
++                            }
++                        },
++                        Some(FORMAT_MIME_PNG_NAME) | Some(FORMAT_PNG_NAME) => {
++                            Some(ClipboardItem::new_binary(MIME_PNG, response.data().to_owned()))
+                         }
+-                    },
+-                    Some(FORMAT_MIME_HTML_NAME) => match response.to_string() {
+-                        Ok(text) => Some(ClipboardItem::new_text(MIME_HTML, text)),
+-                        Err(err) => {
+-                            warn!(error = %err, "text/html decode error");
++                        _ => {
++                            // Not supported format
+                             None
+                         }
+-                    },
+-                    Some(FORMAT_MIME_PNG_NAME) | Some(FORMAT_PNG_NAME) => {
+-                        Some(ClipboardItem::new_binary(MIME_PNG, response.data().to_owned()))
+-                    }
+-                    _ => {
+-                        // Not supported format
+-                        None
+                     }
+                 }
+             }
+         };
+ 
+         if let Some(item) = item {
++            if pending_format == ClipboardFormatId::CF_DIBV5 {
++                self.remote_formats_to_read
++                    .retain(|id| *id != ClipboardFormatId::CF_DIB);
++            }
+             self.remote_clipboard.add(item);
+         }
+ 
+@@ -1312,7 +1332,10 @@ mod tests {
+ 
+         let formats = clipboard.handle_local_clipboard_changed(data).unwrap();
+ 
+-        // Should contain CF_DIBV5, PNG, and image/png
++        // oracle: neutrinolabs/xrdp@80c52879fead585d6347df5b3c587718adf8f5a5:sesman/chansrv/clipboard.c.
++        // xrdp only advertises image/bmp when CF_DIB is offered.
++        assert!(formats.iter().any(|f| f.id() == ClipboardFormatId::CF_DIB));
++        // Keep CF_DIBV5 and PNG for peers that preserve alpha.
+         assert!(formats.iter().any(|f| f.id() == ClipboardFormatId::CF_DIBV5));
+         assert!(formats.iter().any(|f| f.id() == FORMAT_PNG_ID));
+         assert!(formats.iter().any(|f| f.id() == FORMAT_MIME_PNG_ID));
 diff --git a/crates/ironrdp-web/src/gpu.rs b/crates/ironrdp-web/src/gpu.rs
 new file mode 100644
 index 00000000..5d87e2b5
@@ -4084,7 +4433,7 @@ index 00000000..8e530699
 +    Ok(())
 +}
 diff --git a/crates/ironrdp-web/src/session.rs b/crates/ironrdp-web/src/session.rs
-index ac630290..4af50d76 100644
+index ac630290..7fd33f7f 100644
 --- a/crates/ironrdp-web/src/session.rs
 +++ b/crates/ironrdp-web/src/session.rs
 @@ -1,3 +1,5 @@
@@ -4116,7 +4465,15 @@ index ac630290..4af50d76 100644
  use gloo_net::websocket;
  use gloo_net::websocket::futures::WebSocket;
  use gloo_timers::future::IntervalStream;
-@@ -34,12 +38,13 @@ use ironrdp::graphics::image_processing::PixelFormat;
+@@ -27,20 +31,21 @@ use ironrdp::cliprdr::backend::ClipboardMessage;
+ use ironrdp::cliprdr::pdu::{FileContentsFlags, FileContentsRequest, FileContentsResponse, FileDescriptor};
+ use ironrdp::connector::connection_activation::ConnectionActivationState;
+ use ironrdp::connector::credssp::{KdcResolution, KerberosConfig};
+-use ironrdp::connector::{self, ClientConnector, Credentials};
++use ironrdp::connector::{self, ClientConnector, Credentials, Sequence as _};
+ use ironrdp::displaycontrol::client::DisplayControlClient;
+ use ironrdp::dvc::DrdynvcClient;
+ use ironrdp::graphics::image_processing::PixelFormat;
  use ironrdp::pdu::input::fast_path::FastPathInputEvent;
  use ironrdp::pdu::rdp::capability_sets::{BitmapCodecs, client_codecs_capabilities};
  use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
@@ -4127,10 +4484,12 @@ index ac630290..4af50d76 100644
  use ironrdp::session::image::DecodedImage;
  use ironrdp::session::{ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
  use ironrdp_core::WriteBuf;
+-use ironrdp_futures::{FramedWrite, single_sequence_step_read};
 +use ironrdp_egfx::client::GraphicsPipelineClient;
- use ironrdp_futures::{FramedWrite, single_sequence_step_read};
++use ironrdp_futures::FramedWrite;
  use rgb::AsPixels as _;
  use tap::prelude::*;
+ use tracing::{debug, error, info, trace, warn};
 @@ -95,12 +100,19 @@ struct SessionBuilderInner {
      printer_device_id: Option<u32>,
      printer_driver_name: Option<String>,
@@ -4412,7 +4771,7 @@ index ac630290..4af50d76 100644
                      // Drive clipboard lock timeout cleanup
                      if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() {
                          match cliprdr.drive_timeouts() {
-@@ -969,8 +1114,74 @@ impl iron_remote_desktop::Session for Session {
+@@ -969,9 +1114,76 @@ impl iron_remote_desktop::Session for Session {
                          Vec::new()
                      }
                  }
@@ -4454,6 +4813,7 @@ index ac630290..4af50d76 100644
 +                }
              };
  
+-            for out in outputs {
 +            // RDPSND callbacks run during process(). Forward all decoded PCM
 +            // before graphics output or another buffered network PDU can run.
 +            // Remove each event under the lock, then call JS without holding it.
@@ -4484,10 +4844,12 @@ index ac630290..4af50d76 100644
 +                }
 +            }
 +
-             for out in outputs {
++            let mut outputs: std::collections::VecDeque<_> = outputs.into();
++            while let Some(out) = outputs.pop_front() {
                  match out {
                      ActiveStageOutput::ResponseFrame(frame) => {
-@@ -979,10 +1190,10 @@ impl iron_remote_desktop::Session for Session {
+                         self.writer_tx
+@@ -979,10 +1191,10 @@ impl iron_remote_desktop::Session for Session {
                              .context("Send frame to writer task")?;
                      }
                      ActiveStageOutput::GraphicsUpdate(region) => {
@@ -4502,7 +4864,7 @@ index ac630290..4af50d76 100644
                      }
                      ActiveStageOutput::PointerDefault => {
                          self.set_cursor_style(CursorStyle::Default)?;
-@@ -1094,6 +1305,8 @@ impl iron_remote_desktop::Session for Session {
+@@ -1094,6 +1306,8 @@ impl iron_remote_desktop::Session for Session {
                          // RemoteApp windows are not meaningful to the protocol-agnostic web component.
                      }
                      ActiveStageOutput::DeactivateAll => {
@@ -4511,7 +4873,46 @@ index ac630290..4af50d76 100644
                          // Execute the Deactivation-Reactivation Sequence:
                          // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
                          debug!("Received Server Deactivate All PDU, executing Deactivation-Reactivation Sequence");
-@@ -1179,6 +1392,19 @@ impl iron_remote_desktop::Session for Session {
+@@ -1108,12 +1322,35 @@ impl iron_remote_desktop::Session for Session {
+                         let mut connection_activation = activation_factory.create();
+                         let mut buf = WriteBuf::new();
+                         'activation_seq: loop {
+-                            let written =
+-                                single_sequence_step_read(&mut framed, &mut connection_activation, &mut buf).await?;
++                            buf.clear();
++                            let written = if connection_activation.next_pdu_hint().is_some() {
++                                let (action, payload) = framed.read_pdu().await.context("read reactivation frame")?;
++                                if !ironrdp::session::reactivation::is_activation_frame(
++                                    action, &payload, connection_activation.io_channel_id(),
++                                )? {
++                                    // Audio/graphics/clipboard traffic can race FontMap during
++                                    // resize. Keep its normal channel decoder and responses.
++                                    for output in active_stage.process(&mut image, action, &payload, framed.last_read_at())? {
++                                        match output {
++                                            ActiveStageOutput::ResponseFrame(frame) => {
++                                                self.writer_tx.unbounded_send(frame).context("Send channel response during reactivation")?;
++                                            }
++                                            ActiveStageOutput::Terminate(reason) => break 'outer reason,
++                                            other => outputs.push_back(other),
++                                        }
++                                    }
++                                    continue;
++                                }
++                                let plain = active_stage.decrypt_inbound_frame(action, &payload)?;
++                                connection_activation.step(&plain, framed.last_read_at(), &mut buf)?
++                            } else {
++                                connection_activation.step_no_input(&mut buf)?
++                            };
+ 
+                             if written.size().is_some() {
++                                let frame = active_stage.secure_outgoing_frame(buf.filled().to_vec())?;
+                                 self.writer_tx
+-                                    .unbounded_send(buf.filled().to_vec())
++                                    .unbounded_send(frame)
+                                     .context("Send frame to writer task")?;
+                             }
+ 
+@@ -1179,6 +1416,19 @@ impl iron_remote_desktop::Session for Session {
                      ActiveStageOutput::Terminate(reason) => break 'outer reason,
                  }
              }
@@ -4531,7 +4932,7 @@ index ac630290..4af50d76 100644
          };
  
          info!(%disconnect_reason, "RDP session terminated");
-@@ -1278,6 +1504,36 @@ impl iron_remote_desktop::Session for Session {
+@@ -1278,6 +1528,36 @@ impl iron_remote_desktop::Session for Session {
          // to keep the iron-remote-desktop trait surface protocol-agnostic.
          iron_remote_desktop::extension_match! {
              match ext;
@@ -4568,7 +4969,7 @@ index ac630290..4af50d76 100644
              |request_file_contents: JsValue| {
                  let obj = into_object(request_file_contents)?;
                  let stream_id = get_u32(&obj, "stream_id")?;
-@@ -1517,6 +1773,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
+@@ -1517,6 +1797,22 @@ fn parse_file_metadata_array(files: JsValue) -> Result<Vec<FileMetadata>, IronEr
      Ok(file_list)
  }
  
@@ -4591,7 +4992,7 @@ index ac630290..4af50d76 100644
  fn build_config(
      username: String,
      password: String,
-@@ -1524,6 +1796,7 @@ fn build_config(
+@@ -1524,6 +1820,7 @@ fn build_config(
      client_name: String,
      desktop_size: DesktopSize,
      legacy_graphics: bool,
@@ -4599,7 +5000,7 @@ index ac630290..4af50d76 100644
      security: SecurityConfig,
  ) -> connector::Config {
      // Win7-class servers need 32-bpp lossless bitmaps and no advertised codecs.
-@@ -1575,7 +1848,7 @@ fn build_config(
+@@ -1575,7 +1872,7 @@ fn build_config(
          platform: ironrdp::pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
          compression_type: None,
          enable_server_pointer: true,
@@ -4608,7 +5009,7 @@ index ac630290..4af50d76 100644
          enable_audio_playback: false,
          enable_audio_capture: false,
          request_data: None,
-@@ -1647,6 +1920,11 @@ struct ConnectParams {
+@@ -1647,6 +1944,11 @@ struct ConnectParams {
      vmconnect: Option<String>,
      kdc_proxy_url: Option<String>,
      clipboard_backend: Option<WasmClipboardBackend>,
@@ -4620,7 +5021,7 @@ index ac630290..4af50d76 100644
      printer_backend: Option<WasmPrinterBackend>,
      printer_device_id: u32,
      printer_name: String,
-@@ -1699,6 +1977,11 @@ async fn connect(
+@@ -1699,6 +2001,11 @@ async fn connect(
          vmconnect,
          kdc_proxy_url,
          clipboard_backend,
@@ -4632,7 +5033,7 @@ index ac630290..4af50d76 100644
          printer_backend,
          printer_device_id,
          printer_name,
-@@ -1712,30 +1995,45 @@ async fn connect(
+@@ -1712,30 +2019,45 @@ async fn connect(
      // In web browser environments, we do not have an easy access to the local address of the socket.
      let dummy_client_addr = core::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 33899));
  
@@ -4687,7 +5088,7 @@ index ac630290..4af50d76 100644
      }
  
      let kerberos_config = url::Url::parse(kdc_proxy_url.unwrap_or_default().as_str())
-@@ -2045,10 +2343,41 @@ mod tests {
+@@ -2045,10 +2367,41 @@ mod tests {
                  height: DEFAULT_HEIGHT,
              },
              false,
@@ -4729,7 +5130,7 @@ index ac630290..4af50d76 100644
      fn rdcleanpath_response(protocol: ironrdp::pdu::nego::SecurityProtocol) -> Vec<u8> {
          let x224_response = ironrdp_core::encode_vec(&ironrdp::pdu::x224::X224(
              ironrdp::pdu::nego::ConnectionConfirm::Response {
-@@ -2618,3 +2947,22 @@ mod tests {
+@@ -2618,3 +2971,22 @@ mod tests {
          }
      }
  }
@@ -5086,92 +5487,3 @@ index a62b3827..c94b1663 100644
              Err(e) => return Err(anyhow::Error::new(e).context("read frame")),
          };
  
-diff --git a/crates/ironrdp-testsuite-core/Cargo.toml b/crates/ironrdp-testsuite-core/Cargo.toml
-index 59021cfc..74bdaf45 100644
---- a/crates/ironrdp-testsuite-core/Cargo.toml
-+++ b/crates/ironrdp-testsuite-core/Cargo.toml
-@@ -89,3 +89,8 @@ ironrdp-egfx-native.path = "../ironrdp-egfx-native"
- 
- [lints]
- workspace = true
-+
-+[[test]]
-+name = "rdpsnd_regression"
-+path = "tests/rdpsnd/mod.rs"
-+harness = true
-diff --git a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
-index 8dbf08ad..7ad34902 100644
---- a/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
-+++ b/crates/ironrdp-testsuite-core/tests/rdpsnd/client.rs
-@@ -202,9 +202,6 @@ fn decode_single_response(responses: &[ironrdp_svc::SvcMessage]) -> pdu::ClientA
- #[case::start_wave_encrypt(client_in_start(), encoded_wave_encrypt())]
- #[case::waiting_volume(client_in_waiting(), encoded_volume())]
- #[case::waiting_pitch(client_in_waiting(), encoded_pitch())]
--#[case::waiting_close(client_in_waiting(), encoded_close())]
--#[case::waiting_wave(client_in_waiting(), encoded_wave())]
--#[case::waiting_wave2(client_in_waiting(), encoded_wave2(0))]
- #[case::waiting_audio_format(client_in_waiting(), encoded_server_formats(pdu::Version::V8))]
- #[case::waiting_crypt_key(client_in_waiting(), encoded_crypt_key())]
- #[case::waiting_wave_encrypt(client_in_waiting(), encoded_wave_encrypt())]
-@@ -551,3 +548,61 @@ fn stop_ignores_all_pdus(#[case] payload: Vec<u8>) {
-     let responses = client.process(&payload).unwrap();
-     assert!(responses.is_empty(), "Stop state should ignore all PDUs");
- }
-+
-+#[test]
-+fn xrdp_reconnect_early_audio_does_not_stop_training() {
-+    // oracle: spec MS-RDPEA section 3.1.5; reconnecting an actively playing xrdp desktop must allow subsequent audio.
-+    let backend = RecordingBackend::with_formats(vec![pcm(44100, 2)]);
-+    let waves = Arc::clone(&backend.waves);
-+    let mut client = Rdpsnd::new(Box::new(backend));
-+    client.process(&encoded_server_formats(pdu::Version::V8)).unwrap();
-+    client.process(&encoded_wave2(0)).unwrap();
-+    client.process(&encoded_close()).unwrap();
-+    assert!(waves.lock().unwrap().is_empty());
-+    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
-+    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
-+    client.process(&encoded_wave2(1)).unwrap();
-+    assert_eq!(waves.lock().unwrap().len(), 1);
-+}
-+
-+#[test]
-+fn xrdp_early_close_preserves_training() {
-+    // oracle: spec MS-RDPEA section 3.1.5; an old stream closing during reconnect must not disable the new stream.
-+    let mut client = client_in_waiting();
-+    client.process(&encoded_close()).unwrap();
-+    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
-+    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
-+    assert_eq!(client.process(&encoded_wave2(1)).unwrap().len(), 1);
-+}
-+
-+#[test]
-+fn xrdp_early_split_wave_consumes_payload_before_training() {
-+    // oracle: spec MS-RDPEA sections 3.1.5 and 2.2.3.4; WaveInfo's next message is raw audio, even if it looks like Training.
-+    let backend = RecordingBackend::with_formats(vec![pcm(44100, 2)]);
-+    let waves = Arc::clone(&backend.waves);
-+    let mut client = Rdpsnd::new(Box::new(backend));
-+    client.process(&encoded_server_formats(pdu::Version::V5)).unwrap();
-+    let fake_training = encoded_training();
-+    client
-+        .process(&encoded_wave_info(u16::try_from(fake_training.len()).unwrap()))
-+        .unwrap();
-+    assert!(client.process(&fake_training).unwrap().is_empty());
-+    assert!(waves.lock().unwrap().is_empty());
-+    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
-+    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
-+    client.process(&encoded_wave()).unwrap();
-+    assert_eq!(client.process(&encoded_wave_data(&[])).unwrap().len(), 1);
-+    assert_eq!(waves.lock().unwrap().len(), 1);
-+}
-+
-+#[test]
-+fn xrdp_early_concatenated_wave_does_not_consume_training() {
-+    // oracle: regression; a sample contained in one message must not consume the next message.
-+    let mut client = client_in_waiting();
-+    let mut payload = encoded_wave();
-+    payload.extend_from_slice(&encoded_wave_data(&[]));
-+    assert!(client.process(&payload).unwrap().is_empty());
-+    let response = decode_single_response(&client.process(&encoded_training()).unwrap());
-+    assert!(matches!(response, pdu::ClientAudioOutputPdu::TrainingConfirm(_)));
-+    assert_eq!(client.process(&encoded_wave2(1)).unwrap().len(), 1);
-+}
