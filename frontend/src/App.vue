@@ -9,6 +9,7 @@
       @open-settings="openSettings"
       @open-netscan="openNetscan"
       @open-packetcap="openPacketcap"
+      @open-firewall="openFirewall"
       @open-local-services="openLocalServices"
       @open-new-connection="onNewConnectionFromStart"
       @close-tab="closeTab"
@@ -169,6 +170,7 @@
     <MobileKeyBar v-if="keyBarSessionId" :key="keyBarSessionId" :session-id="keyBarSessionId" />
     <NetworkScanTabContent v-model:visible="netscanVisible" @new-connection="onNetscanNewConnection" />
     <PacketCaptureTabContent v-model:visible="packetcapVisible" />
+    <FirewallTabContent v-model:visible="firewallVisible" />
     <LocalServices v-model:visible="localServicesVisible" />
     <HostKeyChangedDialog />
   </div>
@@ -197,6 +199,7 @@ import { writeClipboard } from './composables/useClipboardWrite'
 import SettingsTabContent from './components/SettingsTabContent.vue'
 import NetworkScanTabContent from './components/netscan/NetworkScanTabContent.vue'
 import PacketCaptureTabContent from './components/packetcap/PacketCaptureTabContent.vue'
+import FirewallTabContent from './components/firewall/FirewallTabContent.vue'
 import HostKeyChangedDialog from './components/HostKeyChangedDialog.vue'
 import LocalServices from './components/localsrv/LocalServices.vue'
 import WorkspaceContent from './components/WorkspaceContent.vue'
@@ -251,7 +254,7 @@ import { useSyncStore } from './stores/syncStore'
 import { useCredentialStore } from './stores/credentialStore'
 import { disposeSessionStore } from './stores/sessionStore'
 import { useUpdateCheck } from './composables/useUpdateCheck'
-import { loadKeybindings, installGlobalListener, uninstallGlobalListener, matchDigitShortcut, isRebinding, isTabRenameShortcut } from './composables/useKeyboardShortcuts'
+import { loadKeybindings, installGlobalListener, uninstallGlobalListener, matchDigitShortcut, matchTabCycleShortcut, isRebinding, isTabRenameShortcut } from './composables/useKeyboardShortcuts'
 import { focusPanelTerminal, installTerminalFocusRestore } from './composables/useFocusTerminal'
 import { useDuplicateSession } from './composables/useDuplicateSession'
 import { useTunnelCredentials } from './composables/useTunnelCredentials'
@@ -420,6 +423,7 @@ const encryptVisible = ref(false)
 const unlockVisible = ref(false)
 const netscanVisible = ref(false)
 const packetcapVisible = ref(false)
+const firewallVisible = ref(false)
 const localServicesVisible = ref(false)
 
 // Determine which credential dialog (recovery-unlock / setup) to show based
@@ -809,10 +813,54 @@ function onWheel(e: WheelEvent) {
 // hide. Panel maximizing moved to the configurable keyboard settings
 // (maximizePanel action).
 let isMac = false
+
+// Toggle the AI sidebar, restoring terminal focus on hide and focusing the
+// chat input on show. Shared by the keyboard-settings action and the
+// double-Ctrl gesture.
+function toggleAISidebar() {
+  if (aiStore.visible) {
+    aiStore.visible = false
+    const pid = tabStore.getActivePanelId()
+    if (pid) nextTick(() => focusPanelTerminal(pid))
+  } else {
+    aiStore.visible = true
+    nextTick(() => aiSidebarRef.value?.focusInput())
+  }
+}
+
+// Double-Ctrl (double-Cmd on macOS, both bound there) opens/closes the AI
+// sidebar: two plain keydowns of the SAME modifier within the window, with no
+// other key pressed in between (a chord like Ctrl+1 breaks the pair) and no
+// auto-repeat (holding the key must not trigger it).
+const DOUBLE_CTRL_WINDOW_MS = 400
+let lastModKey = ''
+let lastModDownAt = 0
+let modPairBroken = false
+
 function onPlatformSystemShortcut(e: KeyboardEvent) {
   // Stand down while the settings page captures a rebind — otherwise
   // recording e.g. Ctrl+1 would switch tabs (and Cmd+Q would quit on mac).
   if (e.defaultPrevented || isRebinding() || remoteDesktopOwnsKey(e)) return
+  if (e.key === 'Control' || e.key === 'Meta') {
+    if (e.repeat) return
+    const now = Date.now()
+    if (!modPairBroken && e.key === lastModKey && now - lastModDownAt <= DOUBLE_CTRL_WINDOW_MS) {
+      lastModKey = ''
+      lastModDownAt = 0
+      modPairBroken = false
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      toggleAISidebar()
+      return
+    }
+    lastModKey = e.key
+    lastModDownAt = now
+    modPairBroken = false
+    return
+  }
+  // Any other key (chords included — their modifier keydown already ran above)
+  // breaks a forming double-modifier pair.
+  modPairBroken = true
   // F2 opens the active tab's rename box (issue #1336 补充说明). Renaming
   // start/settings/netscan tabs is meaningless but harmless, same as dblclick.
   if (isTabRenameShortcut(e)) {
@@ -846,6 +894,18 @@ function onPlatformSystemShortcut(e: KeyboardEvent) {
       tabStore.setActiveTab(tab.id)
       return
     }
+  }
+  // Platform tab-cycling convention: Cmd+Shift+] / Cmd+Shift+[ on macOS,
+  // Ctrl+PageDown / Ctrl+PageUp on Windows/Linux. Fixed aliases, so a user
+  // binding for the same combo (handled by the window-level listener first)
+  // and the configurable nextTab/prevTab actions are left untouched.
+  const cycle = matchTabCycleShortcut(e, isMac)
+  if (cycle) {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    if (cycle === 'next') tabStore.nextTab()
+    else tabStore.prevTab()
+    return
   }
   if (!isMac || !e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
   const key = e.key.toLowerCase()
@@ -1125,6 +1185,10 @@ const actionHandlers: Record<ShortcutAction, () => void> = {
   toggleMonitor: () => sidebarViewShortcut('monitor'),
   openQuickCommands: () => sidebarViewShortcut('quickCommands', true),
   toggleNotes: () => sidebarViewShortcut('notes'),
+  toggleTunnels: () => sidebarViewShortcut('tunnels'),
+  toggleHistory: () => sidebarViewShortcut('history'),
+  togglePersonalization: () => sidebarViewShortcut('personalization'),
+  toggleCommandSend: () => sidebarViewShortcut('commandSend'),
   focusTerminal: () => {
     const pid = tabStore.getActivePanelId()
     if (pid) focusPanelTerminal(pid)
@@ -1147,16 +1211,7 @@ const actionHandlers: Record<ShortcutAction, () => void> = {
     }
     if (panelId) onToggleAiLock(panelId)
   },
-  focusAI: () => {
-    if (aiStore.visible) {
-      aiStore.visible = false
-      const pid = tabStore.getActivePanelId()
-      if (pid) nextTick(() => focusPanelTerminal(pid))
-    } else {
-      aiStore.visible = true
-      nextTick(() => aiSidebarRef.value?.focusInput())
-    }
-  },
+  focusAI: () => toggleAISidebar(),
   closePanel: () => {
     const t = tabStore.activeTab
     if (!t) return
@@ -1283,6 +1338,10 @@ function openNetscan() {
 
 function openPacketcap() {
   packetcapVisible.value = true
+}
+
+function openFirewall() {
+  firewallVisible.value = true
 }
 
 // Open the shared connection form prefilled with a network-scan result.

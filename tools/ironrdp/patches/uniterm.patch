@@ -2,7 +2,7 @@ diff --git a/.github/pr-automation/fetch-pr-evidence.sh b/.github/pr-automation/
 old mode 100755
 new mode 100644
 diff --git a/Cargo.lock b/Cargo.lock
-index bd2558ee..41207711 100644
+index bd2558ee..e1052512 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -2936,6 +2936,7 @@ dependencies = [
@@ -13,7 +13,7 @@ index bd2558ee..41207711 100644
   "ironrdp-svc",
   "picky",
   "picky-asn1-der",
-@@ -3443,6 +3444,16 @@ dependencies = [
+@@ -3443,6 +3444,17 @@ dependencies = [
   "ironrdp-propertyset",
  ]
  
@@ -25,12 +25,13 @@ index bd2558ee..41207711 100644
 + "md-5 0.10.6",
 + "num-bigint",
 + "sha1 0.10.7",
++ "x509-cert",
 +]
 +
  [[package]]
  name = "ironrdp-rdpsnd"
  version = "0.11.0"
-@@ -3547,6 +3558,7 @@ dependencies = [
+@@ -3547,6 +3559,7 @@ dependencies = [
   "ironrdp-graphics",
   "ironrdp-pdu",
   "ironrdp-rdpei",
@@ -38,7 +39,7 @@ index bd2558ee..41207711 100644
   "ironrdp-svc",
   "qoicoubeh",
   "tracing",
-@@ -3794,10 +3806,13 @@ dependencies = [
+@@ -3794,10 +3807,13 @@ dependencies = [
   "ironrdp",
   "ironrdp-cliprdr-format",
   "ironrdp-core 0.3.1",
@@ -124,7 +125,7 @@ index 289354a8..0688c1fa 100644
  ironrdp-dvc = { path = "../ironrdp-dvc", version = "0.10", optional = true } # public
  ironrdp-rdpear = { path = "../ironrdp-rdpear", version = "0.1", optional = true }
 diff --git a/crates/ironrdp-connector/src/connection.rs b/crates/ironrdp-connector/src/connection.rs
-index b61f8b14..470a012f 100644
+index b61f8b14..6904b182 100644
 --- a/crates/ironrdp-connector/src/connection.rs
 +++ b/crates/ironrdp-connector/src/connection.rs
 @@ -2,15 +2,21 @@ use core::any::TypeId;
@@ -444,15 +445,19 @@ index b61f8b14..470a012f 100644
                      io_channel_id,
                      self.config.credentials.username().unwrap_or("").to_owned(),
                      self.config.domain.clone(),
-@@ -1815,6 +1959,7 @@ impl Sequence for ClientConnector {
+@@ -1815,6 +1959,11 @@ impl Sequence for ClientConnector {
                          .clone()
                          .unwrap_or_else(|| Arc::new(NoopLicenseCache)),
                  );
 +                license_exchange.security = self.security.clone();
++                license_exchange.server_cert = self
++                    .server_security
++                    .as_ref()
++                    .map(|s| s.server_cert.clone());
                  // If a PDU was read (message channel present) it is the first
                  // licensing PDU; advance the licensing sequence with it now,
                  // through the same helper the LicensingExchange state uses, so
-@@ -1895,7 +2040,7 @@ impl Sequence for ClientConnector {
+@@ -1895,7 +2044,7 @@ impl Sequence for ClientConnector {
                      // `step_message_channel_pdu`. Only multitransport requests count
                      // towards the cap.
                      if !security_header_contains(ctx.user_data, rdp::headers::BasicSecurityHeaderFlags::TRANSPORT_REQ) {
@@ -461,7 +466,7 @@ index b61f8b14..470a012f 100644
  
                          self.state = ClientConnectorState::MultitransportBootstrapping {
                              io_channel_id,
-@@ -1947,7 +2092,8 @@ impl Sequence for ClientConnector {
+@@ -1947,7 +2096,8 @@ impl Sequence for ClientConnector {
                      // exchange with the PDU intact.
                      let mut connection_activation =
                          ConnectionActivationSequence::new(self.config.clone(), io_channel_id, user_channel_id);
@@ -471,7 +476,7 @@ index b61f8b14..470a012f 100644
  
                      (
                          written,
-@@ -1987,7 +2133,7 @@ impl Sequence for ClientConnector {
+@@ -1987,7 +2137,7 @@ impl Sequence for ClientConnector {
              ClientConnectorState::CapabilitiesExchange {
                  mut connection_activation,
              } => {
@@ -480,7 +485,7 @@ index b61f8b14..470a012f 100644
                  match connection_activation.connection_activation_state() {
                      ConnectionActivationState::ConnectionFinalization { .. } => (
                          written,
-@@ -2014,7 +2160,7 @@ impl Sequence for ClientConnector {
+@@ -2014,7 +2164,7 @@ impl Sequence for ClientConnector {
              ClientConnectorState::ConnectionFinalization {
                  mut connection_activation,
              } => {
@@ -489,7 +494,7 @@ index b61f8b14..470a012f 100644
  
                  let next_state = if !connection_activation.connection_activation_state().is_terminal() {
                      ClientConnectorState::ConnectionFinalization { connection_activation }
-@@ -2061,6 +2207,7 @@ impl Sequence for ClientConnector {
+@@ -2061,6 +2211,7 @@ impl Sequence for ClientConnector {
                                      )
                                      .with_multitransport_soft_sync(self.soft_sync_negotiated()),
                                      compression_type: self.config.compression_type,
@@ -497,7 +502,7 @@ index b61f8b14..470a012f 100644
                                  },
                              }
                          }
-@@ -2102,6 +2249,235 @@ pub fn encode_send_data_request<T: Encode>(
+@@ -2102,6 +2253,239 @@ pub fn encode_send_data_request<T: Encode>(
      Ok(written)
  }
  
@@ -611,13 +616,15 @@ index b61f8b14..470a012f 100644
 +            return Ok(Cow::Borrowed(input));
 +        };
 +
-+        let x224 = match decode::<X224<mcs::McsMessage<'_>>>(input) {
-+            Ok(x224) => x224,
++        // Parse with the same helper the downstream states use (licensing and
++        // the activation sequence both decode their PDUs straight from the
++        // raw frame). The previous `decode::<X224<McsMessage>>` attempt did
++        // not accept the framed shape and silently passed encrypted PDUs
++        // through, so the first encrypted slow-path PDU (Server Demand Active)
++        // reached the state machine as ciphertext.
++        let data = match mcs::decode_send_data_indication(input) {
++            Ok(ctx) => ctx,
 +            Err(_) => return Ok(Cow::Borrowed(input)),
-+        };
-+
-+        let mcs::McsMessage::SendDataIndication(mut data) = x224.0 else {
-+            return Ok(Cow::Borrowed(input));
 +        };
 +
 +        let payload = if data.user_data.len() >= 4 {
@@ -659,10 +666,12 @@ index b61f8b14..470a012f 100644
 +                if is_license_phase && !is_message_channel {
 +                    return Ok(Cow::Borrowed(input));
 +                }
-+                if data.user_data.len() >= BASIC_SECURITY_HEADER_SIZE {
-+                    data.user_data = Cow::Owned(data.user_data[BASIC_SECURITY_HEADER_SIZE..].to_vec());
-+                }
-+                data.user_data.into_owned()
++                let body = if data.user_data.len() >= BASIC_SECURITY_HEADER_SIZE {
++                    &data.user_data[BASIC_SECURITY_HEADER_SIZE..]
++                } else {
++                    data.user_data
++                };
++                body.to_vec()
 +            }
 +        } else {
 +            return Ok(Cow::Borrowed(input));
@@ -733,7 +742,7 @@ index b61f8b14..470a012f 100644
  #[expect(single_use_lifetimes)] // anonymous lifetimes in `impl Trait` are unstable
  fn create_gcc_blocks<'a>(
      config: &Config,
-@@ -2219,7 +2595,13 @@ fn create_gcc_blocks<'a>(
+@@ -2219,7 +2603,13 @@ fn create_gcc_blocks<'a>(
              },
          },
          security: ClientSecurityData {
@@ -748,6 +757,77 @@ index b61f8b14..470a012f 100644
              ext_encryption_methods: 0,
          },
          network: if channels.is_empty() {
+diff --git a/crates/ironrdp-connector/src/connection_activation.rs b/crates/ironrdp-connector/src/connection_activation.rs
+index d4981c82..5e51c914 100644
+--- a/crates/ironrdp-connector/src/connection_activation.rs
++++ b/crates/ironrdp-connector/src/connection_activation.rs
+@@ -1,3 +1,4 @@
++use core::fmt;
+ use core::mem;
+ 
+ use ironrdp_pdu::rdp;
+@@ -9,7 +10,7 @@ use tracing::{debug, info, warn};
+ 
+ use crate::{
+     Config, ConnectionFinalizationSequence, ConnectorError, ConnectorErrorExt as _, ConnectorResult, DesktopSize,
+-    MonotonicInstant, Sequence, State, Written, general_err, reason_err,
++    MonotonicInstant, Sequence, State, Written, custom_err, general_err, reason_err,
+ };
+ 
+ /// Represents the Capability Exchange and Connection Finalization phases
+@@ -175,8 +176,50 @@ impl Sequence for ConnectionActivationSequence {
+ 
+                 let send_data_indication_ctx =
+                     ironrdp_pdu::mcs::decode_send_data_indication(input).map_err(ConnectorError::decode)?;
+-                let share_control_ctx =
+-                    rdp::headers::decode_share_control(send_data_indication_ctx).map_err(ConnectorError::decode)?;
++                let share_control_ctx = rdp::headers::decode_share_control(send_data_indication_ctx).map_err(|error| {
++                    // Surface the offending bytes in the error itself: the WASM
++                    // client's tracing does not reach the desktop log, so a failed
++                    // slow-path decode here is otherwise unattributable.
++                    #[derive(Debug)]
++                    struct ShareControlDecodeDiagnostics {
++                        user_data_len: usize,
++                        head_hex: String,
++                        source: ironrdp_core::DecodeError,
++                    }
++
++                    impl fmt::Display for ShareControlDecodeDiagnostics {
++                        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++                            write!(
++                                f,
++                                "Share Control PDU decode failed ({} bytes, head: {})",
++                                self.user_data_len, self.head_hex
++                            )
++                        }
++                    }
++
++                    impl core::error::Error for ShareControlDecodeDiagnostics {
++                        fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
++                            Some(&self.source)
++                        }
++                    }
++
++                    let user_data = send_data_indication_ctx.user_data;
++                    let head_hex = user_data
++                        .iter()
++                        .take(96)
++                        .map(|byte| format!("{byte:02X}"))
++                        .collect::<Vec<_>>()
++                        .join(" ");
++
++                    custom_err!(
++                        "CapabilitiesExchange",
++                        ShareControlDecodeDiagnostics {
++                            user_data_len: user_data.len(),
++                            head_hex,
++                            source: error,
++                        }
++                    )
++                })?;
+ 
+                 debug!(message = ?share_control_ctx.pdu, "Received");
+ 
 diff --git a/crates/ironrdp-connector/src/connection_finalization.rs b/crates/ironrdp-connector/src/connection_finalization.rs
 index 672a1494..d2f42e87 100644
 --- a/crates/ironrdp-connector/src/connection_finalization.rs
@@ -789,7 +869,7 @@ index 672a1494..d2f42e87 100644
  
                  (Written::Nothing, next_state)
 diff --git a/crates/ironrdp-connector/src/license_exchange.rs b/crates/ironrdp-connector/src/license_exchange.rs
-index 4ced01a5..e093bda4 100644
+index 4ced01a5..d1b382f8 100644
 --- a/crates/ironrdp-connector/src/license_exchange.rs
 +++ b/crates/ironrdp-connector/src/license_exchange.rs
 @@ -1,12 +1,17 @@
@@ -811,21 +891,27 @@ index 4ced01a5..e093bda4 100644
  use rand::RngCore as _;
  use tracing::{debug, error, info, trace};
  
-@@ -64,6 +69,9 @@ pub struct LicenseExchangeSequence {
+@@ -64,6 +69,14 @@ pub struct LicenseExchangeSequence {
      pub domain: Option<String>,
      pub hardware_id: [u32; 4],
      pub license_cache: Arc<dyn LicenseCache>,
 +    /// Standard RDP Security cryptor, carried over from the connector when the
 +    /// GCC exchange selected the standard path. `None` otherwise.
 +    pub security: Option<SharedSecurity>,
++    /// Raw GCC server certificate blob (the same key the Security Exchange
++    /// RSA-encrypted the client random with). Standard RDP Security servers
++    /// send the license request without a certificate; this blob encrypts the
++    /// licensing premaster secret then. `None` on enhanced-security paths.
++    pub server_cert: Option<Vec<u8>>,
  }
  
  // Use RefUnwindSafe so that types that embed LicenseCache remain UnwindSafe
-@@ -100,8 +108,43 @@ impl LicenseExchangeSequence {
+@@ -100,8 +113,44 @@ impl LicenseExchangeSequence {
              domain,
              hardware_id,
              license_cache,
 +            security: None,
++            server_cert: None,
          }
      }
 +
@@ -865,7 +951,7 @@ index 4ced01a5..e093bda4 100644
  }
  
  impl Sequence for LicenseExchangeSequence {
-@@ -134,7 +177,7 @@ impl Sequence for LicenseExchangeSequence {
+@@ -134,7 +183,7 @@ impl Sequence for LicenseExchangeSequence {
  
              LicenseExchangeState::NewLicenseRequest => {
                  let send_data_indication_ctx =
@@ -874,7 +960,49 @@ index 4ced01a5..e093bda4 100644
                  let license_pdu = send_data_indication_ctx
                      .decode_user_data::<LicensePdu>()
                      .map_err(ConnectorError::decode)
-@@ -178,10 +221,11 @@ impl Sequence for LicenseExchangeSequence {
+@@ -149,6 +198,30 @@ impl Sequence for LicenseExchangeSequence {
+                         let mut premaster_secret = [0u8; server_license::PREMASTER_SECRET_SIZE];
+                         rng.fill_bytes(&mut premaster_secret);
+ 
++                        // Standard RDP Security: Windows sends the license request
++                        // without a certificate blob. There the premaster secret is
++                        // RSA-encrypted with the GCC server certificate's public key
++                        // instead (the same connection-level certificate the Security
++                        // Exchange used); FreeRDP falls back to the connection-level
++                        // certificate the same way.
++                        let encrypted_premaster = if license_request
++                            .get_public_key()
++                            .map_err(|e| custom_err!("license request public key", e))?
++                            .is_none()
++                        {
++                            let server_cert = self.server_cert.as_ref().ok_or_else(|| {
++                                general_err!(
++                                    "server license request carries no certificate and the connection has no GCC server certificate",
++                                )
++                            })?;
++                            Some(
++                                ironrdp_rdpsec::encrypt_with_server_public_key(server_cert, &premaster_secret)
++                                    .map_err(|e| custom_err!("license premaster encryption", e))?,
++                            )
++                        } else {
++                            None
++                        };
++
+                         let license_info = license_request
+                             .scope_list
+                             .iter()
+@@ -167,8 +240,9 @@ impl Sequence for LicenseExchangeSequence {
+                             .transpose()?;
+ 
+                         if let Some(info) = license_info {
+-                            match server_license::ClientLicenseInfo::from_server_license_request(
++                            match server_license::ClientLicenseInfo::from_server_license_request_with_premaster(
+                                 &license_request,
++                                encrypted_premaster.clone(),
+                                 &client_random,
+                                 &premaster_secret,
+                                 self.hardware_id,
+@@ -178,10 +252,11 @@ impl Sequence for LicenseExchangeSequence {
                                      trace!(?encryption_data, "Successfully generated Client License Info");
                                      trace!(message = ?client_license_info, "Send");
  
@@ -888,7 +1016,18 @@ index 4ced01a5..e093bda4 100644
                                          output,
                                      )?;
  
-@@ -209,10 +253,11 @@ impl Sequence for LicenseExchangeSequence {
+@@ -198,8 +273,9 @@ impl Sequence for LicenseExchangeSequence {
+                             }
+                         } else {
+                             let hwid = self.hardware_id;
+-                            match server_license::ClientNewLicenseRequest::from_server_license_request(
++                            match server_license::ClientNewLicenseRequest::from_server_license_request_with_premaster(
+                                 &license_request,
++                                encrypted_premaster,
+                                 &client_random,
+                                 &premaster_secret,
+                                 &self.username,
+@@ -209,10 +285,11 @@ impl Sequence for LicenseExchangeSequence {
                                      trace!(?encryption_data, "Successfully generated Client New License Request");
                                      trace!(message = ?new_license_request, "Send");
  
@@ -902,7 +1041,7 @@ index 4ced01a5..e093bda4 100644
                                          output,
                                      )?;
  
-@@ -268,7 +313,7 @@ impl Sequence for LicenseExchangeSequence {
+@@ -268,7 +345,7 @@ impl Sequence for LicenseExchangeSequence {
  
              LicenseExchangeState::PlatformChallenge { encryption_data } => {
                  let send_data_indication_ctx =
@@ -911,7 +1050,7 @@ index 4ced01a5..e093bda4 100644
  
                  let license_pdu = send_data_indication_ctx
                      .decode_user_data::<LicensePdu>()
-@@ -289,10 +334,11 @@ impl Sequence for LicenseExchangeSequence {
+@@ -289,10 +366,11 @@ impl Sequence for LicenseExchangeSequence {
  
                          debug!(message = ?challenge_response, "Send");
  
@@ -925,7 +1064,7 @@ index 4ced01a5..e093bda4 100644
                              output,
                          )?;
  
-@@ -322,7 +368,7 @@ impl Sequence for LicenseExchangeSequence {
+@@ -322,7 +400,7 @@ impl Sequence for LicenseExchangeSequence {
  
              LicenseExchangeState::UpgradeLicense { encryption_data } => {
                  let send_data_indication_ctx =
@@ -1376,12 +1515,140 @@ index 1adc2fed..92066406 100644
      /// Decode H.264 NAL units, as an Annex B byte stream or in AVC format
      /// (4-byte BE length prefix), into an RGBA bitmap.
      ///
+diff --git a/crates/ironrdp-pdu/src/gcc/security_data.rs b/crates/ironrdp-pdu/src/gcc/security_data.rs
+index be95b217..68f1cb50 100644
+--- a/crates/ironrdp-pdu/src/gcc/security_data.rs
++++ b/crates/ironrdp-pdu/src/gcc/security_data.rs
+@@ -14,7 +14,14 @@ const SERVER_ENCRYPTION_LEVEL_SIZE: usize = 4;
+ const SERVER_RANDOM_LEN_SIZE: usize = 4;
+ const SERVER_CERT_LEN_SIZE: usize = 4;
+ const SERVER_RANDOM_LEN: usize = 0x20;
+-const MAX_SERVER_CERT_LEN: usize = 1024;
++// No absolute cap on serverCertLen: MS-RDPBCGR bounds the Server Security
++// Data by the GCC block, and real servers (e.g. Server 2003) send certificate
++// blobs beyond the 1024 bytes the previous check allowed, failing legitimate
++// connections with "Invalid server certificate length". Validity is enforced
++// by `ensure_size!` below, which requires the whole blob to fit in the
++// remaining input — a bogus length fails with its actual value in the
++// "not enough bytes" message instead, and no oversized allocation can happen
++// because the input is already a fixed slice. FreeRDP validates the same way.
+ 
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+@@ -177,10 +184,6 @@ impl<'de> Decode<'de> for ServerSecurityData {
+ 
+             let server_cert_len = cast_length!("serverCertLen", src.read_u32(), in: src)?;
+ 
+-            if server_cert_len > MAX_SERVER_CERT_LEN {
+-                return Err(invalid_field_err!("serverCetLen", "Invalid server certificate length", in: src));
+-            }
+-
+             ensure_size!(in: src, size: SERVER_RANDOM_LEN);
+             let server_random = src.read_array();
+ 
+diff --git a/crates/ironrdp-pdu/src/rdp/server_license/client_license_info.rs b/crates/ironrdp-pdu/src/rdp/server_license/client_license_info.rs
+index 22d37ff8..12708cce 100644
+--- a/crates/ironrdp-pdu/src/rdp/server_license/client_license_info.rs
++++ b/crates/ironrdp-pdu/src/rdp/server_license/client_license_info.rs
+@@ -43,10 +43,38 @@ impl ClientLicenseInfo {
+         hardware_data: [u32; 4],
+         license_info: Vec<u8>,
+     ) -> Result<(Self, LicenseEncryptionData), ServerLicenseError> {
+-        let public_key = license_request.get_public_key()?
+-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData,
+-                                          "attempted to retrieve the server public key from a server license request message that does not have a certificate"))?;
+-        let encrypted_premaster_secret = encrypt_with_public_key(premaster_secret, &public_key)?;
++        Self::from_server_license_request_with_premaster(
++            license_request,
++            None,
++            client_random,
++            premaster_secret,
++            hardware_data,
++            license_info,
++        )
++    }
++
++    /// Builds the license info from a premaster secret that is already
++    /// encrypted. See
++    /// [`ClientNewLicenseRequest::from_server_license_request_with_premaster`]
++    /// for when the caller supplies the ciphertext (Standard RDP Security
++    /// servers send no certificate in the license request).
++    pub fn from_server_license_request_with_premaster(
++        license_request: &ServerLicenseRequest,
++        encrypted_premaster_secret: Option<Vec<u8>>,
++        client_random: &[u8],
++        premaster_secret: &[u8],
++        hardware_data: [u32; 4],
++        license_info: Vec<u8>,
++    ) -> Result<(Self, LicenseEncryptionData), ServerLicenseError> {
++        let encrypted_premaster_secret = match encrypted_premaster_secret {
++            Some(encrypted) => encrypted,
++            None => {
++                let public_key = license_request.get_public_key()?
++                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData,
++                                                  "attempted to retrieve the server public key from a server license request message that does not have a certificate"))?;
++                encrypt_with_public_key(premaster_secret, &public_key)?
++            }
++        };
+ 
+         let master_secret = compute_master_secret(
+             premaster_secret,
+diff --git a/crates/ironrdp-pdu/src/rdp/server_license/client_new_license_request/mod.rs b/crates/ironrdp-pdu/src/rdp/server_license/client_new_license_request/mod.rs
+index 06223559..8e20c407 100644
+--- a/crates/ironrdp-pdu/src/rdp/server_license/client_new_license_request/mod.rs
++++ b/crates/ironrdp-pdu/src/rdp/server_license/client_new_license_request/mod.rs
+@@ -65,11 +65,41 @@ impl ClientNewLicenseRequest {
+         client_username: &str,
+         client_machine_name: &str,
+     ) -> Result<(Self, LicenseEncryptionData), ServerLicenseError> {
+-        let public_key = license_request.get_public_key()?
+-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData,
+-                                          "attempted to retrieve the server public key from a server license request message that does not have a certificate"))?;
++        Self::from_server_license_request_with_premaster(
++            license_request,
++            None,
++            client_random,
++            premaster_secret,
++            client_username,
++            client_machine_name,
++        )
++    }
+ 
+-        let encrypted_premaster_secret = encrypt_with_public_key(premaster_secret, &public_key)?;
++    /// Builds the request from a premaster secret that is already encrypted.
++    ///
++    /// Standard RDP Security servers send the Server License Request without a
++    /// certificate blob; there the caller RSA-encrypts the premaster secret
++    /// with the GCC server certificate's public key instead and hands the
++    /// ciphertext in via `encrypted_premaster_secret`. `None` restores the
++    /// certificate-based path (encrypt here with the license request's key).
++    pub fn from_server_license_request_with_premaster(
++        license_request: &ServerLicenseRequest,
++        encrypted_premaster_secret: Option<Vec<u8>>,
++        client_random: &[u8],
++        premaster_secret: &[u8],
++        client_username: &str,
++        client_machine_name: &str,
++    ) -> Result<(Self, LicenseEncryptionData), ServerLicenseError> {
++        let encrypted_premaster_secret = match encrypted_premaster_secret {
++            Some(encrypted) => encrypted,
++            None => {
++                let public_key = license_request.get_public_key()?
++                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData,
++                                                  "attempted to retrieve the server public key from a server license request message that does not have a certificate"))?;
++
++                encrypt_with_public_key(premaster_secret, &public_key)?
++            }
++        };
+ 
+         let master_secret = compute_master_secret(
+             premaster_secret,
 diff --git a/crates/ironrdp-rdpsec/Cargo.toml b/crates/ironrdp-rdpsec/Cargo.toml
 new file mode 100644
-index 00000000..3d9069af
+index 00000000..353ca4dd
 --- /dev/null
 +++ b/crates/ironrdp-rdpsec/Cargo.toml
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,13 @@
 +[package]
 +name = "ironrdp-rdpsec"
 +version = "0.1.0"
@@ -1391,15 +1658,16 @@ index 00000000..3d9069af
 +
 +[dependencies]
 +num-bigint = "0.4"
++x509-cert = { version = "0.3", default-features = false, features = ["std"] }
 +md-5 = "0.10"
 +sha1 = "0.10"
 +digest = "0.10"
 diff --git a/crates/ironrdp-rdpsec/src/lib.rs b/crates/ironrdp-rdpsec/src/lib.rs
 new file mode 100644
-index 00000000..533bd9fe
+index 00000000..2c6ca98b
 --- /dev/null
 +++ b/crates/ironrdp-rdpsec/src/lib.rs
-@@ -0,0 +1,543 @@
+@@ -0,0 +1,696 @@
 +//! Standard RDP Security (PROTOCOL_RDP, MS-RDPBCGR 5.3) crypto engine.
 +//!
 +//! Verified bit-for-bit against FreeRDP `security.c` and against live
@@ -1781,6 +2049,36 @@ index 00000000..533bd9fe
 +/// **little-endian** on the wire; the plaintext block is client_random (32B)
 +/// zero-padded to the modulus length — no PKCS#1 padding.
 +pub fn encrypt_client_random(server_cert: &[u8], client_random: &[u8]) -> Result<Vec<u8>, SecurityError> {
++    encrypt_with_server_public_key(server_cert, client_random)
++}
++
++/// RSA-encrypt a small secret (client random, licensing premaster secret)
++/// with the public key embedded in the GCC server certificate blob, using
++/// the same raw little-endian modpow convention the wire expects for the
++/// Security Exchange client random.
++///
++/// Both GCC certificate formats are supported: the proprietary "RSA1" blob
++/// (legacy servers) and the X.509 certificate chain (e.g. Server 2003 with a
++/// real certificate bound to the RDP listener). The raw little-endian modpow
++/// convention applies to both — FreeRDP normalizes the X.509 chain the same
++/// way and interoperates with these servers.
++pub fn encrypt_with_server_public_key(server_cert: &[u8], secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
++    const CERT_CHAIN_VERSION_MASK: u32 = 0x7fff_ffff;
++    const CERT_CHAIN_VERSION_PROPRIETARY: u32 = 1;
++    const CERT_CHAIN_VERSION_X509: u32 = 2;
++
++    if server_cert.len() < 4 {
++        return Err(SecurityError::CertTruncated);
++    }
++    let version = u32::from_le_bytes(server_cert[..4].try_into().unwrap()) & CERT_CHAIN_VERSION_MASK;
++    match version {
++        CERT_CHAIN_VERSION_PROPRIETARY => encrypt_with_proprietary_key(server_cert, secret),
++        CERT_CHAIN_VERSION_X509 => encrypt_with_x509_chain_key(server_cert, secret),
++        _ => Err(SecurityError::CertNoPublicKey),
++    }
++}
++
++fn encrypt_with_proprietary_key(server_cert: &[u8], secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
 +    const RSA1_MAGIC: &[u8; 4] = b"RSA1";
 +    let pos = server_cert
 +        .windows(4)
@@ -1807,13 +2105,136 @@ index 00000000..533bd9fe
 +
 +    let m = num_bigint::BigUint::from_bytes_le(modulus);
 +    let e = num_bigint::BigUint::from(pub_exp);
-+    let mut block = client_random.to_vec();
++    let mut block = secret.to_vec();
 +    block.resize(mod_len, 0u8);
 +    let b = num_bigint::BigUint::from_bytes_le(&block);
 +    let cipher = b.modpow(&e, &m);
 +    let mut out = cipher.to_bytes_le();
 +    out.resize(mod_len, 0u8);
 +    Ok(out)
++}
++
++/// RSA-encrypt `secret` with the RSA public key of the leaf certificate in
++/// the GCC X.509 chain blob (`dwVersion` = 2). The blob layout is
++/// `certCount u32` followed by `certCount` × (`certLen u32` + DER + 8-byte
++/// padding); the last certificate is the server's leaf.
++///
++/// Byte conventions per FreeRDP (`cert_common.c` + `crypto.c`): modulus and
++/// exponent are read big-endian straight out of the DER, the plaintext is
++/// interpreted little-endian and zero-padded to the modulus length, and the
++/// ciphertext comes back little-endian — the same raw-modpow shape the
++/// proprietary path uses.
++fn encrypt_with_x509_chain_key(server_cert: &[u8], secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
++    const CHAIN_HEADER_SIZE: usize = 8; // dwVersion + certCount
++    const CERT_LENGTH_FIELD_SIZE: usize = 4;
++    const X509_PADDING_SIZE: usize = 8;
++
++    let mut offset = CHAIN_HEADER_SIZE;
++    let mut leaf: Option<&[u8]> = None;
++    loop {
++        let cert_len = u32::from_le_bytes(
++            server_cert
++                .get(offset..offset + CERT_LENGTH_FIELD_SIZE)
++                .ok_or(SecurityError::CertTruncated)?
++                .try_into()
++                .unwrap(),
++        ) as usize;
++        offset += CERT_LENGTH_FIELD_SIZE;
++        let cert = server_cert
++            .get(offset..offset + cert_len)
++            .ok_or(SecurityError::CertTruncated)?;
++        offset += cert_len + X509_PADDING_SIZE;
++        leaf = Some(cert);
++        if offset >= server_cert.len() {
++            break;
++        }
++    }
++
++    let leaf = leaf.ok_or(SecurityError::CertTruncated)?;
++    use x509_cert::der::Decode as _;
++    let certificate = x509_cert::Certificate::from_der(leaf)
++        .map_err(|_| SecurityError::CertNoPublicKey)?;
++    let spki = certificate.tbs_certificate().subject_public_key_info();
++
++    // The subjectPublicKeyInfo BIT STRING wraps an RSAPublicKey DER SEQUENCE
++    // (`SEQUENCE { INTEGER modulus, INTEGER publicExponent }`, one leading
++    // zero byte marks zero unused bits). Parsed with a minimal DER walker:
++    // the structure is fixed and this keeps the crate's dependency footprint
++    // unchanged.
++    let bits = spki
++        .subject_public_key
++        .as_bytes()
++        .ok_or(SecurityError::CertNoPublicKey)?;
++    let rsa_der = bits.strip_prefix(&[0u8]).ok_or(SecurityError::CertNoPublicKey)?;
++    let (modulus, exponent) = parse_rsa_public_key(rsa_der)?;
++
++    let m = num_bigint::BigUint::from_bytes_be(modulus);
++    let e = num_bigint::BigUint::from_bytes_be(exponent);
++    let mut block = secret.to_vec();
++    block.resize(modulus.len(), 0u8);
++    let b = num_bigint::BigUint::from_bytes_le(&block);
++    let cipher = b.modpow(&e, &m);
++    let mut out = cipher.to_bytes_le();
++    out.resize(modulus.len(), 0u8);
++    Ok(out)
++}
++
++/// Reads one DER TLV at `offset`, returning `(tag, value)` and advancing
++/// `offset` past the whole element.
++fn read_der_tlv<'a>(data: &'a [u8], offset: &mut usize) -> Result<(u8, &'a [u8]), SecurityError> {
++    let tag = *data.get(*offset).ok_or(SecurityError::CertTruncated)?;
++    *offset += 1;
++    let length_byte = *data.get(*offset).ok_or(SecurityError::CertTruncated)?;
++    *offset += 1;
++    let length = if length_byte & 0x80 == 0 {
++        length_byte as usize
++    } else {
++        let count = (length_byte & 0x7f) as usize;
++        if count == 0 || count > 4 {
++            return Err(SecurityError::CertTruncated);
++        }
++        let mut length = 0usize;
++        for _ in 0..count {
++            length = (length << 8) | *data.get(*offset).ok_or(SecurityError::CertTruncated)? as usize;
++            *offset += 1;
++        }
++        length
++    };
++    let value = data.get(*offset..*offset + length).ok_or(SecurityError::CertTruncated)?;
++    *offset += length;
++    Ok((tag, value))
++}
++
++/// Extracts `(modulus, exponent)` from an `RSAPublicKey` DER SEQUENCE
++/// (`SEQUENCE { INTEGER modulus, INTEGER publicExponent }`).
++fn parse_rsa_public_key(der: &[u8]) -> Result<(&[u8], &[u8]), SecurityError> {
++    let mut offset = 0;
++    let (tag, sequence) = read_der_tlv(der, &mut offset)?;
++    if tag != 0x30 {
++        return Err(SecurityError::CertNoPublicKey);
++    }
++
++    let mut offset = 0;
++    let (tag, modulus) = read_der_tlv(sequence, &mut offset)?;
++    if tag != 0x02 {
++        return Err(SecurityError::CertNoPublicKey);
++    }
++    // A positive INTEGER may carry a leading zero byte for the sign bit.
++    let modulus = modulus.strip_prefix(&[0u8]).unwrap_or(modulus);
++    if modulus.is_empty() {
++        return Err(SecurityError::CertNoPublicKey);
++    }
++
++    let (tag, exponent) = read_der_tlv(sequence, &mut offset)?;
++    if tag != 0x02 {
++        return Err(SecurityError::CertNoPublicKey);
++    }
++    let exponent = exponent.strip_prefix(&[0u8]).unwrap_or(exponent);
++    if exponent.is_empty() || exponent.len() > 4 {
++        return Err(SecurityError::CertNoPublicKey);
++    }
++
++    Ok((modulus, exponent))
 +}
 +
 +/// Errors.
@@ -1827,7 +2248,7 @@ index 00000000..533bd9fe
 +impl core::fmt::Display for SecurityError {
 +    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 +        match self {
-+            SecurityError::CertNoPublicKey => write!(f, "server certificate has no RSA1 public key"),
++            SecurityError::CertNoPublicKey => write!(f, "server certificate carries no RSA public key"),
 +            SecurityError::CertTruncated => write!(f, "server certificate truncated"),
 +            SecurityError::RandomTooShort => write!(f, "client random shorter than modulus"),
 +        }

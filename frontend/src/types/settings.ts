@@ -101,6 +101,10 @@ export interface TerminalSettings {
   // Default local directory for files received with ZMODEM sz. Empty keeps
   // the existing behavior of asking for a directory on every transfer.
   zmodemDownloadDir: string
+  // Idle timeout for in-terminal ZMODEM (rz/sz) transfers, in seconds.
+  // If no protocol activity is observed for this long, the transfer is aborted.
+  // Defaults to 20 to preserve historical behavior.
+  zmodemIdleTimeoutSec: number
   // Filename template: %S session, %H host, %M month, %D day, %h hour, %m minute.
   sessionLogFilename: string
   // Characters that act as word boundaries for xterm.js's double-click
@@ -198,6 +202,10 @@ export type ShortcutAction =
   | 'toggleFilePanel'    // 切换文件边栏
   | 'toggleMonitor'      // 切换资源监控边栏
   | 'toggleNotes'        // 切换笔记面板（no default binding — opt-in）
+  | 'toggleTunnels'      // 切换隧道边栏（no default binding — opt-in）
+  | 'toggleHistory'      // 切换历史命令边栏（no default binding — opt-in）
+  | 'togglePersonalization' // 切换个性化边栏（no default binding — opt-in）
+  | 'toggleCommandSend'  // 切换命令发送面板（no default binding — opt-in）
 
 // User-facing bindings only use ctrl/shift/alt. On macOS the runtime mirrors
 // every ctrl combo to Cmd (per-action shortcuts register both; the digit
@@ -252,6 +260,10 @@ export const SHORTCUT_LABELS: Record<ShortcutAction, string> = {
   toggleFilePanel: 'shortcut.toggleFilePanel',
   toggleMonitor: 'shortcut.toggleMonitor',
   toggleNotes: 'shortcut.toggleNotes',
+  toggleTunnels: 'shortcut.toggleTunnels',
+  toggleHistory: 'shortcut.toggleHistory',
+  togglePersonalization: 'shortcut.togglePersonalization',
+  toggleCommandSend: 'shortcut.toggleCommandSend',
 }
 
 export const DEFAULT_KEYBOARD: KeyboardSettings = {
@@ -313,6 +325,8 @@ export interface StartPageSettings {
   visible: Record<StartPageBlock, boolean>
   // Render order of the content sections.
   order: StartPageBlock[]
+  // Brand line above the search box; false hides it.
+  showLogo: boolean
 }
 
 export const START_PAGE_BLOCK_LABEL_KEYS: Record<StartPageBlock, string> = {
@@ -324,6 +338,7 @@ export const START_PAGE_BLOCK_LABEL_KEYS: Record<StartPageBlock, string> = {
 export const START_PAGE_DEFAULTS: StartPageSettings = {
   visible: { favorites: true, recent: true, groups: true },
   order: ['favorites', 'recent', 'groups'],
+  showLogo: true,
 }
 
 export interface AppSettings {
@@ -500,6 +515,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     minimumContrast: 4.5,
     sessionLogDir: '',
     zmodemDownloadDir: '',
+    zmodemIdleTimeoutSec: 20,
     sessionLogFilename: '%S_%H_%M%D_%h%m.log',
     wordSeparator: '\\ :;~`!@#$%^&*()=+|[]{}\'",<>?',
     showLineNumbers: false,
@@ -551,7 +567,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   panelOrder: [],
   startPage: {
     visible: { ...START_PAGE_DEFAULTS.visible },
-    order: [...START_PAGE_DEFAULTS.order]
+    order: [...START_PAGE_DEFAULTS.order],
+    showLogo: START_PAGE_DEFAULTS.showLogo
   }
 }
 

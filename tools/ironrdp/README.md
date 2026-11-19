@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.2-uniterm.23.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.3-uniterm.24.tgz`.
 It replaces the external v0.5.2 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -19,6 +19,12 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 - The tarball includes IronRDP's Apache-2.0 and MIT license texts.
 
 ## Changes
+
+The `0.5.3-uniterm.24` package incorporates the certificate, licensing, and
+connector fixes from `ys-ll/IronRDP` commit
+`50f55566c73816c8a0174d755cc87ab7f3a63de7` (ironrdp-wasm v0.5.3).
+It retains the channel-aware reactivation implementation and all image
+clipboard, audio, rendering, and capture patches described below.
 
 The `0.5.2-uniterm.23` package advertises and serves CF_DIB for PNG clipboard
 images, alongside CF_DIBV5 and PNG. xrdp only exposes image/bmp to Linux
