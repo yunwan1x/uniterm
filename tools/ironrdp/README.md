@@ -1,6 +1,6 @@
 # uniTerm RDP presentation patch
 
-The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.3-uniterm.25.tgz`.
+The shipped dependency is `frontend/vendor/ys-ll-ironrdp-wasm-0.5.3-uniterm.26.tgz`.
 It replaces the external v0.5.2 tarball, so normal frontend/Docker builds do not
 need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 
@@ -19,6 +19,8 @@ need a Rust compiler. `Dockerfile` copies `vendor/` before `npm ci`.
 - The tarball includes IronRDP's Apache-2.0 and MIT license texts.
 
 ## Changes
+
+Version `0.5.3-uniterm.26` adds a per-proxy socket observer to the generated JavaScript bindings for main-thread receive counters. It uses the same WASM binary as `0.5.3-uniterm.25`.
 
 The `0.5.3-uniterm.25` package also corrects the X.509 chain layout and
 BIT STRING parsing in the upstream security fixes. It reads the declared

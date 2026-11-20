@@ -18,6 +18,10 @@ export class AndroidClient {
   ws: WebSocket | AndroidTransport
   width = 720
   height = 1280
+  videoBytes = 0
+  get displayCounters() {
+    return { at: performance.now(), frames: this.decoder.framesRendered, bytes: this.videoBytes }
+  }
   frames = 0
   videoSource: 'display' | 'front' | 'back' = 'display'
   mode = ''
@@ -122,6 +126,7 @@ export class AndroidClient {
       const view = new DataView(bytes.buffer)
       const flags = view.getBigUint64(1)
       const data = bytes.subarray(13)
+      this.videoBytes += data.length
       const packet: ScrcpyMediaStreamPacket =
         flags >> 63n
           ? { type: 'configuration', data }

@@ -1,4 +1,5 @@
 import { DesktopRenderer } from './renderer'
+import { displayCounters } from '../utils/displayPerformance'
 export const isWorker = true
 
 export class Extension { constructor(public name: string, public value: any) {} free() {} }
@@ -60,6 +61,7 @@ class WorkerSession {
         this.callbacks[data.name]?.(...data.args); return
       }
       if (data.type === 'stats') {
+        displayCounters.set(canvas, { at: performance.now(), frames: this.renderer.stats.frames, bytes: data.stats.receivedBytes })
         canvas.dataset.rdpStats = JSON.stringify({ ...data.stats, renderer: this.renderer.mode, presentation: this.renderer.stats })
         // Report actual codec use once per kind, using the existing 1 Hz stats.
         for (const [kind, counter] of [['avc-decoded', 'avcFrames'], ['gpu-avc420', 'gpuAvc420Frames'], ['gpu-avc444', 'gpuAvc444Frames']]) {

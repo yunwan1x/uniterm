@@ -9,6 +9,14 @@ function make(){vi.stubGlobal('document',{createElement:()=>({dataset:{}})});vi.
 afterEach(()=>{created.splice(0).forEach(c=>c.dispose());androidClients.clear();vi.useRealTimers();vi.unstubAllGlobals()})
 describe('Android browser lifecycle',()=>{
  it('uses software decoding without WebCodecs and exposes disconnect instead of spinning forever',()=>{const c=make();expect(c.mode).toBe('H.264 software');(c.ws as any).onmessage({data:JSON.stringify({width:720,height:1280})});expect(c.connected).toBe(true);androidClients.set(c.url,c);(c.ws as any).onclose();expect(c.connected).toBe(false);expect(c.error).toMatch(/closed/);expect(androidClients.has(c.url)).toBe(false)})
+ it('counts compressed video payload separately from audio, headers and control messages', () => {
+   const client = make()
+   const receive = (data: unknown) => (client.ws as unknown as Socket).onmessage({ data })
+   receive(JSON.stringify({ width: 800, height: 600 }))
+   pcm(client, 400)
+   receive(new ArrayBuffer(13 + 5000))
+   expect(client.displayCounters.bytes).toBe(5000)
+ })
  it('bounds video backlog and closes on overload',()=>{const c=make();(c.ws as any).onmessage({data:new ArrayBuffer(9*1024*1024)});expect(c.error).toMatch(/cannot keep up/);expect(c.ws.close).toHaveBeenCalled()})
  it('preserves explicit server errors after transport closes',()=>{const c=make();(c.ws as any).onmessage({data:JSON.stringify({error:'device unauthorized'})});(c.ws as any).onclose();expect(c.error).toBe('device unauthorized')})
  it('encodes file paths into the authenticated same-session endpoint',()=>{const c=make();const u=new URL(c.httpURL('download','/sdcard/a b&你好.bin'));expect(u.protocol).toBe('http:');expect(u.searchParams.get('path')).toBe('/sdcard/a b&你好.bin')})

@@ -38,6 +38,8 @@
       @paste="onPaste"
     />
 
+    <DisplayPerformanceOverlay v-if="showPerformance && status === 'connected'" :read="readPerformance" />
+
     <!-- Status bar -->
     <div v-show="status === 'connected' && !isFullscreen" class="vnc-statusbar">
       <RemoteDisplaySelect
@@ -65,6 +67,7 @@
         style="--el-switch-on-color: var(--success); --el-switch-off-color: var(--text-disabled)"
       />
       <span class="vnc-status-spacer" />
+      <DisplayPerformanceSwitch :enabled="showPerformance" @toggle="togglePerformance(); focusDesktop()" />
       <button class="vnc-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
     </div>
     <RemoteDesktopToolbar
@@ -81,6 +84,7 @@
       @minimize="blurDesktop"
       @error="onToolbarError"
     >
+      <template #after-zoom><DisplayPerformanceSwitch :enabled="showPerformance" @toggle="togglePerformance(); focusDesktop()" /></template>
       <template #displays>
         <RemoteDisplaySelect
           :displays="displayState.displays" :width="displayState.width" :height="displayState.height"
@@ -112,6 +116,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
 import { Loader } from '@lucide/vue'
+import DisplayPerformanceOverlay from './DisplayPerformanceOverlay.vue'
+import DisplayPerformanceSwitch from './DisplayPerformanceSwitch.vue'
+import { useDisplayPerformance } from '../composables/useDisplayPerformance'
+import { displayCounters } from '../utils/displayPerformance'
 import RemoteDesktopToolbar from './RemoteDesktopToolbar.vue'
 import RemoteDisplaySelect from './RemoteDisplaySelect.vue'
 import RemoteDesktopZoomSelect from './RemoteDesktopZoomSelect.vue'
@@ -175,6 +183,8 @@ const vncContainer = ref<HTMLDivElement | null>(null)
 const savedPassword = ref<string>('')
 const { zoom, scaleViewport, viewOnly, showDotCursor } = useRemoteDesktopPreferences(() => props.config)
 const displayState = ref<DesktopDisplayState>({ displays: [], width: 0, height: 0, view: { selected: 'all' } })
+const { enabled: showPerformance, toggle: togglePerformance } = useDisplayPerformance(() => props.config?.id)
+function readPerformance() { return rfb?._canvas ? displayCounters.get(rfb._canvas) : undefined }
 let restorePerformance: (() => void) | null = null
 let restoreImageEncoding: (() => void) | null = null
 let displayController: ReturnType<typeof installVncDisplays> | null = null
@@ -910,6 +920,7 @@ onActivated(onFocusIn)
   word-break: break-word;
 }
 .vnc-statusbar {
+  container-type: inline-size;
   position: absolute;
   bottom: 0;
   left: 0;

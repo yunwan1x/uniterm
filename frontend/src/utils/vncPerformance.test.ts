@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { displayCounters } from './displayPerformance'
 import { installVncPerformance, VncQualityController } from './vncPerformance'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -44,6 +45,7 @@ describe('noVNC adapter lifecycle and ordering', () => {
     const rfb = Object.assign(new EventTarget(), {
       qualityLevel: 6, _fbWidth: 100, _fbHeight: 100,
       _canvas: canvas, _sock: { _websocket: socket },
+      _decoders: { 7: {}, [-260]: {} },
       _FBU: { encoding: 7, width: 100, height: 100 },
       _display: { pending: (): boolean => false, flush: () => Promise.resolve() },
       _handleRect: vi.fn(() => remaining),
@@ -67,6 +69,20 @@ describe('noVNC adapter lifecycle and ordering', () => {
     expect(rfb._framebufferUpdate).toBe(original)
     expect(rfb._handleRect).toBe(rect)
     expect(vi.getTimerCount()).toBe(0)
+  })
+  it('counts flushed pixel updates including TightPNG and excludes cursor pseudo-encodings', () => {
+    const { rfb } = fixture()
+    const canvas = rfb._canvas as HTMLCanvasElement
+    const stop = installVncPerformance(rfb as any)
+    rfb._sock._websocket.dispatchEvent(new MessageEvent('message', { data: new ArrayBuffer(500000) }))
+    for (const encoding of [7, -260, -239, 0x574d5664]) {
+      rfb._FBU.encoding = encoding
+      rfb._framebufferUpdate()
+    }
+    vi.advanceTimersByTime(1000)
+    expect(displayCounters.get(canvas)).toMatchObject({ frames: 2, bytes: 500000 })
+    stop()
+    expect(displayCounters.get(canvas)).toBeUndefined()
   })
   it('waits for decode completion and ignores pending callbacks after disposal', async () => {
     const { rfb } = fixture()

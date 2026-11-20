@@ -41,6 +41,7 @@ function fixture() {
   const c: any = {
     console, URL, JSON, performance, Uint8Array, Error, Number, String, Map, Set, Object,
     props: { config: { host: 'test' }, panelId: 'test' }, canvasEl: ref({}),
+    observeMainThreadPerformance: vi.fn(), fallbackPerformance: undefined,
     started: false, disposed: false, clientGeneration: 0, activeSecurityMode: 'nla-prefer',
     status: ref('connected'), errorMessage: ref(''), framebufferSize: ref(null),
     connectTimer: null, CONNECT_TIMEOUT: 30000, setTimeout, clearTimeout,

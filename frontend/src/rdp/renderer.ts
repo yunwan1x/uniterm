@@ -96,9 +96,10 @@ export class DesktopRenderer {
         gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
         gl.drawArrays(gl.TRIANGLES, 0, 3)
       } else this.ctx!.drawImage(bitmap, x, y)
+      this.stats.frames++
     } finally {
       const elapsed = performance.now() - started
-      this.stats.frames++; this.stats.drawMs += elapsed; this.stats.maxDrawMs = Math.max(this.stats.maxDrawMs, elapsed)
+      this.stats.drawMs += elapsed; this.stats.maxDrawMs = Math.max(this.stats.maxDrawMs, elapsed)
       bitmap.close(); this.ack()
     }
   }

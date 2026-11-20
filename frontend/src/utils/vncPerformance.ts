@@ -1,3 +1,5 @@
+import { displayCounters } from './displayPerformance'
+
 // noVNC 1.7 adapter. Only observe its update/decode boundaries; never drop
 // rectangles or bypass its backbuffer/flush ordering (RFB is stateful).
 export class VncQualityController {
@@ -35,6 +37,7 @@ interface RfbPerformanceTarget extends EventTarget {
   _fbHeight: number
   _canvas?: HTMLCanvasElement
   _sock?: { _websocket?: WebSocket }
+  _decoders?: Record<number, unknown>
   _FBU: { encoding: number | null; width: number; height: number }
   _display: { pending(): boolean; flush(): Promise<void> }
   _framebufferUpdate(): boolean
@@ -51,6 +54,8 @@ export function installVncPerformance(rfb: RfbPerformanceTarget): () => void {
   let pixels = 0
   let cpuMs = 0
   let bytes = 0
+  let hasVisualRect = false
+  let visualUpdates = 0
   let updates = 0
   let lastUpdateMs = 0
   let processingMs = 0
@@ -72,6 +77,7 @@ export function installVncPerformance(rfb: RfbPerformanceTarget): () => void {
     const { encoding, width, height } = rfb._FBU
     const result = originalRect.call(rfb)
     if (result && encoding !== null && encoding >= 0) pixels += width * height
+    if (result && width > 0 && height > 0 && encoding !== null && rfb._decoders?.[encoding]) hasVisualRect = true
     return result
   }
   const update = function () {
@@ -81,11 +87,14 @@ export function installVncPerformance(rfb: RfbPerformanceTarget): () => void {
     cpuMs += performance.now() - now
     if (result) {
       const begin = started, area = pixels, cost = cpuMs
+      const visual = hasVisualRect
+      hasVisualRect = false
       started = null
       pixels = cpuMs = 0
       const complete = () => {
         if (disposed) return
         updates++
+        if (visual) visualUpdates++
         lastUpdateMs = performance.now() - begin
         processingMs += cost
         // Background throttling is not evidence of a slow network.
@@ -107,6 +116,7 @@ export function installVncPerformance(rfb: RfbPerformanceTarget): () => void {
   // Bounded diagnostics for profiling; no pixel readback, global patches,
   // payload logging or user-facing performance controls.
   const timer = setInterval(() => {
+    if (rfb._canvas) displayCounters.set(rfb._canvas, { at: performance.now(), frames: rfb._decoders ? visualUpdates : null, bytes: socket ? bytes : null })
     rfb._canvas?.dispatchEvent(new CustomEvent('uniterm:vnc-performance', {
       bubbles: true,
       detail: { bytes, updates, lastUpdateMs, processingMs, quality: rfb.qualityLevel },
@@ -116,6 +126,7 @@ export function installVncPerformance(rfb: RfbPerformanceTarget): () => void {
     if (disposed) return
     disposed = true
     clearInterval(timer)
+    if (rfb._canvas) displayCounters.delete(rfb._canvas)
     socket?.removeEventListener('message', receive)
     rfb.removeEventListener('connect', attach)
     rfb.removeEventListener('disconnect', dispose)

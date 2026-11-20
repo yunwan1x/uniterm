@@ -45,6 +45,7 @@
           @paste.prevent="paste"
           @contextmenu.prevent="key(4)"
         />
+        <DisplayPerformanceOverlay v-if="showPerformance && connected && !error" :key="floatKind + String(sessionId)" :read="readPerformance" />
         <div v-if="error" class="android-error" role="alert">
           <strong>{{ t('android.connectionFailed') }}</strong>
           <p class="android-error-detail">{{ error }}</p>
@@ -211,6 +212,7 @@
             <button :disabled="!connected" title="Shell" aria-label="Shell" @click="togglePane('shell')"><Terminal :size="17" /></button>
           </div>
           <div class="android-window-actions">
+            <DisplayPerformanceSwitch :enabled="showPerformance" :compact="floating" :disabled="!connected" video @toggle="togglePerformance(); screen?.focus({ preventScroll: true }); hideToolbarAfterAction()" />
             <button
               v-if="!floating && !isFullscreen"
               :disabled="opening || !connected"
@@ -253,6 +255,9 @@
 import { qualityBitrates, qualityPresets, presetQuality, storedQuality, type QualityPreset } from '../android/quality'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { PictureInPicture2, PanelTop, Maximize, Minimize, X, Smartphone, SlidersHorizontal, Scan, Camera, ArrowLeft, House, PanelsTopLeft, Volume2, Volume1, Power, RotateCw, Keyboard, Folder, Terminal, GripVertical, ExternalLink } from '@lucide/vue'
+import DisplayPerformanceOverlay from './DisplayPerformanceOverlay.vue'
+import DisplayPerformanceSwitch from './DisplayPerformanceSwitch.vue'
+import { useDisplayPerformance } from '../composables/useDisplayPerformance'
 import FullscreenToolbarShell from './FullscreenToolbarShell.vue'
 import { useFloatingWindow } from '../android/useFloatingWindow'
 import { androidDevicePresets } from '../android/devicePresets'
@@ -298,6 +303,8 @@ const navigationActions = computed(() => [
 const qualityOpen = ref(false), qualitySize = ref('auto'), qualityFps = ref(30), qualityBitrate = ref(4), displayMode = ref('fit')
 const qualityPreset = ref<QualityPreset>('auto')
 const autoQualityStatus = ref(''), actualBitrate = ref(0)
+const { enabled: showPerformance, toggle: togglePerformance } = useDisplayPerformance(() => props.config?.id)
+function readPerformance() { return client?.displayCounters }
 const qualityStorageKey = `android-quality:${props.config?.host || ''}:${props.config?.port || 5555}`
 try {
   const saved = storedQuality(JSON.parse(localStorage.getItem(qualityStorageKey) || 'null'))
@@ -890,6 +897,7 @@ onBeforeUnmount(() => {
 }
 
 .android-tab {
+  container-type: inline-size;
   height: 100%;
   box-sizing: border-box;
   display: flex;

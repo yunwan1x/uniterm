@@ -74,6 +74,8 @@
     <RdpFilesPanel v-if="browserFilesEnabled" v-show="filesOpen && !floating" :ready="status === 'connected' && fileChannelReady" :connected="status === 'connected'" :tasks="browserFileTasks" :remote="remoteFileOffers" :error="browserFilesError"
       @close="filesOpen = false" @release="onFocusOut" @select="selectBrowserFiles" @download="downloadBrowserFiles" @cancel="id => browserFiles.cancel(id)" @retry="retryBrowserFile" @clear="browserFiles.clearFinished()" />
 
+    <DisplayPerformanceOverlay v-if="showPerformance && status === 'connected'" :key="windowKind + String(canvasGeneration)" :read="readPerformance" />
+
     <!-- Status bar -->
     <div
       v-show="!isFullscreen && !floating"
@@ -115,6 +117,7 @@
         <component :is="audioEnabled ? Volume2 : VolumeX" :size="16" />
       </button>
       <span class="rdp-status-spacer" />
+      <DisplayPerformanceSwitch :enabled="showPerformance" @toggle="togglePerformance(); focusDesktop()" />
       <button class="rdp-window-btn" :disabled="openingWindow || status !== 'connected'" :title="t('android.floating')" :aria-label="t('android.floating')" @click="openFloatingWindow"><PictureInPicture2 :size="16" /></button>
       <button class="rdp-window-btn" :disabled="status !== 'connected'" :title="t('android.detachedWindow')" :aria-label="t('android.detachedWindow')" @click="openDetachedWindow"><ExternalLink :size="16" /></button>
       <button class="rdp-fullscreen-btn" @click="toggleFullscreen">{{ t('remoteDesktop.fullscreen') }}</button>
@@ -150,6 +153,7 @@
       </template>
       <!-- Keep the toolbar order identical to the status bar: resolution, zoom, quality. -->
       <template #after-zoom>
+        <DisplayPerformanceSwitch :enabled="showPerformance" @toggle="togglePerformance(); focusDesktop()" />
         <button class="rdp-audio-toggle" role="switch" :aria-checked="audioEnabled" :aria-label="t('rdp.audioPlayback')" :title="t(audioEnabled ? 'rdp.disableAudio' : 'rdp.enableAudio')" :disabled="status !== 'connected'" @click="toggleAudio">
           <component :is="audioEnabled ? Volume2 : VolumeX" :size="16" />
         </button>
@@ -201,6 +205,11 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeacti
 import { useFloatingWindow } from '../android/useFloatingWindow'
 import { Loader, PictureInPicture2, ExternalLink, Volume2, VolumeX } from '@lucide/vue'
 import { RdpAudioPlayer } from '../utils/rdpAudio'
+import DisplayPerformanceOverlay from './DisplayPerformanceOverlay.vue'
+import DisplayPerformanceSwitch from './DisplayPerformanceSwitch.vue'
+import { useDisplayPerformance } from '../composables/useDisplayPerformance'
+import { displayCounters } from '../utils/displayPerformance'
+import { observeMainThreadPerformance } from '../rdp/mainThreadPerformance'
 import RemoteDesktopToolbar from './RemoteDesktopToolbar.vue'
 import RemoteMobileControls from './RemoteMobileControls.vue'
 import RdpFloatingKeyboard from './RdpFloatingKeyboard.vue'
@@ -470,6 +479,11 @@ function resolveSecurityMode(config: ConnectionConfig | null): RdpSecurityMode {
   return config?.rdpSecurityMode ?? (config?.rdpEnableNLA === false ? 'tls' : 'nla-prefer')
 }
 
+const { enabled: showPerformance, toggle: togglePerformance } = useDisplayPerformance(() => props.config?.id)
+let fallbackPerformance: ReturnType<typeof observeMainThreadPerformance> | undefined
+function readPerformance() {
+  return fallbackPerformance?.read() ?? (canvasEl.value ? displayCounters.get(canvasEl.value) : undefined)
+}
 let session: any = null
 let connectTimer: ReturnType<typeof setTimeout> | null = null
 let started = false
@@ -593,6 +607,7 @@ async function startClient(proxyUrl: string, desktopSizeOverride?: RdpDesktopSiz
     // as the gateway auth token the RDCleanPath handshake must echo.
     const wsUrl = toWebSocketURL(proxyUrl)
     const authToken = proxyAuthToken(proxyUrl)
+    if (!mod.isWorker) fallbackPerformance = observeMainThreadPerformance(canvasEl.value!, wsUrl, mod.observeProxySocket)
 
     const builder = new mod.SessionBuilder()
       .username(username)
@@ -838,6 +853,8 @@ function runEnded(reason: string, isError = false) {
 }
 
 function teardownClient(preserveCapture = false) {
+  fallbackPerformance?.dispose()
+  fallbackPerformance = undefined
   if (preserveCapture) capture.stopBridge()
   else capture.stopAll()
   audioPlayer?.dispose()
@@ -1973,6 +1990,7 @@ watch(activeResolution, (mode) => {
 .rdp-error-detail { color: var(--text-muted); font-size: 0.8125rem; max-width: 30rem; text-align: center; word-break: break-word; }
 .rdp-error-hint { color: var(--text-secondary); font-size: 0.8125rem; max-width: 36rem; text-align: center; word-break: break-word; }
 .rdp-statusbar {
+  container-type: inline-size;
   min-height: 1.5rem;
   flex-wrap: wrap;
   display: flex;
